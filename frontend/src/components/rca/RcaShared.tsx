@@ -7,7 +7,24 @@ import { cn } from '@/lib/utils';
 import { Field, SelectField } from '../data/DataEntry';
 import { formatDate } from '../../lib/format';
 import { ALL, FILTER_KEYS, NOT_RECORDED, type FilterKey } from '../../lib/rca';
-import type { RcaOptions, RcaStatus } from '../../types/rca';
+import type { RcaCycleCode, RcaOptions, RcaStatus, RcaUnitCode } from '../../types/rca';
+
+const CYCLE_TONE: Record<RcaCycleCode | RcaUnitCode, string> = {
+  unconfigured: 'border-slate-300 bg-slate-50 text-slate-700',
+  awaiting: 'border-slate-300 bg-slate-50 text-slate-700',
+  pending: 'border-amber-300 bg-amber-50 text-amber-800',
+  review: 'border-amber-300 bg-amber-50 text-amber-800',
+  partial: 'border-sky-300 bg-sky-50 text-sky-800',
+  ready: 'border-violet-300 bg-violet-50 text-violet-800',
+  received: 'border-emerald-300 bg-emerald-50 text-emerald-800',
+  final: 'border-emerald-300 bg-emerald-50 text-emerald-800',
+  revised: 'border-orange-300 bg-orange-50 text-orange-800',
+};
+
+/** Status of a reporting period or of one expected project / circle, as computed by the API. */
+export function CycleBadge({ code, label }: { code: RcaCycleCode | RcaUnitCode; label: string }) {
+  return <Badge variant="outline" className={cn('font-medium', CYCLE_TONE[code])}>{label}</Badge>;
+}
 
 const STATUS_TONE: Record<RcaStatus, string> = {
   investigation: 'border-sky-200 bg-sky-50 text-sky-800',

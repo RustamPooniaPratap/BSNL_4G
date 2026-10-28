@@ -1,6 +1,6 @@
 """Assign a portal role to an existing account, e.g. after ``createsuperuser``.
 
-    python manage.py set_role <login_id> admin|ci
+    python manage.py set_role <login_id> admin|noc_lead|ci
 
 No password is read, set or printed here.
 """
@@ -12,7 +12,7 @@ from apps.accounts.roles import ROLES, set_role
 
 
 class Command(BaseCommand):
-    help = 'Assign the portal role (admin or ci) to an existing user.'
+    help = 'Assign the portal role (admin, noc_lead or ci) to an existing user.'
 
     def add_arguments(self, parser):
         parser.add_argument('username')

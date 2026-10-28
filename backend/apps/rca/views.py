@@ -3,8 +3,11 @@
 - Any portal user (Admin or CI): read the register and records, record a new RCA incident, update a
   record's follow-up (status up to Action Completed, corrective action, owner, dates) and add comments.
   The portal has no circle-level scope for CI users, so none is applied.
-- Admin only: the RCA Summary, imports, cause categories and mappings, root-cause review, verification
-  and closure, and editing a manually recorded RCA created by someone else.
+- Admin and NOC Lead: upload the consolidated RCA workbook (validate, confirm, import) and see the results,
+  validation reports and consolidated workbook of their uploads. A NOC Lead sees their own uploads only.
+- Admin only: the RCA Summary, every upload, reporting periods (expected scope, received / pending data, final
+  reports), cause categories and mappings, root-cause review, verification and closure, and editing a manually
+  recorded RCA created by someone else. CI users cannot upload.
 - Imported source facts are never edited through the API; a corrected workbook is re-imported instead.
 """
 import csv
@@ -15,7 +18,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes, permission_classes
@@ -24,11 +27,12 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.accounts.audit import audit
-from apps.accounts.permissions import IsAdminRole, IsPortalUser
+from apps.accounts.permissions import CanUploadRca, IsAdminRole, IsPortalUser
 from apps.accounts.roles import ADMIN, role_of
 
-from . import importer, parser, services
-from .models import RcaCauseCategory, RcaCauseMapping, RcaComment, RcaEvent, RcaImportBatch, RcaRecord, RcaWorkflow
+from . import cycles, importer, parser, services
+from .models import (RcaCauseCategory, RcaCauseMapping, RcaComment, RcaEvent, RcaImportBatch, RcaRecord,
+                     RcaReport, RcaReportingCycle, RcaWorkflow)
 
 ALLOWED = ('.xlsx', '.xlsm')
 PROJECTS = ('4G Saturation', 'LWE')
@@ -213,75 +217,110 @@ def record_comments(request, record_id: int):
 @api_view(['GET'])
 @permission_classes([IsAdminRole])
 def summary(request):
-    return Response(services.summary(request.query_params))
+    data = services.summary(request.query_params)
+    # The reporting period matching the filtered dates (or the latest period), for its coverage and its report.
+    params = request.query_params
+    day = services._date(params.get('date'), 'date')
+    start, end = services._date(params.get('date_from'), 'date_from'), services._date(params.get('date_to'), 'date_to')
+    periods = RcaReportingCycle.objects.select_related('created_by')
+    if day:
+        cycle = next((c for c in periods.filter(reporting_date__lte=day) if c.end >= day), None)
+    elif start and end:
+        cycle = next((c for c in periods.filter(reporting_date=start) if c.end == end), None)
+    else:
+        cycle = periods.first()
+    data['cycle'] = {**cycles.cycle_json(cycle), 'matches_filter': bool(day or (start and end))} if cycle else None
+    return Response(data)
 
 
-# --- Imports (Admin) -----------------------------------------------------------------------------
+# --- Uploads (Admin and NOC Lead) ----------------------------------------------------------------
+# A NOC Lead sees and acts on their own uploads only; an Admin on every upload.
 
-def _batch_json(batch: RcaImportBatch, *, full: bool = False) -> dict:
-    data = {
-        'id': batch.pk, 'status': batch.status, 'file': batch.original_filename, 'checksum': batch.checksum_sha256,
-        'sheet': batch.sheet_name, 'uploaded_at': batch.uploaded_at.isoformat(),
-        'committed_at': batch.committed_at.isoformat() if batch.committed_at else None,
-        'imported_by': batch.imported_by.get_username() if batch.imported_by else None,
-        'counts': batch.counts, 'conflict_action': batch.conflict_action or None, 'error': batch.error or None,
-    }
-    if full:
-        data['report'] = {k: v for k, v in batch.report.items() if k != 'all_issues'}
-    return data
+ALLOWED_SCOPES = {'4G Saturation': '4G Saturation', 'LWE': 'LWE', 'both': 'both'}
 
 
-def _batch(batch_id: int) -> RcaImportBatch:
-    batch = RcaImportBatch.objects.filter(pk=batch_id).first()
-    if batch is None:
-        raise NotFound('No such RCA import.')
+def _batch(request, batch_id: int) -> RcaImportBatch:
+    batch = RcaImportBatch.objects.select_related('cycle', 'imported_by').filter(pk=batch_id).first()
+    if batch is None or not (_is_admin(request) or batch.imported_by_id == request.user.pk):
+        raise NotFound('No such RCA upload.')  # another user's upload is not revealed
     return batch
 
 
+def _batch_json(batch: RcaImportBatch, *, full: bool = False) -> dict:
+    return cycles.batch_json(batch, full=full)
+
+
 @api_view(['GET'])
-@permission_classes([IsAdminRole])
+@permission_classes([CanUploadRca])
 def import_list(request):
-    return Response({'imports': [_batch_json(b) for b in RcaImportBatch.objects.select_related('imported_by')[:30]],
-                     'records': RcaRecord.objects.count()})
+    """The signed-in user's uploads; an Admin may ask for every upload with ?all=1."""
+    qs = RcaImportBatch.objects.select_related('imported_by')
+    everyone = _is_admin(request) and request.query_params.get('all') == '1'
+    if not everyone:
+        qs = qs.filter(imported_by=request.user)
+    return Response({'imports': [_batch_json(b) for b in qs[:100]], 'records': RcaRecord.objects.count(), 'all': everyone})
+
+
+def _details(data) -> dict:
+    errors = {}
+    name = ' '.join(str(data.get('report_name') or '').split())[:200]
+    if not name:
+        errors['report_name'] = 'Enter the report name, e.g. "October 2026 RCA Report".'
+    start = parser._date(data.get('period_start'))
+    end = parser._date(data.get('period_end')) if data.get('period_end') else start
+    if start is None:
+        errors['period_start'] = 'Enter the reporting date (or the first day of the period).'
+    elif end is None:
+        errors['period_end'] = 'Enter a valid last day of the period, or leave it blank for a single date.'
+    elif end < start:
+        errors['period_end'] = 'The period ends before it starts.'
+    elif start > timezone.localdate():
+        errors['period_start'] = 'The reporting period cannot start in the future.'
+    elif (end - start).days > 92:
+        errors['period_end'] = 'A reporting period can span at most three months.'
+    scope = ALLOWED_SCOPES.get(str(data.get('project_scope') or ''))
+    if scope is None:
+        errors['project_scope'] = 'Choose 4G Saturation, LWE or Both.'
+    if errors:
+        raise ValidationError(errors)
+    return {'report_name': name, 'period_start': start, 'period_end': end, 'project_scope': scope,
+            'remarks': str(data.get('remarks') or '').strip()[:2000]}
 
 
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
-@permission_classes([IsAdminRole])
+@permission_classes([CanUploadRca])
 def import_preview(request):
-    upload = request.FILES.get('file')
-    if upload is None:
-        raise ValidationError({'file': 'Choose the RCA workbook (.xlsx).'})
+    """Upload the completed RCA workbook with its report details and validate it (nothing is imported yet)."""
+    details = _details(request.data)
+    upload = _upload(request)
     name = Path(upload.name).name
-    if Path(name).suffix.lower() not in ALLOWED:
-        raise ValidationError({'file': f'{name}: choose an Excel workbook (.xlsx).'})
-    if upload.size > settings.MAX_WORKBOOK_BYTES:
-        raise ValidationError({'file': f'{name} is larger than {settings.MAX_WORKBOOK_BYTES // (1024 * 1024)} MB.'})
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=Path(name).suffix.lower())
     for chunk in upload.chunks():
         handle.write(chunk)
     handle.close()
     try:
-        batch = importer.preview(Path(handle.name), name, user=request.user)
-    except importer.ImportRejected as exc:
+        batch = importer.preview(Path(handle.name), name, user=request.user, details=details)
+    except (importer.ImportRejected, cycles.CycleError) as exc:
+        audit('rca_upload_failed', request, file=name, report=details['report_name'])
         return Response({'error': str(exc), 'details': {}}, status=exc.status)
     finally:
         Path(handle.name).unlink(missing_ok=True)
-    audit('rca_import_previewed', request, batch=batch.pk, file=name)
+    audit('rca_import_previewed', request, batch=batch.pk, file=name, report=details['report_name'], status=batch.status)
     return Response(_batch_json(batch, full=True), status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET'])
-@permission_classes([IsAdminRole])
+@permission_classes([CanUploadRca])
 def import_detail(request, batch_id: int):
-    return Response(_batch_json(_batch(batch_id), full=True))
+    return Response(_batch_json(_batch(request, batch_id), full=True))
 
 
 @api_view(['GET'])
-@permission_classes([IsAdminRole])
+@permission_classes([CanUploadRca])
 def import_issues_csv(request, batch_id: int):
-    """Every rejected or flagged row, plus conflicts with the database, as CSV."""
-    batch = _batch(batch_id)
+    """Every rejected or flagged row, plus differences from stored records, as CSV."""
+    batch = _batch(request, batch_id)
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(['file', 'severity', 'code', 'excel_row', 'site_id', 'message'])
@@ -290,34 +329,192 @@ def import_issues_csv(request, batch_id: int):
     for conflict in batch.report.get('conflicts', []):
         fields = '; '.join(f'{f}: database "{d["database"]}" vs file "{d["file"]}"' for f, d in conflict['differences'].items())
         writer.writerow([batch.original_filename, 'conflict', 'differs_from_database', conflict['row'], conflict['site_id'], fields])
-    response = HttpResponse('﻿' + out.getvalue(), content_type='text/csv; charset=utf-8')
+    for item in batch.report.get('missing', []):
+        writer.writerow([batch.original_filename, 'correction', 'not_in_corrected_file', '', item['site_id'],
+                         f'Stored record #{item["record_id"]} ({item["project"]} / {item["circle"]}, {item.get("reporting_date", "")}, '
+                         f'from {item["source_file"] or "the portal"}) is not in this workbook.'])
+    if batch.error and not batch.report:
+        writer.writerow([batch.original_filename, 'error', 'unreadable_workbook', '', '', batch.error])
+    response = HttpResponse('\ufeff' + out.getvalue(), content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = f'attachment; filename="rca-import-{batch.pk}-validation.csv"'
     return response
 
 
 @api_view(['POST'])
 @parser_classes([JSONParser])
-@permission_classes([IsAdminRole])
+@permission_classes([CanUploadRca])
 def import_commit(request, batch_id: int):
-    batch = _batch(batch_id)
+    batch = _batch(request, batch_id)
     try:
-        batch = importer.commit(batch, user=request.user, conflict_action=request.data.get('conflict_action') or '')
-    except importer.ImportRejected as exc:
+        batch = importer.commit(batch, user=request.user, conflict_action=request.data.get('conflict_action') or '',
+                                missing_action=request.data.get('missing_action') or '',
+                                accept_rejected=request.data.get('accept_rejected') is True)
+    except (importer.ImportRejected, cycles.CycleError) as exc:
         return Response({'error': str(exc), 'details': {}}, status=exc.status)
     audit('rca_import_committed', request, batch=batch.pk, **{k: v for k, v in batch.counts.items()})
-    return Response({**_batch_json(batch, full=True), 'records': RcaRecord.objects.count()})
+    # Every period whose records changed: the upload's own and those of earlier dates the workbook added or corrected.
+    touched = {batch.cycle} if batch.cycle_id else set()
+    for day in batch.counts.get('dates_changed', []):
+        touched |= {c for c in RcaReportingCycle.objects.filter(reporting_date__lte=day) if c.end.isoformat() >= day}
+    finals = [f for f in (cycles.after_commit(c, user=request.user) for c in touched) if f is not None]
+    for f in finals:
+        audit('rca_final_report_generated', request, cycle=f.cycle_id, version=f.version, automatic=True)
+    final = next((f for f in finals if f.cycle_id == batch.cycle_id), finals[0] if finals else None)
+    return Response({**_batch_json(batch, full=True), 'records': RcaRecord.objects.count(),
+                     'final_report': cycles.report_json(final) if final else None})
 
 
 @api_view(['POST'])
-@permission_classes([IsAdminRole])
+@permission_classes([CanUploadRca])
 def import_discard(request, batch_id: int):
-    batch = _batch(batch_id)
+    batch = _batch(request, batch_id)
     if batch.status != RcaImportBatch.Status.PREVIEWED:
-        return Response({'error': 'Only a previewed import can be discarded.', 'details': {}}, status=409)
+        return Response({'error': 'Only an upload awaiting confirmation can be discarded.', 'details': {}}, status=409)
     batch.status, batch.rows = RcaImportBatch.Status.DISCARDED, []
     batch.save(update_fields=['status', 'rows'])
     audit('rca_import_discarded', request, batch=batch.pk)
     return Response(_batch_json(batch))
+
+
+@api_view(['GET'])
+@permission_classes([CanUploadRca])
+def import_workbook(request, batch_id: int):
+    """The consolidated RCA workbook of the period an upload was accepted into (the uploader's own, or any for an Admin)."""
+    batch = _batch(request, batch_id)
+    if batch.cycle_id is None or batch.status != RcaImportBatch.Status.COMMITTED:
+        return Response({'error': 'The consolidated report is available once the upload has been imported.', 'details': {}}, status=409)
+    return _period_workbook(request, batch.cycle)
+
+
+# --- Reporting periods (Admin) -------------------------------------------------------------------
+
+def _upload(request):
+    upload = request.FILES.get('file')
+    if upload is None:
+        raise ValidationError({'file': 'Choose the RCA workbook (.xlsx).'})
+    name = Path(upload.name).name
+    if Path(name).suffix.lower() not in ALLOWED:
+        raise ValidationError({'file': f'{name}: choose an Excel workbook (.xlsx).'})
+    if upload.size > settings.MAX_WORKBOOK_BYTES:
+        raise ValidationError({'file': f'{name} is larger than {settings.MAX_WORKBOOK_BYTES // (1024 * 1024)} MB.'})
+    return upload
+
+
+def _cycle(cycle_id: int) -> RcaReportingCycle:
+    cycle = RcaReportingCycle.objects.select_related('created_by').filter(pk=cycle_id).first()
+    if cycle is None:
+        raise NotFound('No such reporting period.')
+    return cycle
+
+
+def _cycle_error(exc: cycles.CycleError) -> Response:
+    return Response({'error': str(exc), 'details': {}}, status=exc.status)
+
+
+@api_view(['GET', 'POST'])
+@parser_classes([JSONParser])
+@permission_classes([IsAdminRole])
+def cycle_list(request):
+    if request.method == 'GET':
+        return Response({'cycles': [cycles.cycle_json(c) for c in RcaReportingCycle.objects.select_related('created_by')[:36]],
+                         'default_units': [list(u) for u in cycles.default_units()],
+                         'available_units': [list(u) for u in cycles.available_units()]})
+    start = parser._date(request.data.get('period_start') or request.data.get('reporting_date'))
+    end = parser._date(request.data.get('period_end')) if request.data.get('period_end') else start
+    if start is None or end is None:
+        raise ValidationError({'period_start': 'Enter the reporting date or period.'})
+    if end < start:
+        raise ValidationError({'period_end': 'The period ends before it starts.'})
+    if start > timezone.localdate():
+        raise ValidationError({'period_start': 'The reporting period cannot start in the future.'})
+    try:
+        units = cycles.validate_units(request.data['units']) if 'units' in request.data else cycles.default_units()
+        with transaction.atomic():
+            if cycles.period_cycle(start, end) is not None:
+                raise ValidationError({'period_start': f'The period {cycles.period_label(start, end)} already exists.'})
+            cycle = cycles.period_cycle(start, end, create=True, user=request.user,
+                                        name=' '.join(str(request.data.get('name') or '').split())[:200])
+            cycle.notes = str(request.data.get('notes') or '').strip()[:2000]
+            cycle.save(update_fields=['notes'])
+            cycles.set_required(cycle, units)
+    except cycles.CycleError as exc:
+        raise ValidationError({'period_start': str(exc)}) from exc
+    audit('rca_cycle_started', request, cycle=cycle.pk, start=start.isoformat(), end=end.isoformat(), required=len(units))
+    return Response(cycles.cycle_json(cycle, full=True), status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminRole])
+def cycle_detail(request, cycle_id: int):
+    return Response(cycles.cycle_json(_cycle(cycle_id), full=True))
+
+
+@api_view(['PUT'])
+@parser_classes([JSONParser])
+@permission_classes([IsAdminRole])
+def cycle_required(request, cycle_id: int):
+    """Configure the projects / circles the period is expected to cover."""
+    cycle = _cycle(cycle_id)
+    try:
+        units = cycles.validate_units(request.data.get('units'))
+        cycles.set_required(cycle, units)
+    except cycles.CycleError as exc:
+        return _cycle_error(exc)
+    audit('rca_cycle_required_changed', request, cycle=cycle.pk, required=len(units))
+    return Response(cycles.cycle_json(cycle, full=True))
+
+
+@api_view(['POST'])
+@permission_classes([IsAdminRole])
+def cycle_finalize(request, cycle_id: int):
+    """Generate the final report (or the revised version after an accepted correction). Unchanged records: no new version."""
+    cycle = _cycle(cycle_id)
+    try:
+        report, created = cycles.generate_final(cycle, user=request.user)
+    except cycles.CycleError as exc:
+        return _cycle_error(exc)
+    if created:
+        audit('rca_final_report_generated', request, cycle=cycle.pk, version=report.version, automatic=False)
+    return Response({**cycles.cycle_json(cycle, full=True), 'created': created, 'report': cycles.report_json(report)},
+                    status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminRole])
+def cycle_workbook(request, cycle_id: int):
+    return _period_workbook(request, _cycle(cycle_id))
+
+
+def _period_workbook(request, cycle: RcaReportingCycle):
+    """The consolidated workbook now: the current final version when it reflects the stored records, else a labelled draft."""
+    state = cycles.status(cycle)
+    if state['code'] == 'final':
+        return _final_file(request, cycle.reports.first())
+    content, filename = cycles.partial_workbook(cycle, user=request.user)
+    audit('rca_partial_report_downloaded', request, cycle=cycle.pk, status=state['code'])
+    response = HttpResponse(content, content_type=XLSX)
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminRole])
+def cycle_report_file(request, cycle_id: int, report_id: int):
+    report = RcaReport.objects.filter(pk=report_id, cycle_id=cycle_id).first()
+    if report is None:
+        raise NotFound('No such report.')
+    return _final_file(request, report)
+
+
+def _final_file(request, report: RcaReport):
+    path = Path(report.stored_path)
+    if not path.is_file():
+        return Response({'error': f'The stored file of report v{report.version} is missing.', 'details': {}}, status=410)
+    audit('rca_final_report_downloaded', request, cycle=report.cycle_id, version=report.version)
+    return FileResponse(open(path, 'rb'), as_attachment=True, filename=report.filename, content_type=XLSX)
 
 
 # --- Cause mapping (Admin) -----------------------------------------------------------------------

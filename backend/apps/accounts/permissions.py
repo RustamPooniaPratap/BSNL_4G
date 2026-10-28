@@ -6,7 +6,7 @@ from rest_framework.exceptions import APIException
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from .models import must_change_password
-from .roles import ADMIN, role_of
+from .roles import ADMIN, can_upload_rca, role_of
 
 
 class SessionAuth(SessionAuthentication):
@@ -41,6 +41,13 @@ class IsAdminRole(IsPortalUser):
 
     def has_permission(self, request, view) -> bool:
         return super().has_permission(request, view) and role_of(request.user) == ADMIN
+
+
+class CanUploadRca(IsPortalUser):
+    """Admins and NOC Leads (RCA workbook upload and their own uploads; views check ownership)."""
+
+    def has_permission(self, request, view) -> bool:
+        return super().has_permission(request, view) and can_upload_rca(request.user)
 
 
 class AdminForWrites(IsPortalUser):

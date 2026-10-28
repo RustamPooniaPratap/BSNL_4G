@@ -15,7 +15,8 @@ import { fieldA11y } from '../lib/dataEntry';
 import { ApiError, createUser, fetchUsers, resetUserPassword, revokeUserSessions, updateUser } from '../services/api';
 import type { PortalUser, Role } from '../types';
 
-const ROLE_OPTIONS = [{ value: 'ci', label: 'CI' }, { value: 'admin', label: 'Admin' }];
+const ROLE_OPTIONS = [{ value: 'ci', label: 'CI' }, { value: 'noc_lead', label: 'NOC Lead' }, { value: 'admin', label: 'Admin' }];
+const ROLE_NAMES: Record<Role, string> = { admin: 'an Admin', noc_lead: 'a NOC Lead', ci: 'a CI' };
 type Action = 'reset' | 'deactivate' | 'activate' | 'revoke';
 const ACTION_LABEL: Record<Action, string> = { reset: 'Reset password', deactivate: 'Deactivate', activate: 'Activate', revoke: 'Sign out everywhere' };
 
@@ -57,7 +58,7 @@ export function UsersPage() {
     setMessage(null);
     try {
       await updateUser(target.id, { role });
-      setMessage({ kind: 'ok', text: `${target.username} is now ${role === 'admin' ? 'an Admin' : 'a CI'}.` });
+      setMessage({ kind: 'ok', text: `${target.username} is now ${ROLE_NAMES[role]}.` });
       reload();
     } catch (e) {
       setMessage({ kind: 'error', text: (e as Error).message });
@@ -106,7 +107,7 @@ export function UsersPage() {
               <Table className="text-xs">
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    <TableHead className="pl-4">Login ID</TableHead><TableHead>Name</TableHead><TableHead className="w-32">Role</TableHead>
+                    <TableHead className="pl-4">Login ID</TableHead><TableHead>Name</TableHead><TableHead className="w-36">Role</TableHead>
                     <TableHead>Status</TableHead><TableHead>Last sign-in</TableHead><TableHead className="pr-4 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -119,7 +120,7 @@ export function UsersPage() {
                         <TableCell className="pl-4 font-medium">{u.username}{self && <Badge variant="secondary" className="ml-1.5">You</Badge>}</TableCell>
                         <TableCell>{u.name || <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell>
-                          {locked || self ? <span className="inline-flex items-center gap-1"><ShieldCheck className="size-3.5" />{u.is_superuser ? 'Admin (superuser)' : u.role === 'admin' ? 'Admin' : 'CI'}</span> : (
+                          {locked || self ? <span className="inline-flex items-center gap-1"><ShieldCheck className="size-3.5" />{u.is_superuser ? 'Admin (superuser)' : ROLE_OPTIONS.find((o) => o.value === u.role)?.label ?? 'No role'}</span> : (
                             <SelectField id={`role-${u.id}`} value={u.role ?? ''} placeholder="No role" options={ROLE_OPTIONS} onChange={(r) => { void changeRole(u, r as Role); }} />
                           )}
                         </TableCell>
@@ -204,7 +205,7 @@ function NewUserForm({ onCreated }: { onCreated: (user: PortalUser, password: st
           {text('first_name', 'First name')}
           {text('last_name', 'Last name')}
           {text('email', 'Email')}
-          <Field id="new-role" label="Role" required className="w-32">
+          <Field id="new-role" label="Role" required className="w-36">
             <SelectField id="new-role" value={draft.role} placeholder="Role" options={ROLE_OPTIONS} onChange={(v) => set('role', v)} />
           </Field>
           <Button type="submit" disabled={busy}>{busy ? <Loader2 className="animate-spin" /> : <UserPlus />} Create user</Button>

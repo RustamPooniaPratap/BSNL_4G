@@ -26,7 +26,7 @@ from rest_framework.views import APIView
 from .audit import audit
 from .models import must_change_password, set_must_change_password
 from .permissions import IsAdminRole, IsSignedIn
-from .roles import ADMIN, CI, ROLES, role_of, set_role
+from .roles import ADMIN, CI, NOC_LEAD, ROLES, role_of, set_role
 from .throttles import LoginIPThrottle, LoginUserThrottle
 
 User = get_user_model()
@@ -212,7 +212,7 @@ def user_payload(user) -> dict:
 
 def _group_role(user) -> str | None:
     names = {g.name for g in user.groups.all()}
-    return ADMIN if ROLES[ADMIN] in names else CI if ROLES[CI] in names else None
+    return next((role for role in (ADMIN, NOC_LEAD, CI) if ROLES[role] in names), None)
 
 
 class CreateUserSerializer(serializers.Serializer):

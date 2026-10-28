@@ -384,6 +384,10 @@ function CircleNslaTable({ data, loading, error, period, selected, onSelect }: {
   const months = data?.months ?? [];
   const current = months[months.length - 1];
   const earlier = months.slice(0, -1).reverse();
+  const previous = data?.previous_mtd ?? null;
+  const previousTitle = previous ? (previous.available
+    ? `${previous.label}: ${formatDate(previous.start)} to ${formatDate(previous.end)}, the same days as ${current?.label}`
+    : previous.reason ?? undefined) : undefined;
   const circles = data?.circles ?? [];
   const projects = (data?.projects ?? []).slice().sort((a, b) => PROJECT_ORDER.indexOf(a.report_type) - PROJECT_ORDER.indexOf(b.report_type));
   const byRank = (a: TopPerformerCircle, b: TopPerformerCircle) => (a.nsla_rank ?? Infinity) - (b.nsla_rank ?? Infinity) || a.circle.localeCompare(b.circle);
@@ -419,6 +423,7 @@ function CircleNslaTable({ data, loading, error, period, selected, onSelect }: {
                 <th scope="col" className={cn(TH, 'border-l text-right')}>NSLA · {current.label}</th>
                 <th scope="col" className={cn(TH, 'text-right')}>NSLA %</th>
                 <th scope="col" className={cn(TH, 'text-center')}>Rank</th>
+                {previous && <th scope="col" className={cn(TH, 'border-l bg-sky-50/70 text-right')} title={previousTitle}>{previous.label}</th>}
                 {earlier.map((m, i) => (
                   <th key={m.key} scope="col" className={cn(TH, 'text-right', i === 0 && 'border-l')}>{m.label}</th>
                 ))}
@@ -435,6 +440,7 @@ function CircleNslaTable({ data, loading, error, period, selected, onSelect }: {
                     <td className={cn(TD, 'border-l text-right')} title={note(total)}>{formatNumber(total?.nsla_sites)}</td>
                     <td className={cn(TD, 'text-right')}>{formatPct(total?.nsla_pct, 1)}</td>
                     <td className={TD} />
+                    {previous && <td className={cn(TD, 'border-l bg-sky-50/40 text-right')} title={note(project.nsla[previous.key]) ?? previousTitle}>{monthCell(project.nsla[previous.key], true)}</td>}
                     {earlier.map((m, i) => (
                       <td key={m.key} className={cn(TD, 'text-right', i === 0 && 'border-l')} title={note(project.nsla[m.key])}>{monthCell(project.nsla[m.key], true)}</td>
                     ))}
@@ -464,6 +470,7 @@ function CircleNslaTable({ data, loading, error, period, selected, onSelect }: {
                               c.nsla_rank === 1 ? 'bg-emerald-600 text-white' : 'bg-muted text-foreground')}>{c.nsla_rank}</span>
                           )}
                         </td>
+                        {previous && <td className={cn(TD, 'border-l bg-sky-50/40 text-right')} title={note(c.nsla[previous.key]) ?? previousTitle}>{monthCell(c.nsla[previous.key])}</td>}
                         {earlier.map((m, i) => (
                           <td key={m.key} className={cn(TD, 'text-right', i === 0 && 'border-l')} title={note(c.nsla[m.key])}>{monthCell(c.nsla[m.key])}</td>
                         ))}

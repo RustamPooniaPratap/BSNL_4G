@@ -6,6 +6,7 @@ import { RequireAdmin } from '../../components/auth/Guards';
 import { Sidebar } from '../../components/Sidebar';
 import * as api from '../../services/api';
 import { CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
+import type { AuthUser } from '../../types';
 import type { RcaCauses, RcaOptions, RcaPage, RcaRecord, RcaRecordDetail, RcaSummary } from '../../types/rca';
 import { RcaMappingPage } from './RcaMappingPage';
 import { RcaRegisterPage } from './RcaRegisterPage';
@@ -19,7 +20,7 @@ vi.mock('../../services/api', async (importOriginal) => ({
 const m = vi.mocked(api);
 
 const OPTIONS: RcaOptions = {
-  dates: ['2026-10-21'], projects: ['4G Saturation', 'LWE'],
+  dates: ['2026-10-21'], months: [{ month: '2026-10', dates_with_records: 1 }], projects: ['4G Saturation', 'LWE'],
   circles: [{ project: '4G Saturation', circle: 'OD', circle_raw: 'Odisha' }, { project: 'LWE', circle: 'BH', circle_raw: 'Bihar' }],
   final_buckets: [{ value: 'other media', label: 'Other Media', unclassified: false }],
   bucket_2: [{ value: 'bsnl media', label: 'BSNL Media', unclassified: false }, { value: '__unclassified__', label: 'Unclassified (blank or "-")', unclassified: true }],
@@ -51,11 +52,23 @@ const SUMMARY: RcaSummary = {
     { project: '4G Saturation', circle: 'OD', records: 522, outage_minutes: 1000, affected_sites: 522, portfolio_sites: 1603, records_per_100_sites: 32.6, minutes_per_portfolio_site: 0.6 },
     { project: 'LWE', circle: 'UP', records: 39, outage_minutes: 100, affected_sites: 39, portfolio_sites: 78, records_per_100_sites: 50, minutes_per_portfolio_site: 1.3 },
   ],
+  projects: [
+    { project: '4G Saturation', records: 1346, outage_minutes: 509459.16, affected_sites: 1346, rca_not_applicable: 700, incomplete_records: 150 },
+    { project: 'LWE', records: 473, outage_minutes: 122819.61, affected_sites: 473, rca_not_applicable: 376, incomplete_records: 73 },
+  ],
+  cycle: {
+    id: 4, name: 'October 2026 RCA Report', period_start: '2026-10-21', period_end: '2026-10-21', period_label: '21 Oct 2026', matches_filter: false,
+    notes: null, created_by: 'noc-lead', created_at: '2026-10-22T09:00:00', records: 1819, uploads_summary: { total: 1, imported: 1, with_rejected_rows: 0, awaiting_confirmation: 0, validation_failed: 0, corrections: 0, last_upload_at: '2026-10-22T10:00:00Z' },
+    status: { code: 'partial', label: 'Partially received', required: 3, received: 1, complete: false, final_version: null, can_finalize: false,
+      upload_awaiting_confirmation: false, records_checksum: 'x',
+      outstanding: [{ project: '4G Saturation', circle: 'RJ', status: 'pending', status_label: 'Pending — no accepted records' }, { project: 'LWE', circle: 'BH', status: 'pending', status_label: 'Pending — no accepted records' }] },
+  },
   population_source: "Sites per circle in the dashboard's current Master data",
   categories: { mapped: [], unreviewed: { records: 1819, outage_minutes: 632278.77, descriptions: 394 }, no_description: { records: 0, outage_minutes: null } },
   top_records: [REC],
 };
 
+const NOC_LEAD: AuthUser = { username: 'noc.lead', name: 'NOC Lead', role: 'noc_lead', role_label: 'NOC Lead', must_change_password: false };
 const Location = () => { const l = useLocation(); return <p data-testid="location">{l.pathname + l.search}</p>; };
 const bars = (name: string) => within(screen.getByRole('list', { name })).getAllByRole('listitem').map((li) => li.textContent);
 
@@ -125,6 +138,15 @@ describe('RCA Summary', () => {
     expect(within(na).getByText('1,076')).toBeInTheDocument();
     expect(within(na).getByText(/not counted as missing \(120 have Bucket - 2 "-"\)/)).toBeInTheDocument();
     expect(screen.queryByText('Unclassified or incomplete')).not.toBeInTheDocument();
+    // The reporting cycle of the date: received versus required, the pending circles and the partial report.
+    const cycle = screen.getByLabelText('Reporting period');
+    expect(within(cycle).getByText(/Latest reporting period 21 Oct 2026 · October 2026 RCA Report/)).toBeInTheDocument();
+    expect(within(cycle).getByText('1 of 3 expected projects / circles have accepted data')).toBeInTheDocument();
+    expect(within(cycle).getByText(/Pending: RJ 4G, BH LWE\./)).toBeInTheDocument();
+    expect(within(cycle).getByText('The figures below follow the filters above, not only this period.')).toBeInTheDocument();
+    expect(within(cycle).getByRole('link', { name: 'Partial report (Excel)' })).toHaveAttribute('href', expect.stringContaining('/rca/cycles/4/report.xlsx'));
+    const projects = within(screen.getByLabelText('Project-wise summary')).getAllByRole('row');
+    expect(within(projects[2]).getAllByRole('cell').map((c) => c.textContent)).toEqual(['LWE', '473', '1,22,820 min', '473', '376', '73']);
     const title = 'RCA classification: Final Bucket';
     // Technical causes are ranked; Other Media follows, labelled as not applicable, even though it has the most records.
     expect(bars(title).map((t) => t!.split(/\d/)[0])).toEqual(['BSNL OFC', 'BBNL OFC', 'Other Media — RCA not applicable']);
@@ -152,6 +174,24 @@ describe('RCA Summary', () => {
     renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary' });
     expect(await screen.findByText(/394 distinct RCA texts/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'OD0001' })).toHaveAttribute('href', '/rca?record=1');
+  });
+
+  it('selects one reporting date or a month aggregated from the dates with records', async () => {
+    const user = userEvent.setup();
+    m.fetchRcaOptions.mockResolvedValue({ ...OPTIONS, dates: ['2026-10-21', '2026-10-22'], months: [{ month: '2026-10', dates_with_records: 2 }] });
+    renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary' });
+    expect(await screen.findByText('Showing every reporting date')).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Reporting date' }));
+    const choices = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    expect(choices).toEqual(['All reporting dates', '22 Oct 2026', '21 Oct 2026', 'Oct 2026 — month (2 reporting dates with records)']);
+    await user.click(screen.getByRole('option', { name: '22 Oct 2026' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('date_from=2026-10-22&date_to=2026-10-22');
+    expect(await screen.findByText('Showing 22 Oct 2026')).toBeInTheDocument();
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-22', date_to: '2026-10-22' }), expect.anything());
+    await user.click(screen.getByRole('combobox', { name: 'Reporting date' }));
+    await user.click(await screen.findByRole('option', { name: /Oct 2026 — month/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent('date_from=2026-10-01&date_to=2026-10-31');
+    expect(await screen.findByText('Showing Oct 2026: the sum of 2 reporting dates with records')).toBeInTheDocument();
   });
 
   it('is an Admin page: a CI is refused', () => {
@@ -189,18 +229,26 @@ describe('RCA cause mapping', () => {
 });
 
 describe('RCA in the sidebar', () => {
-  it('lists RCA as its own section; a CI sees only the RCA Register, an Admin all four RCA pages', async () => {
+  it('lists RCA as its own section; a CI sees only the RCA Register, a NOC Lead also the upload, an Admin four RCA pages but not Cause Mapping', async () => {
     const view = renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: CI_USER }) });
     const nav = () => screen.getByRole('navigation', { name: 'Main' });
     expect(within(nav()).getByText('RCA')).toHaveClass('uppercase');  // a section heading, like Data
     expect(within(nav()).queryByRole('button', { name: 'RCA' })).not.toBeInTheDocument();
     expect(within(nav()).getByRole('link', { name: 'RCA Register' })).toHaveAttribute('aria-current', 'page');
-    for (const name of ['RCA Summary', 'Cause Mapping', 'RCA Import']) {
+    for (const name of ['RCA Summary', 'RCA Submissions', 'Cause Mapping', 'Upload RCA Data']) {
       expect(within(nav()).queryByRole('link', { name, hidden: true })).not.toBeInTheDocument();
     }
     view.unmount();
+    const noc = renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: NOC_LEAD }) });
+    expect(within(nav()).getByRole('link', { name: 'Upload RCA Data' })).toHaveAttribute('href', '/rca/import');
+    for (const name of ['RCA Summary', 'RCA Submissions', 'Cause Mapping', 'Team Performance', 'CSV Arrival Tracking', 'Users & Roles']) {
+      expect(within(nav()).queryByRole('link', { name, hidden: true })).not.toBeInTheDocument();
+    }
+    noc.unmount();
     renderWithWorkbook(<Sidebar />, { url: '/portfolio' });
-    expect(['RCA Register', 'RCA Summary', 'Cause Mapping', 'RCA Import'].map((n) => within(nav()).getByRole('link', { name: n }).getAttribute('href')))
-      .toEqual(['/rca', '/rca/summary', '/rca/mappings', '/rca/import']);
+    expect(['RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload RCA Data'].map((n) => within(nav()).getByRole('link', { name: n }).getAttribute('href')))
+      .toEqual(['/rca', '/rca/summary', '/rca/submissions', '/rca/import']);
+    // Cause Mapping is out of the navigation; its page and data are kept.
+    expect(within(nav()).queryByRole('link', { name: 'Cause Mapping', hidden: true })).not.toBeInTheDocument();
   });
 });

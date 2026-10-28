@@ -157,7 +157,7 @@ export function LoginPage() {
               <FlaskConical /> Continue without signing in
             </Button>
             <p className="text-xs text-amber-900">
-              Development only: signs in as <strong>{bypass.username}</strong> ({bypass.role === 'admin' ? 'Admin' : 'CI'}). Shown only on this
+              Development only: signs in as <strong>{bypass.username}</strong> ({bypass.role === 'admin' ? 'Admin' : bypass.role === 'noc_lead' ? 'NOC Lead' : 'CI'}). Shown only on this
               computer while the backend runs in debug mode with DEV_LOGIN_BYPASS on.
             </p>
           </div>

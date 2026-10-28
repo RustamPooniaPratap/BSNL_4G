@@ -982,6 +982,7 @@ def circle_top_performers(ds: Dataset, selection: Selection, day: date, month: s
                             'ie': _rank_people(rows['ie'], key, assignments['ie'])})
         _rank_circles(circles, key)
     month_info = next((m for m in groups['ci']['months'] if m['key'] == key), None)
+    previous_mtd = _circle_previous_mtd(ds, selection, day, circles) if month_info and month_info['kind'] == 'mtd' else None
     return {
         'reporting_date': day.isoformat(),
         'months_available': groups['ci']['months_available'],
@@ -989,14 +990,35 @@ def circle_top_performers(ds: Dataset, selection: Selection, day: date, month: s
         'month': month_info,
         # Monthly columns, oldest first; the last is the reporting month.
         'months': groups['ci']['months'],
+        # The previous month's same elapsed days (e.g. Sep-26 MTD beside Oct-26 MTD); only for a month to date.
+        'previous_mtd': previous_mtd,
         'rules': {'min_sites': RANK_MIN_SITES, 'min_people': RANK_MIN_PEOPLE, 'nsla_threshold_pct': PENALTY_THRESHOLD},
         'circles': circles,
         'projects': [{'report_type': t, 'sites_in_scope': sum(c['sites_in_scope'] for c in circles if c['report_type'] == t),
                       'nsla': {m['key']: _pooled_nsla([c['nsla'][m['key']] for c in circles if c['report_type'] == t],
                                                       sum(c['sites_in_scope'] for c in circles if c['report_type'] == t))
-                               for m in groups['ci']['months']}}
+                               for m in [*groups['ci']['months'], *([previous_mtd] if previous_mtd else [])]}}
                      for t in sorted({c['report_type'] for c in circles})],
     }
+
+
+def _circle_previous_mtd(ds: Dataset, selection: Selection, day: date, circles: list[dict]) -> dict:
+    """NSLA per circle over the previous month's days 1..N (N = the reporting date's day), from that month's daily
+    columns, added to each circle's ``nsla`` under the column key. A circle without daily data there gets None
+    (never the full month in its place); the column says why when no circle has data."""
+    meta, block = same_days_previous_month(ds, day)
+    key = f"{meta['key']}-mtd"
+    rows = np.flatnonzero(scope_mask(ds, selection))
+    uptime = site_uptime(block[rows]) if block is not None else np.full(len(rows), np.nan)
+    sites = ds.sites.iloc[rows]
+    types, names = sites['report_type'].to_numpy(), sites['circle'].to_numpy()
+    for c in circles:
+        positions = np.flatnonzero((types == c['report_type']) & (names == c['circle']))
+        c['nsla'][key] = _nsla_values(uptime, positions)
+    available = any(c['nsla'][key] for c in circles)
+    return {'key': key, 'label': f"{meta['label']} MTD", 'kind': 'previous_mtd', 'start': meta['start'], 'end': meta['end'],
+            'available': available,
+            'reason': None if available else f"{meta['label']} has no daily data in the source for days 1–{day.day}."}
 
 
 def filter_team(table: pd.DataFrame, ci_name: str = '', ie_name: str = '') -> pd.DataFrame:

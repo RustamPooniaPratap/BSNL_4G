@@ -25,7 +25,10 @@ export function useAuth(): AuthContextValue {
 }
 
 /** Pages each role may open. Admin-only pages are refused by the backend as well. */
-export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/ci-ie', '/teams/top', '/workbook', '/data/database', '/admin/users', '/rca/summary', '/rca/mappings', '/rca/import'];
+export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/ci-ie', '/teams/top', '/workbook', '/data/database', '/admin/users', '/rca/summary', '/rca/submissions', '/rca/mappings', '/rca/import'];
+/** Admin-only pages a NOC Lead may open as well (their own RCA uploads; the API limits them to their own). */
+export const NOC_LEAD_PATHS = ['/rca/import'];
 
+/** A NOC Lead opens what a CI opens, plus uploading RCA data. */
 export const canOpen = (role: Role | null | undefined, path: string) =>
-  role === 'admin' || (role === 'ci' && !ADMIN_ONLY_PATHS.includes(path));
+  role === 'admin' || ((role === 'ci' || role === 'noc_lead') && !ADMIN_ONLY_PATHS.includes(path)) || (role === 'noc_lead' && NOC_LEAD_PATHS.includes(path));

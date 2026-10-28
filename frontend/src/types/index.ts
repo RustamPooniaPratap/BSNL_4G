@@ -494,6 +494,8 @@ export interface TopPerformersResponse {
   month: TeamMonth | null;
   /** Monthly columns, oldest first; the last is the reporting month. */
   months: TeamMonth[];
+  /** The previous month's same elapsed days beside a month to date (values under its key in each `nsla`); null otherwise. */
+  previous_mtd: { key: string; label: string; kind: 'previous_mtd'; start: string | null; end: string | null; available: boolean; reason: string | null } | null;
   rules: { min_sites: number; min_people: number; nsla_threshold_pct: number };
   circles: TopPerformerCircle[];
   projects: { report_type: string; sites_in_scope: number; nsla: Record<string, NslaValue | null> }[];
@@ -674,7 +676,7 @@ export interface EmailResult {
 
 // --- Accounts ------------------------------------------------------------------------------
 
-export type Role = 'admin' | 'ci';
+export type Role = 'admin' | 'noc_lead' | 'ci';
 
 /** The signed-in user, from /auth/me/ (the role is decided by the server). */
 export interface AuthUser {

@@ -39,18 +39,19 @@ const response: TopPerformersResponse = {
     { key: '2026-09', label: 'Sep-26', kind: 'month', start: '2026-09-01', end: '2026-09-30' },
     { key: '2026-10', label: 'Oct-26 MTD', kind: 'mtd', start: '2026-10-01', end: '2026-10-20' },
   ],
-  projects: [{ report_type: 'LWE', sites_in_scope: 312, nsla: { '2026-09': nsla(222, 312), '2026-10': nsla(112, 312) } }],
+  previous_mtd: { key: '2026-09-mtd', label: 'Sep-26 MTD', kind: 'previous_mtd', start: '2026-09-01', end: '2026-09-20', available: true, reason: null },
+  projects: [{ report_type: 'LWE', sites_in_scope: 312, nsla: { '2026-09': nsla(222, 312), '2026-10': nsla(112, 312), '2026-09-mtd': nsla(15, 62) } }],
   rules: { min_sites: 10, min_people: 2, nsla_threshold_pct: 98.5 },
   circles: [
     {
       report_type: 'LWE', circle: 'AP', sites_in_scope: 62, nsla_rank: 1,
-      nsla: { '2026-09': nsla(21, 62), '2026-10': nsla(11, 62) },
+      nsla: { '2026-09': nsla(21, 62), '2026-10': nsla(11, 62), '2026-09-mtd': nsla(15, 62) },
       ci: ranking('insufficient', [], [person('Krishna Sundaram', 62, 11, 1)], '1 of 1 eligible; at least 2 are needed to compare.'),
       ie: ranking('ranked', ['Naidana Ashok'], [person('Naidana Ashok', 14, 1, 1), person('Other IE', 20, 5, 2), person('Tiny IE', 3, 0, null, 'Fewer than 10 assigned sites; too small to compare fairly.')]),
     },
     {
       report_type: 'LWE', circle: 'BH', sites_in_scope: 250, nsla_rank: 2,
-      nsla: { '2026-09': nsla(201, 250), '2026-10': nsla(101, 250) },
+      nsla: { '2026-09': nsla(201, 250), '2026-10': nsla(101, 250), '2026-09-mtd': null },
       ci: ranking('ranked', ['Gaurav Kumar'], [person('Gaurav Kumar', 105, 36, 1, null, ['JH LWE']), person('BH-TBD', 145, 65, 2)]),
       ie: ranking('tie', ['Md. Mazhar Imam', 'Yugesh Kumar Singh'], [person('Md. Mazhar Imam', 12, 0, 1), person('Yugesh Kumar Singh', 12, 0, 1), person('Third', 30, 6, 3)]),
     },
@@ -114,6 +115,12 @@ describe('TopPerformersPage', () => {
     expect(rows[2]).toHaveTextContent('17.7%');
     expect(rows[2]).toHaveTextContent('21');
     expect(rows[3]).toHaveTextContent('BH');
+    // Sep-26 MTD beside the month to date; a circle without September daily data shows "—", not 0.
+    const headers = within(rows[0]).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers.indexOf('Sep-26 MTD')).toBe(headers.indexOf('Rank') + 1);
+    const sepMtd = (row: HTMLElement) => within(row).getAllByRole('cell')[headers.indexOf('Sep-26 MTD') - 1].textContent;
+    expect(sepMtd(rows[2])).toBe('1524%');
+    expect(sepMtd(rows[3])).toBe('—');
   });
 
   it('requests an earlier reporting month', async () => {

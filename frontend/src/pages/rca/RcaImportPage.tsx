@@ -4,24 +4,39 @@ import { Download, FileUp, Upload } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Field, SelectField } from '../../components/data/DataEntry';
+import { RcaImportPreview, type CommitChoices } from '../../components/rca/RcaImportPreview';
+import { useAuth } from '../../context/auth';
 import { useApiQuery } from '../../hooks/useApiQuery';
-import { formatDate, formatNumber } from '../../lib/format';
-import { commitRcaImport, discardRcaImport, fetchRcaImports, previewRcaImport, rcaIssuesUrl } from '../../services/api';
-import type { RcaImportBatch } from '../../types/rca';
-import { Segmented } from '../../components/rca/RcaShared';
+import { formatDateTime, formatNumber } from '../../lib/format';
+import { formatMin, periodText } from '../../lib/rca';
+import { commitRcaImport, discardRcaImport, fetchRcaImport, fetchRcaImports, previewRcaImport, rcaImportWorkbookUrl, rcaIssuesUrl } from '../../services/api';
+import type { RcaImportBatch, RcaProjectScope, RcaUploadDetails } from '../../types/rca';
 
-/** Admin: upload the RCA workbook, check the preview, then commit it to the database in one transaction. */
+const SCOPES: { value: RcaProjectScope; label: string }[] = [
+  { value: 'both', label: 'Both (4G Saturation and LWE)' }, { value: '4G Saturation', label: '4G Saturation' }, { value: 'LWE', label: 'LWE' },
+];
+const EMPTY: RcaUploadDetails = { report_name: '', period_start: '', period_end: '', project_scope: 'both', remarks: '' };
+
+/**
+ * Upload RCA Data (NOC Lead and Admin): enter the report details, upload the completed RCA workbook, check the
+ * validation and confirm the import. The uploader is the signed-in account. Each user sees their own uploads here;
+ * Admins monitor every upload on RCA Submissions.
+ */
 export function RcaImportPage() {
+  const { user } = useAuth();
   const [version, setVersion] = useState(0);
   const history = useApiQuery(`rca-imports-${version}`, (signal) => fetchRcaImports(signal));
   const input = useRef<HTMLInputElement>(null);
+  const [details, setDetails] = useState<RcaUploadDetails>(EMPTY);
   const [file, setFile] = useState<File | null>(null);
   const [batch, setBatch] = useState<RcaImportBatch | null>(null);
-  const [conflicts, setConflicts] = useState<'skip' | 'overwrite'>('skip');
+  const [result, setResult] = useState<RcaImportBatch | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
+  const set = (key: keyof RcaUploadDetails, value: string) => setDetails((d) => ({ ...d, [key]: value }));
 
   async function step(action: () => Promise<void>) {
     setBusy(true);
@@ -34,19 +49,23 @@ export function RcaImportPage() {
       setBusy(false);
     }
   }
-  const preview = () => step(async () => { setDone(null); setBatch(await previewRcaImport(file!)); setVersion((v) => v + 1); });
-  const commit = () => step(async () => {
-    const result = await commitRcaImport(batch!.id, batch!.report!.conflict_rows ? conflicts : '');
-    const c = result.counts;
-    setDone(`Imported: ${formatNumber(c.inserted)} new records, ${formatNumber(c.unchanged)} already present` +
-      (c.conflicts ? `, ${formatNumber(c.conflicts)} conflicts (${c.overwritten ? `${c.overwritten} overwritten` : `${c.skipped_conflicts} skipped`})` : '') +
-      `. The database now holds ${formatNumber(result.records)} RCA records.`);
+  const validate = () => step(async () => {
+    setResult(null);
+    setBatch(await previewRcaImport(file!, details));
+    setVersion((v) => v + 1);
+  });
+  const commit = (choices: CommitChoices) => step(async () => {
+    const done = await commitRcaImport(batch!.id, choices);
+    setResult(done);
     setBatch(null);
     setFile(null);
+    setDetails(EMPTY);
+    if (input.current) input.current.value = '';
     setVersion((v) => v + 1);
   });
   const discard = () => step(async () => { await discardRcaImport(batch!.id); setBatch(null); setVersion((v) => v + 1); });
-  const r = batch?.report;
+  const open = (id: number) => step(async () => { setBatch(null); setResult(await fetchRcaImport(id)); });
+  const ready = file && details.report_name.trim() && details.period_start;
 
   return (
     <div className="space-y-4">
@@ -54,121 +73,135 @@ export function RcaImportPage() {
         <div className="flex items-start gap-3">
           <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><FileUp className="size-5" aria-hidden="true" /></span>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">RCA import</h1>
+            <h1 className="text-xl font-semibold tracking-tight">Upload RCA Data</h1>
             <p className="text-sm text-muted-foreground">
-              Upload the RCA workbook (sheet "Sheet1": Date, Project, Circle, Site ID, Site Name, OA, BA, O&M Start (Yes/No), Outage Min., Final Bucket, Bucket - 2, RCA).
-              Nothing is written until you commit the preview. A repeat import adds nothing twice, and rows that differ from stored records are never overwritten without your choice.
+              Upload the completed RCA workbook, such as the Daily RCA Compilation. Its data sheet (e.g. “RCA Backup”) is found by the columns Date, Project, Circle, Site ID, Site Name, OA, BA, O&M Start (Yes/No), Outage Min., Final Bucket, Bucket - 2 and RCA; summary and pivot sheets are ignored.
+              Upload it once a day with that day's reporting date. Rows of earlier dates (the workbook is cumulative) are compared with what is already stored and never removed;
+              rows dated after the reporting date are rejected. Every row needs a project of the chosen scope and a Site ID of the Up-Time Report. Nothing is imported until you confirm.
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <input ref={input} type="file" accept=".xlsx,.xlsm" className="hidden" aria-label="RCA workbook"
-            onChange={(e) => { setFile(e.target.files?.[0] ?? null); setBatch(null); setDone(null); }} />
-          <Button type="button" variant="outline" onClick={() => input.current?.click()}><Upload /> Choose workbook</Button>
-          <span className="text-sm text-muted-foreground">{file ? file.name : 'No file chosen'}</span>
-          <Button type="button" onClick={preview} disabled={!file || busy}>{busy && !batch ? 'Checking…' : 'Preview'}</Button>
-        </div>
+        <form className="space-y-3" aria-label="Report details" onSubmit={(e) => { e.preventDefault(); if (ready) void validate(); }}>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field id="report-name" label="Report name" required className="min-w-72 flex-1">
+              <Input id="report-name" value={details.report_name} onChange={(e) => set('report_name', e.target.value)} placeholder="e.g. October 2026 RCA Report" />
+            </Field>
+            <Field id="period-start" label="Reporting date" required className="w-52">
+              <Input id="period-start" type="date" value={details.period_start} onChange={(e) => set('period_start', e.target.value)} />
+            </Field>
+            <Field id="period-end" label="Last day (only for a multi-day period)" className="w-60">
+              <Input id="period-end" type="date" value={details.period_end} min={details.period_start || undefined} onChange={(e) => set('period_end', e.target.value)} />
+            </Field>
+            <Field id="project-scope" label="Project scope" required className="w-60">
+              <SelectField id="project-scope" value={details.project_scope} placeholder="Project scope" options={SCOPES} onChange={(v) => set('project_scope', v)} />
+            </Field>
+          </div>
+          <Field id="remarks" label="Remarks" hint="For example, notes on the reporting cycle or why this is a corrected workbook.">
+            <Input id="remarks" value={details.remarks} onChange={(e) => set('remarks', e.target.value)} />
+          </Field>
+          <div className="flex flex-wrap items-center gap-2">
+            <input ref={input} type="file" accept=".xlsx,.xlsm" className="hidden" aria-label="RCA workbook"
+              onChange={(e) => { setFile(e.target.files?.[0] ?? null); setBatch(null); }} />
+            <Button type="button" variant="outline" onClick={() => input.current?.click()}><Upload /> Choose workbook</Button>
+            <span className="text-sm text-muted-foreground">{file ? file.name : 'No file chosen'}</span>
+            <Button type="submit" disabled={!ready || busy}>{busy && !batch ? 'Validating…' : 'Validate workbook'}</Button>
+            <span className="text-xs text-muted-foreground">Uploaded as {user?.username ?? '—'}</span>
+          </div>
+        </form>
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-        {done && <Alert><AlertDescription>{done} <Link to="/rca" className="font-medium underline">Open the RCA Register</Link></AlertDescription></Alert>}
       </Card>
 
-      {batch && r && (
-        <Card className="gap-4 rounded-xl px-5 py-4" aria-label="Import preview">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold">Preview: {batch.file}</h2>
-              <p className="text-xs text-muted-foreground">Import #{batch.id} · checksum {batch.checksum.slice(0, 12)}… · not yet in the database</p>
-            </div>
-            <a href={rcaIssuesUrl(batch.id)} className="inline-flex items-center gap-1.5 text-sm font-medium underline underline-offset-2"><Download className="size-4" /> Validation report (CSV)</a>
-          </div>
-          {r.already_imported && (
-            <Alert><AlertDescription>This exact file was already imported (import #{r.already_imported.batch}, {new Date(r.already_imported.committed_at).toLocaleString('en-IN')}). Committing again adds nothing.</AlertDescription></Alert>
-          )}
-          <dl className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {[
-              ['Valid rows', r.valid_rows], ['Rejected rows', r.rejected_rows], ['Distinct sites', r.distinct_sites],
-              ['New records', r.new_rows], ['Already present', r.unchanged_rows], ['Conflicts', r.conflict_rows],
-            ].map(([label, value]) => (
-              <div key={label as string} className="rounded-lg border px-3 py-2">
-                <dt className="text-xs text-muted-foreground">{label}</dt>
-                <dd className={`text-lg font-semibold tabular-nums ${(label === 'Rejected rows' || label === 'Conflicts') && Number(value) ? 'text-destructive' : ''}`}>{formatNumber(Number(value))}</dd>
-              </div>
-            ))}
-          </dl>
-          <div className="grid gap-4 text-sm lg:grid-cols-3">
-            <Counts title="Reporting dates" items={Object.entries(r.dates).map(([d, n]) => [formatDate(d), n])} />
-            <Counts title="Projects (source label → read as)" items={Object.entries(r.projects_raw).map(([p, n]) => [`${p} → ${p.toLowerCase().startsWith('4g') ? '4G Saturation' : p}`, n])} />
-            <Counts title="Circles (source name → code)" items={Object.entries(r.circle_names)} />
-          </div>
-          <div className="space-y-1 text-sm">
-            <h3 className="font-semibold">Validation</h3>
-            <p className="text-xs text-muted-foreground">
-              {formatNumber(r.severity_counts.error)} errors (rows rejected) · {formatNumber(r.severity_counts.warning)} warnings · {formatNumber(r.severity_counts.info)} notes.
-              Total Outage Min.: {formatNumber(Math.round(r.outage_minutes))} · {formatNumber(r.distinct_rca)} distinct RCA descriptions.
-            </p>
-            <ul className="list-disc space-y-0.5 pl-5 text-xs">
-              {Object.entries(r.issue_counts).map(([code, n]) => <li key={code}><span className="font-mono">{code}</span>: {formatNumber(n)}</li>)}
-              {Object.entries(r.label_variants).flatMap(([field, groups]) => groups.map((g) => (
-                <li key={field + g.join()}>{field === 'om_start_raw' ? 'O&M Start' : field === 'final_bucket' ? 'Final Bucket' : 'Bucket - 2'} spellings grouped for filtering (values kept): {g.map((v) => `“${v}”`).join(', ')}</li>
-              )))}
-            </ul>
-            {r.issues.filter((i) => i.severity !== 'info' || i.row == null).slice(0, 12).map((i, n) => (
-              <p key={n} className={`text-xs ${i.severity === 'error' ? 'text-destructive' : i.severity === 'warning' ? 'text-amber-700' : 'text-muted-foreground'}`}>
-                {i.row ? `Row ${i.row}${i.site_id ? ` (${i.site_id})` : ''}: ` : ''}{i.message}
-              </p>
-            ))}
-          </div>
-          {r.conflict_rows > 0 && (
-            <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
-              <p><span className="font-semibold">{formatNumber(r.conflict_rows)} rows differ</span> from RCA records already stored for the same date, project and site. Choose what to do:</p>
-              <Segmented label="Conflicting rows" value={conflicts} onChange={setConflicts} options={[['skip', 'Keep stored records (skip)'], ['overwrite', 'Overwrite with this file']]} />
-              <ul className="text-xs">
-                {r.conflicts.slice(0, 5).map((c) => <li key={c.row}>Row {c.row} ({c.site_id}): {Object.keys(c.differences).join(', ')}</li>)}
-              </ul>
-            </div>
-          )}
-          <div className="flex gap-2">
-            <Button type="button" onClick={commit} disabled={busy || !r.valid_rows}>{busy ? 'Working…' : `Commit ${formatNumber(r.new_rows)} new records`}</Button>
-            <Button type="button" variant="ghost" onClick={discard} disabled={busy}>Discard preview</Button>
-          </div>
-        </Card>
-      )}
+      {batch && <RcaImportPreview key={batch.id} batch={batch} busy={busy} onCommit={commit} onDiscard={discard} />}
+      {result && <UploadSummary batch={result} />}
 
-      <Card className="gap-2 rounded-xl px-5 py-4">
-        <h2 className="text-base font-semibold">Import history</h2>
-        {history.data && <p className="text-xs text-muted-foreground">{formatNumber(history.data.records)} RCA records in the database.</p>}
+      <Card className="gap-2 rounded-xl px-5 py-4" aria-label="My uploads">
+        <h2 className="text-base font-semibold">My uploads</h2>
+        {history.data && <p className="text-xs text-muted-foreground">{formatNumber(history.data.records)} accepted RCA records in the database in total.{user?.role === 'admin' && <> Every user's uploads are on <Link to="/rca/submissions" className="underline">RCA Submissions</Link>.</>}</p>}
         {history.data?.imports.length ? (
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader><TableRow>{['#', 'File', 'Status', 'Uploaded', 'By', 'Result', ''].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
+              <TableHeader><TableRow>{['#', 'Report', 'Period', 'File', 'Uploaded', 'Status', 'Imported · updated · skipped · rejected', ''].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
               <TableBody>
                 {history.data.imports.map((b) => (
                   <TableRow key={b.id}>
                     <TableCell>{b.id}</TableCell>
-                    <TableCell className="max-w-56 truncate" title={b.file}>{b.file}</TableCell>
-                    <TableCell className="capitalize">{b.status}</TableCell>
-                    <TableCell className="whitespace-nowrap">{new Date(b.uploaded_at).toLocaleString('en-IN')}</TableCell>
-                    <TableCell>{b.imported_by ?? '—'}</TableCell>
-                    <TableCell className="text-xs">{b.status === 'committed' ? `${formatNumber(b.counts.inserted ?? 0)} new · ${formatNumber(b.counts.unchanged ?? 0)} unchanged · ${formatNumber(b.counts.conflicts ?? 0)} conflicts`
-                      : b.error ?? (b.status === 'previewed' ? `${formatNumber(b.counts.valid ?? 0)} valid rows, not committed` : '—')}</TableCell>
-                    <TableCell>{b.status !== 'failed' && <a href={rcaIssuesUrl(b.id)} className="text-xs underline">Report</a>}</TableCell>
+                    <TableCell className="max-w-48 truncate" title={b.report_name ?? ''}>{b.report_name ?? '—'}</TableCell>
+                    <TableCell className="whitespace-nowrap">{periodText(b.period_start, b.period_end)}</TableCell>
+                    <TableCell className="max-w-48 truncate" title={b.file}>{b.file}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(b.uploaded_at)}</TableCell>
+                    <TableCell>{b.status_label}{b.correction && <span className="ml-1 text-xs text-amber-800">(correction)</span>}</TableCell>
+                    <TableCell className="text-xs tabular-nums">{b.status === 'committed' ? `${n(b.counts.inserted)} · ${n(b.counts.updated)} · ${n(b.counts.skipped)} · ${n(b.counts.rejected)}` : b.error ?? '—'}</TableCell>
+                    <TableCell><Button type="button" size="sm" variant="ghost" onClick={() => open(b.id)}>View</Button></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-        ) : <p className="text-sm text-muted-foreground">{history.error ? history.error.message : history.data ? 'No RCA imports yet.' : 'Loading…'}</p>}
+        ) : <p className="text-sm text-muted-foreground">{history.error ? history.error.message : history.data ? 'You have not uploaded RCA data yet.' : 'Loading…'}</p>}
       </Card>
     </div>
   );
 }
 
-function Counts({ title, items }: { title: string; items: [string, number][] }) {
+const n = (v: number | boolean | undefined) => (typeof v === 'number' ? formatNumber(v) : '—');
+
+/** The result of one upload: its details, counts, project / circle breakdown and downloads. */
+function UploadSummary({ batch }: { batch: RcaImportBatch }) {
+  const c = batch.counts;
+  const r = batch.report;
+  const imported = batch.status === 'committed';
+  const byProject: Record<string, number> = {};
+  for (const [key, count] of Object.entries(r?.circles ?? {})) byProject[key.split('|')[0]] = (byProject[key.split('|')[0]] ?? 0) + count;
+  const tiles: [string, number | boolean | undefined][] = imported
+    ? [['Rows in workbook', c.total], ['Imported (new)', c.inserted], ['Updated', c.updated], ['Skipped or duplicate', c.skipped], ['Rejected', c.rejected], ['Withdrawn', c.withdrawn]]
+    : [['Rows in workbook', c.total], ['Valid', c.valid], ['Rejected', c.rejected]];
+  return (
+    <Card className="gap-3 rounded-xl px-5 py-4" aria-label="Upload summary">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">{batch.report_name ?? batch.file}</h2>
+          <p className="text-xs text-muted-foreground">
+            Reporting period {periodText(batch.period_start, batch.period_end)} · {batch.file} · uploaded {formatDateTime(batch.uploaded_at)} by {batch.imported_by ?? '—'}
+            {batch.committed_at ? ` · imported ${formatDateTime(batch.committed_at)}` : ''}
+          </p>
+          {batch.remarks && <p className="text-xs">Remarks: {batch.remarks}</p>}
+        </div>
+        <div className="flex flex-col items-end gap-1 text-sm">
+          <span className="font-medium">Status: {batch.status_label}{batch.correction ? ' (correction)' : ''}</span>
+          <a href={rcaIssuesUrl(batch.id)} className="inline-flex items-center gap-1 underline underline-offset-2"><Download className="size-4" /> Validation report (CSV)</a>
+          {imported && batch.cycle && <a href={rcaImportWorkbookUrl(batch.id)} className="inline-flex items-center gap-1 underline underline-offset-2"><Download className="size-4" /> Consolidated RCA report (Excel)</a>}
+        </div>
+      </div>
+      {batch.error && <Alert variant={imported ? 'default' : 'destructive'}><AlertDescription>{batch.error}</AlertDescription></Alert>}
+      <dl className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {tiles.map(([label, value]) => (
+          <div key={label} className="rounded-lg border px-3 py-2">
+            <dt className="text-xs text-muted-foreground">{label}</dt>
+            <dd className="text-lg font-semibold tabular-nums">{n(value)}</dd>
+          </div>
+        ))}
+      </dl>
+      {r && (
+        <div className="grid gap-4 text-sm lg:grid-cols-3">
+          <List title="Project-wise (valid rows)" items={Object.entries(byProject)} />
+          <List title="Circle-wise (valid rows)" items={Object.entries(r.circles).map(([k, v]) => [k.replace('|', ' / '), v])} />
+          <div>
+            <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Recorded outage</h3>
+            <p className="tabular-nums">{formatMin(r.outage_minutes)} <span className="text-xs text-muted-foreground">(valid rows with a value)</span></p>
+            {r.rca_not_applicable_rows != null && <p className="text-xs text-muted-foreground">Other Media (RCA not applicable): {formatNumber(r.rca_not_applicable_rows)} · RCA information missing: {formatNumber(r.missing_rca_rows ?? 0)}</p>}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function List({ title, items }: { title: string; items: [string, number][] }) {
   return (
     <div>
       <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">{title}</h3>
       <ul className="space-y-0.5">
-        {items.map(([k, n]) => <li key={k} className="flex justify-between gap-3"><span>{k}</span><span className="tabular-nums">{formatNumber(n)}</span></li>)}
+        {items.map(([k, v]) => <li key={k} className="flex justify-between gap-3"><span>{k}</span><span className="tabular-nums">{formatNumber(v)}</span></li>)}
       </ul>
     </div>
   );

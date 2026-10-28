@@ -118,6 +118,9 @@ def options() -> dict:
     ]
     return {
         'dates': [d.isoformat() for d in qs.values_list('reporting_date', flat=True).distinct().order_by('reporting_date')],
+        # Months with records, and how many of their days have records (a month is aggregated only from these).
+        'months': [{'month': m, 'dates_with_records': n} for m, n in sorted(Counter(
+            d.strftime('%Y-%m') for d in qs.values_list('reporting_date', flat=True).distinct()).items())],
         'projects': sorted(qs.values_list('project', flat=True).distinct()),
         'circles': [{'project': p, 'circle': c, 'circle_raw': r} for p, c, r in
                     qs.values_list('project', 'circle', 'circle_raw').distinct().order_by('project', 'circle')],
@@ -239,6 +242,13 @@ def summary(params) -> dict:
             'minutes_per_portfolio_site': round((r['minutes'] or 0) / pop, 1) if pop and r['minutes'] is not None else None,
         })
     circles.sort(key=lambda c: -c['records'])
+    projects = [{
+        'project': r['project'], 'records': r['records'], 'outage_minutes': _round(r['minutes']), 'affected_sites': r['sites'],
+        'rca_not_applicable': r['not_applicable'], 'incomplete_records': r['incomplete'],
+    } for r in qs.values('project').annotate(
+        records=Count('id'), minutes=Sum('outage_minutes'), sites=Count('site_key', distinct=True),
+        not_applicable=Count('id', filter=NOT_APPLICABLE_Q), incomplete=Count('id', filter=~NOT_APPLICABLE_Q & BLANK_CAUSE_Q),
+    ).order_by('project')]
 
     mapped = qs.filter(category_id__isnull=False)
     categories = [{'id': r['category_id'], 'name': r['category_name'], 'records': r['records'], 'outage_minutes': _round(r['minutes'])}
@@ -272,6 +282,7 @@ def summary(params) -> dict:
         # Bucket - 2 is a cause breakdown: RCA-applicable records only (Other Media is counted in kpis.rca_not_applicable).
         'bucket_2': ranked(applicable, 'bucket_2_key', 'bucket_2'),
         'circles': circles,
+        'projects': projects,
         'population_source': 'Sites per circle in the dashboard\'s current Master data' if population else None,
         'categories': {
             'mapped': categories,

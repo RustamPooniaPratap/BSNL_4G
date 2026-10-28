@@ -76,6 +76,8 @@ export interface RcaOption { value: string; label: string; unclassified?: boolea
 
 export interface RcaOptions {
   dates: string[];
+  /** Months with records and how many of their days have records. */
+  months: { month: string; dates_with_records: number }[];
   projects: string[];
   circles: { project: string; circle: string; circle_raw: string }[];
   final_buckets: RcaOption[];
@@ -127,6 +129,9 @@ export interface RcaSummary {
   final_buckets: RcaRanked[];
   bucket_2: RcaRanked[];
   circles: RcaCircle[];
+  projects: { project: string; records: number; outage_minutes: number | null; affected_sites: number; rca_not_applicable: number; incomplete_records: number }[];
+  /** The reporting period matching the date filter, or the latest period when no dates are filtered. */
+  cycle?: (RcaCycle & { matches_filter: boolean }) | null;
   population_source: string | null;
   categories: {
     mapped: { id: number; name: string; records: number; outage_minutes: number | null }[];
@@ -183,21 +188,153 @@ export interface RcaImportReport {
   conflict_rows: number;
   conflicts: { row: number; site_id: string; record_id: number; differences: Record<string, { database: unknown; file: unknown }> }[];
   already_imported: { batch: number; committed_at: string } | null;
+  /** Withdrawn records listed again (restored with this file's values). */
+  restored_rows?: number;
+  /** The period already had accepted uploads and this workbook changes or drops some of their records. */
+  is_correction?: boolean;
+  /** Final Bucket labels (as written) found in no stored record, with their row counts. */
+  new_final_buckets?: Record<string, number>;
+  /** The data sheet found by its header, its header row, and the sites with more than one row on a date. */
+  header_row?: number;
+  sites_with_several_rows?: number;
+  /** Per reporting date in the workbook: rows against stored records; earlier dates are history of a cumulative workbook. */
+  by_date?: RcaDateBreakdown[];
+  earlier_date_rows?: number;
+  /** Expected projects / circles of the reporting date against those the workbook has rows for on it. */
+  coverage?: { source: 'period' | 'previous period' | null; expected: [string, string][]; present: [string, string][]; missing: [string, string][] } | null;
+  earlier_uploads_for_period?: number;
+  /** Stored records of the submission's units that a corrected file no longer lists (cycle submissions). */
+  missing_rows?: number;
+  missing?: RcaMissingRecord[];
+  rca_not_applicable_rows?: number;
+  missing_rca_rows?: number;
 }
 
+export interface RcaMissingRecord {
+  record_id: number; site_id: string; project: string; circle: string; outage_minutes: number | null; final_bucket: string; source_file: string;
+}
+
+export type RcaProjectScope = '4G Saturation' | 'LWE' | 'both';
+
+/** One uploaded RCA workbook: its report details, validation and import result. */
 export interface RcaImportBatch {
   id: number;
-  status: 'previewed' | 'committed' | 'failed' | 'discarded';
+  status: 'previewed' | 'committed' | 'failed' | 'rejected' | 'discarded';
+  /** Shown to users: e.g. "Validated — awaiting confirmation", "Imported with rejected rows". */
+  status_label: string;
   file: string;
   checksum: string;
   sheet: string;
   uploaded_at: string;
   committed_at: string | null;
   imported_by: string | null;
-  counts: Record<string, number>;
+  report_name: string | null;
+  project_scope: RcaProjectScope | null;
+  remarks: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  /** The reporting period the upload was accepted into. */
+  cycle: number | null;
+  /** Projects and circles represented in the valid rows. */
+  units: [string, string][];
+  /** total, valid, rejected; after import also inserted, updated, skipped, unchanged, withdrawn... */
+  counts: Record<string, number | boolean>;
+  correction: boolean;
   conflict_action: string | null;
+  missing_action: string | null;
   error: string | null;
+  file_kept: boolean;
   report?: RcaImportReport;
+}
+
+export interface RcaDateBreakdown {
+  date: string; rows: number; new: number; unchanged: number; changed: number; missing: number; earlier_date: boolean;
+  /** e.g. "reporting date: new", "earlier date: repeated", "earlier date: corrected". */
+  kind: string;
+}
+
+export interface RcaUploadsSummary {
+  total: number; imported: number; with_rejected_rows: number; awaiting_confirmation: number; validation_failed: number;
+  corrections: number; last_upload_at: string | null;
+}
+
+export type RcaCycleCode = 'unconfigured' | 'awaiting' | 'review' | 'partial' | 'ready' | 'final' | 'revised';
+export type RcaUnitCode = 'received' | 'pending';
+
+/** An expected project / circle of a period and the evidence: accepted records and the files they came from. */
+export interface RcaUnitState {
+  project: string;
+  circle: string;
+  status: RcaUnitCode;
+  status_label: string;
+  records: number;
+  outage_minutes: number | null;
+  source_files: string[];
+}
+
+export interface RcaCycleStatus {
+  code: RcaCycleCode;
+  label: string;
+  required: number;
+  received: number;
+  complete: boolean;
+  outstanding: { project: string; circle: string; status: RcaUnitCode; status_label: string }[];
+  final_version: number | null;
+  upload_awaiting_confirmation: boolean;
+  can_finalize: boolean;
+  records_checksum: string;
+}
+
+export interface RcaReportVersion {
+  id: number;
+  version: number;
+  filename: string;
+  generated_at: string;
+  generated_by: string | null;
+  automatic: boolean;
+  record_count: number;
+  superseded_at: string | null;
+  current: boolean;
+  available: boolean;
+}
+
+/** A reporting period: one date or a date range. */
+export interface RcaCycle {
+  id: number;
+  name: string | null;
+  period_start: string;
+  period_end: string;
+  period_label: string;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  status: RcaCycleStatus;
+  records: number;
+  uploads_summary: RcaUploadsSummary;
+}
+
+export interface RcaCycleDetail extends RcaCycle {
+  units: RcaUnitState[];
+  /** Data present for projects / circles outside the expected scope (never counted as coverage). */
+  unexpected: { project: string; circle: string; records: number }[];
+  uploads: RcaImportBatch[];
+  reports: RcaReportVersion[];
+  available_units: [string, string][];
+  locked: boolean;
+}
+
+export interface RcaCycleList {
+  cycles: RcaCycle[];
+  default_units: [string, string][];
+  available_units: [string, string][];
+}
+
+export interface RcaUploadDetails {
+  report_name: string;
+  period_start: string;
+  period_end: string;
+  project_scope: RcaProjectScope;
+  remarks: string;
 }
 
 export interface RcaWorkflowInput {

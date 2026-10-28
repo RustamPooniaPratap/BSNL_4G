@@ -1,8 +1,15 @@
-"""Read an RCA workbook (Sheet1: Date, Project, Circle, Site ID, ..., RCA) into validated rows.
+"""Read an RCA workbook (Date, Project, Circle, Site ID, ..., RCA) into validated rows.
 
-No database access. Columns are found by header text. Values are trimmed but otherwise kept as
-written; normalised companions (project, circle code, ``*_key``) are added for filtering only.
-Every problem is reported with its Excel row; rows with errors are rejected, never repaired.
+No database access. The data sheet is found by its header (for example "Sheet1" of a plain RCA file, or
+"RCA Backup" of the Daily RCA Compilation, whose header is on row 2 and whose "Sheet1" is a pivot table);
+columns are found by header text. Values are trimmed but otherwise kept as written; normalised companions
+(project, circle code, ``*_key``) are added for filtering only. Every problem is reported with its Excel row;
+rows with errors are rejected, never repaired.
+
+A site can have several RCA rows on one date (separate outages). Each row gets an ``occurrence``: its rank among
+that site's rows of the date, ordered by cause and outage, so the rank does not depend on the row order of the
+file. (reporting date, project, site, occurrence) identifies a record. A row identical to an earlier one in
+every column is a duplicate and rejected.
 """
 from __future__ import annotations
 
@@ -14,7 +21,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-SHEET_NAME = 'Sheet1'
+SHEET_NAME = 'Sheet1'  # the usual data sheet; any sheet with the RCA header is accepted
+HEADER_SEARCH_ROWS = 10
 MINUTES_PER_DAY = 1440
 # Header text (case and spaces ignored) -> field.
 COLUMNS = {
@@ -29,7 +37,7 @@ PROJECTS_TO_CONFIRM = {'4g satu', '4g satu.'}
 # Circle names -> the dashboard's circle codes (the codes themselves are accepted too).
 CIRCLES = {
     'odisha': 'OD', 'orissa': 'OD', 'rajasthan': 'RJ', 'madhya pradesh': 'MP', 'jharkhand': 'JH', 'bihar': 'BH',
-    'chhattisgarh': 'CG', 'uttar pradesh': 'UP', 'west bengal': 'WB', 'andhra pradesh': 'AP', 'telangana': 'TL',
+    'chhattisgarh': 'CG', 'chhatisgarh': 'CG', 'chattisgarh': 'CG', 'chattishgarh': 'CG', 'chhattishgarh': 'CG', 'uttar pradesh': 'UP', 'west bengal': 'WB', 'andhra pradesh': 'AP', 'telangana': 'TL',
     'maharashtra': 'MH',
 }
 CIRCLE_CODES = set(CIRCLES.values())
@@ -101,40 +109,81 @@ def _number(value) -> tuple[float | None, bool]:
         return None, False
 
 
-def parse(path: Path, filename: str) -> dict:
-    """Validated rows and a report: counts, issues (with Excel rows) and the distinct source labels."""
+def _header(value) -> str:
+    return re.sub(r'\s+', ' ', _text(value)).casefold()
+
+
+def _data_sheet(book, filename: str) -> tuple[str, int, list]:
+    """(sheet name, 0-based header row, rows) of the one sheet whose header has every required column."""
+    found, partial = [], []
+    for ws in book.worksheets:
+        rows = list(ws.iter_rows(values_only=True))
+        for at, row in enumerate(rows[:HEADER_SEARCH_ROWS]):
+            headers = {_header(h) for h in row or ()}
+            if all(name in headers for name in REQUIRED):
+                found.append((ws.title, at, rows))
+                break
+            if 'site id' in headers:
+                partial.append((ws.title, [name for name in REQUIRED if name not in headers]))
+    if len(found) > 1:
+        names = ', '.join(f'"{name}"' for name, _, _ in found)
+        raise ParseError(f'{filename} has more than one sheet with RCA records ({names}). Upload a workbook with one RCA data sheet.')
+    if found:
+        return found[0]
+    labels = {'date': 'Date', 'project': 'Project', 'circle': 'Circle', 'site id': 'Site ID', 'outage min.': 'Outage Min.',
+              'final bucket': 'Final Bucket', 'bucket - 2': 'Bucket - 2', 'rca': 'RCA'}
+    if partial:
+        name, missing = partial[0]
+        raise ParseError(f'The "{name}" sheet is missing required columns: {", ".join(labels[m] for m in missing)}.')
+    raise ParseError(f'No sheet of {filename} has the RCA columns ({", ".join(labels.values())}) in its first {HEADER_SEARCH_ROWS} rows '
+                     f'(sheets: {", ".join(book.sheetnames)}).')
+
+
+def _number_occurrences(rows: list[dict]) -> None:
+    """Rank each row among the rows of its site and date (by cause, then outage, then Excel row)."""
+    groups: dict[tuple, list[dict]] = {}
+    for row in rows:
+        groups.setdefault((row['reporting_date'], row['project'], row['site_key']), []).append(row)
+    for group in groups.values():
+        group.sort(key=lambda r: (r['final_bucket_key'], r['bucket_2_key'], r['rca_key'],
+                                  -1 if r['outage_minutes'] is None else r['outage_minutes'], r['source_row']))
+        for n, row in enumerate(group, start=1):
+            row['occurrence'] = n
+
+
+def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None, projects: set[str] | None = None,
+          known_sites: dict[tuple[str, str], str] | None = None) -> dict:
+    """Validated rows and a report: counts, issues (with Excel rows) and the distinct source labels.
+
+    For an upload with report details the caller also passes what the rows must match: a date no later than the
+    end of ``period`` (first, last day), a project of ``projects`` and a site of ``known_sites`` ((project, site
+    key) -> circle in the Up-Time Report). A row that does not match is rejected. Rows dated before the period are
+    kept and marked ``earlier_date``: the Daily RCA Compilation is cumulative and repeats the earlier days.
+    """
     try:
         book = load_workbook(path, read_only=True, data_only=True)
     except Exception as exc:  # not an xlsx, or a damaged file
         raise ParseError(f'{filename} could not be opened as an Excel workbook ({exc.__class__.__name__}).') from exc
     try:
-        if SHEET_NAME not in book.sheetnames:
-            raise ParseError(f'{filename} has no "{SHEET_NAME}" sheet (sheets: {", ".join(book.sheetnames)}).')
-        raw_rows = list(book[SHEET_NAME].iter_rows(values_only=True))
+        sheet, header_at, raw_rows = _data_sheet(book, filename)
     finally:
         book.close()  # read-only mode keeps the file open otherwise
-    if not raw_rows:
-        raise ParseError(f'The "{SHEET_NAME}" sheet of {filename} is empty.')
 
-    headers = [re.sub(r'\s+', ' ', _text(h)).casefold() for h in raw_rows[0]]
-    missing = [name for name in REQUIRED if name not in headers]
-    if missing:
-        labels = {'date': 'Date', 'project': 'Project', 'circle': 'Circle', 'site id': 'Site ID', 'outage min.': 'Outage Min.',
-                  'final bucket': 'Final Bucket', 'bucket - 2': 'Bucket - 2', 'rca': 'RCA'}
-        raise ParseError(f'The "{SHEET_NAME}" sheet is missing required columns: {", ".join(labels[m] for m in missing)}.')
+    header_row = raw_rows[header_at]
+    headers = [_header(h) for h in header_row]
     index = {field: headers.index(name) for name, field in COLUMNS.items() if name in headers}
-    unknown_columns = [_text(h) for h, key in zip(raw_rows[0], headers) if key and key not in COLUMNS]
+    unknown_columns = [_text(h) for h, key in zip(header_row, headers) if key and key not in COLUMNS]
 
     issues: list[dict] = []
     rows: list[dict] = []
-    seen: dict[tuple, int] = {}
+    seen: dict[tuple, int] = {}  # every column as read -> first Excel row, to find exact duplicates
     trimmed = 0
     blank_rows = 0
 
     def issue(severity, code, row, site_id, message):
         issues.append({'severity': severity, 'code': code, 'row': row, 'site_id': site_id, 'message': message})
 
-    for offset, raw in enumerate(raw_rows[1:], start=2):
+    for offset, raw in enumerate(raw_rows[header_at + 1:], start=header_at + 2):
         if raw is None or all(v is None or _text(v) == '' for v in raw):
             blank_rows += 1
             continue
@@ -162,9 +211,19 @@ def parse(path: Path, filename: str) -> dict:
         elif outage is not None and outage < 0:
             errors.append(('negative_outage', f'Outage Min. {outage:g} is negative.'))
 
-        key = (day, project, site_key(site_id)) if day and project and site_id else None
-        if key and key in seen:
-            errors.append(('duplicate_row', f'Same date, project and Site ID as Excel row {seen[key]}.'))
+        if period and day and day > period[1]:
+            errors.append(('after_reporting_period', f'Date {day.isoformat()} is after the reporting date ({period[1].isoformat()}).'))
+        if projects is not None and project and project not in projects:
+            errors.append(('outside_project_scope', f'Project {project} is outside the upload\'s project scope ({" and ".join(sorted(projects))}).'))
+        uptime_circle = None
+        if known_sites is not None and project and site_id:
+            uptime_circle = known_sites.get((project, site_key(site_id)))
+            if uptime_circle is None:
+                errors.append(('unknown_site', f'Site ID is not in the Up-Time Report for {project}.'))
+
+        key = tuple(_text(v) for v in raw)
+        if key in seen:
+            errors.append(('duplicate_row', f'Identical in every column to Excel row {seen[key]}.'))
 
         if errors:
             for code, message in errors:
@@ -172,6 +231,9 @@ def parse(path: Path, filename: str) -> dict:
             continue
         seen[key] = offset
 
+        if uptime_circle and circle and uptime_circle != circle:
+            issue('warning', 'circle_differs_from_uptime', offset, site_id,
+                  f'The Up-Time Report lists this site under {uptime_circle}, the file under {circle}: kept as written.')
         if outage is None:
             issue('warning', 'blank_outage', offset, site_id, 'Outage Min. is blank: kept as not recorded (not 0).')
         elif outage > MINUTES_PER_DAY:
@@ -191,8 +253,10 @@ def parse(path: Path, filename: str) -> dict:
             'om_start': om_start, 'outage_minutes': None if outage is None else round(outage, 4),
             'final_bucket_key': text_key(values['final_bucket']), 'bucket_2_key': text_key(values['bucket_2']),
             'rca_key': text_key(values['rca_text']), 'source_row': offset,
+            'earlier_date': bool(period) and day < period[0],
         })
 
+    _number_occurrences(rows)
     projects_raw = Counter(r['project_raw'] for r in rows)
     to_confirm = sorted(p for p in projects_raw if p.casefold() in PROJECTS_TO_CONFIRM)
     for label in to_confirm:
@@ -212,7 +276,8 @@ def parse(path: Path, filename: str) -> dict:
     return {
         'rows': rows,
         'report': {
-            'filename': filename, 'sheet': SHEET_NAME,
+            'filename': filename, 'sheet': sheet, 'header_row': header_at + 1,
+            'sites_with_several_rows': sum(1 for r in rows if r['occurrence'] == 2),
             'rows_read': len(rows) + len({i['row'] for i in issues if i['severity'] == 'error'}),
             'valid_rows': len(rows),
             'rejected_rows': len({i['row'] for i in issues if i['severity'] == 'error'}),

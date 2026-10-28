@@ -456,6 +456,21 @@ class CircleTopPerformerTests(ThresholdTestCase):
         g4 = next(p for p in result['projects'] if p['report_type'] == '4G Saturation')
         self.assertEqual((g4['sites_in_scope'], g4['nsla']['2026-10']['nsla_sites'], g4['nsla']['2026-10']['no_value']), (4, 2, 1))
 
+    def test_previous_month_to_date_matches_threshold_analysis(self):
+        result = self.top()
+        previous = result['previous_mtd']
+        columns = self.analyse()['monthly_comparison']['columns']
+        before = next(c for c in columns if c['kind'] == 'previous_mtd')
+        self.assertEqual((previous['key'], previous['label']), (before['key'], before['label']))
+        if before['values'] is None:  # the fixture has no September daily columns: no value, never the full month
+            self.assertFalse(previous['available'])
+            self.assertIn('no daily data', previous['reason'])
+            self.assertTrue(all(c['nsla'][previous['key']] is None for c in result['circles']))
+        else:
+            total = sum(p['nsla'][previous['key']]['nsla_sites'] for p in result['projects'] if p['nsla'][previous['key']])
+            self.assertEqual(total, before['values']['below_98_5']['count'])
+        self.assertIsNone(self.top(month='2026-09')['previous_mtd'])  # only beside a month to date
+
     def test_earlier_month(self):
         result = self.top(month='2026-09')
         self.assertEqual((result['reporting_month'], result['month']['label']), ('2026-09', 'Sep-26'))

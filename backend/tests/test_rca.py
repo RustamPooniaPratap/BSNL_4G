@@ -7,12 +7,13 @@ from datetime import datetime
 from pathlib import Path
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from openpyxl import Workbook
 
 from apps.rca import importer, parser
 from apps.rca.models import RcaCauseMapping, RcaEvent, RcaImportBatch, RcaRecord, RcaWorkflow
+from apps.uptimedb.models import DataImportBatch, UptimeSite
 from tests.auth_helpers import portal_user
 
 HEADERS = ['Date', 'Project', 'Circle', 'Site ID', 'Site Name', 'OA', 'BA', 'O&M Start (Yes/No)', 'Outage Min.',
@@ -38,10 +39,26 @@ def workbook(path: Path, rows=None, headers=HEADERS, sheet='Sheet1') -> Path:
     return path
 
 
+def uptime_sites(*sites) -> None:
+    """Up-Time Report sites (project, circle, site ID): an upload with report details accepts only these."""
+    batch = DataImportBatch.objects.create(original_filename='master.xlsx', checksum_sha256='x', sheet_name='Up-Time Report',
+                                           stored_path='-', status=DataImportBatch.Status.COMMITTED)
+    for project, circle, site in sites:
+        UptimeSite.objects.create(project=project, circle=circle, site_id=site, site_key=site, batch=batch, source_row=1)
+
+
+ROW_SITES = [('LWE', 'BH', 'LWEBH0063'), ('LWE', 'JH', 'LWEJH0001'), ('4G Saturation', 'OD', 'OD0001'),
+             ('4G Saturation', 'RJ', 'RJ0001'), ('4G Saturation', 'MP', 'MP0001')]
+DETAILS = {'report_name': 'October 2026 RCA Report', 'period_start': '2026-10-21', 'project_scope': 'both'}
+
+
 class RcaTestCase(TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        override = override_settings(DATA_DIR=Path(self.tmp.name) / 'data')  # uploaded copies and reports stay out of Data/
+        override.enable()
+        self.addCleanup(override.disable)
         self.admin = portal_user('rca-admin', 'admin')
         self.ci = portal_user('rca-ci', 'ci')
 
@@ -80,7 +97,7 @@ class ParserTests(RcaTestCase):
             [DAY, 'LWE', 'Atlantis', 'X3', '', '', '', 'Yes', 1, 'TCS', 'TCS', 'x'],
             [DAY, 'LWE', 'Bihar', '', '', '', '', 'Yes', 1, 'TCS', 'TCS', 'x'],
             [DAY, 'LWE', 'Bihar', 'X5', '', '', '', 'Yes', 'abc', 'TCS', 'TCS', 'x'],
-            [DAY, 'LWE', 'Bihar', 'lwebh0063', '', '', '', 'Yes', 1, 'TCS', 'TCS', 'x'],  # duplicate of row 2
+            list(ROWS[0]),  # identical to row 2 in every column
         ]
         report = parser.parse(self.path(rows=bad), 'rca.xlsx')['report']
         self.assertEqual((report['valid_rows'], report['rejected_rows']), (5, 6))
@@ -93,8 +110,36 @@ class ParserTests(RcaTestCase):
     def test_missing_columns_or_sheet_reject_the_file(self):
         with self.assertRaisesRegex(parser.ParseError, 'missing required columns: RCA'):
             parser.parse(self.path(headers=HEADERS[:-1], rows=[r[:-1] for r in ROWS]), 'rca.xlsx')
-        with self.assertRaisesRegex(parser.ParseError, 'no "Sheet1" sheet'):
-            parser.parse(self.path(sheet='Data'), 'rca.xlsx')
+        with self.assertRaisesRegex(parser.ParseError, 'No sheet of rca.xlsx has the RCA columns'):
+            parser.parse(self.path(headers=['Count of RCA', 'Column Labels']), 'rca.xlsx')
+
+    def test_reads_the_daily_rca_compilation_layout(self):
+        # The data sheet is "RCA Backup" with a blank first row; "Sheet1" is a pivot table.
+        book = Workbook()
+        pivot = book.active
+        pivot.title = 'Sheet1'
+        pivot.append([])
+        pivot.append(['Count of RCA', 'Column Labels'])
+        pivot.append(['Row Labels', 'BB', 'Grand Total'])
+        data = book.create_sheet('RCA Backup')
+        data.append([])
+        data.append(HEADERS)
+        rows = [
+            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 846, 'BSNL OFC', 'BSNL OFC', 'Ofc cut'],
+            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 27, 'Others', 'BSNL Link', 'Media issue'],  # a second outage
+            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 27, 'Others', 'BSNL Link', 'Media issue'],  # an exact copy
+        ]
+        for row in rows:
+            data.append(row)
+        path = Path(self.tmp.name) / 'daily.xlsx'
+        book.save(path)
+        parsed = parser.parse(path, 'daily.xlsx')
+        report = parsed['report']
+        self.assertEqual((report['sheet'], report['header_row'], report['valid_rows'], report['rejected_rows']), ('RCA Backup', 2, 2, 1))
+        self.assertEqual(report['all_issues'][0]['message'], 'Identical in every column to Excel row 4.')
+        # Each outage of the site on the date is its own record, ranked by cause, not by file order.
+        self.assertEqual(sorted((r['occurrence'], r['final_bucket']) for r in parsed['rows']), [(1, 'BSNL OFC'), (2, 'Others')])
+        self.assertEqual({(r['circle'], r['circle_raw']) for r in parsed['rows']}, {('CG', 'Chhatisgarh')})
 
 
 class ImportTests(RcaTestCase):
@@ -109,11 +154,12 @@ class ImportTests(RcaTestCase):
         self.assertFalse(RcaWorkflow.objects.exists())  # no status is invented at import
 
     def test_a_repeat_import_is_idempotent(self):
-        self.imported()
+        path = self.path()  # one file: a workbook saved again carries a new timestamp, hence a new checksum
+        importer.commit(importer.preview(path, 'Book1_RCA.xlsx', user=self.admin), user=self.admin)
         again = self.imported(name='again.xlsx')
         self.assertEqual((again.counts['inserted'], again.counts['unchanged']), (0, 5))
         self.assertEqual(RcaRecord.objects.count(), 5)
-        self.assertIsNotNone(importer.preview(self.path(), 'Book1_RCA.xlsx').report['already_imported'])
+        self.assertIsNotNone(importer.preview(path, 'Book1_RCA.xlsx').report['already_imported'])
 
     def test_conflicts_are_never_overwritten_silently(self):
         self.imported()
@@ -134,6 +180,14 @@ class ImportTests(RcaTestCase):
         self.assertEqual(rec.rca_text, 'Power failure')
         self.assertEqual(RcaEvent.objects.get(record=rec, action='source_overwritten').changes['rca_text']['database'], 'Media Flacuatation')
 
+    def test_several_outages_of_a_site_on_one_date_are_separate_records_and_reimport_adds_none(self):
+        rows = [ROWS[0], [DAY, 'LWE', 'Bihar', 'LWEBH0063', 'Haibatpur', 'Gaya', 'Gaya', 'Yes', 300, 'BSNL OFC', 'BSNL OFC', 'Ofc cut']]
+        first = self.imported(rows=rows)
+        self.assertEqual(first.counts['inserted'], 2)
+        again = self.imported(name='again.xlsx', rows=list(reversed(rows)))  # row order does not matter
+        self.assertEqual((again.counts['inserted'], again.counts['unchanged']), (0, 2))
+        self.assertEqual(sorted(RcaRecord.objects.values_list('occurrence', 'final_bucket')), [(1, 'BSNL OFC'), (2, 'Other Media')])
+
     def test_a_later_reporting_date_is_a_new_incident_for_the_same_site(self):
         self.imported()
         later = [[datetime(2026, 10, 22), *r[1:]] for r in ROWS[:1]]
@@ -145,13 +199,16 @@ class ImportTests(RcaTestCase):
 class ApiTests(RcaTestCase):
     def upload(self, path: Path):
         with open(path, 'rb') as handle:
-            return self.client.post(reverse('rca-import-preview'), {'file': SimpleUploadedFile(path.name, handle.read())})
+            return self.client.post(reverse('rca-import-preview'), {'file': SimpleUploadedFile(path.name, handle.read()), **DETAILS})
 
     def test_admin_imports_through_the_api_with_a_validation_report(self):
+        uptime_sites(*ROW_SITES)
         self.client.force_login(self.admin)
         preview = self.upload(self.path())
-        self.assertEqual(preview.status_code, 201)
+        self.assertEqual(preview.status_code, 201, preview.content)
         body = preview.json()
+        self.assertEqual((body['report_name'], body['period_start'], body['period_end'], body['status']),
+                         ('October 2026 RCA Report', '2026-10-21', '2026-10-21', 'previewed'))
         self.assertNotIn('all_issues', body['report'])
         csv = self.client.get(reverse('rca-import-issues', args=[body['id']]))
         self.assertIn('outage_over_day', csv.content.decode('utf-8-sig'))

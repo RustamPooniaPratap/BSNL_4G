@@ -18,7 +18,7 @@ from .workbook_factory import write_workbook
 DASHBOARD = ['dashboard-filters', 'dashboard-summary', 'dashboard-trends', 'dashboard-breakdowns', 'dashboard-records',
              'dashboard-source', 'dashboard-monthly', 'dashboard-thresholds', 'dashboard-period', 'dashboard-alerts',
              'dashboard-workbook']
-ADMIN_ONLY_GET = ['dashboard-teams', 'dashboard-teams-monthly', 'dashboard-teams-top', 'list-raw-files', 'email-status', 'auth-users']
+ADMIN_ONLY_GET = ['dashboard-teams', 'dashboard-teams-monthly', 'dashboard-teams-top', 'rca-cycles', 'list-raw-files', 'email-status', 'auth-users']
 
 
 class AuthTestCase(TestCase):

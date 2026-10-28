@@ -26,6 +26,13 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   return canOpen(user?.role, location.pathname) && user?.role === 'admin' ? <>{children}</> : <Unauthorized />;
 }
 
+/** Pages open to more than one role (e.g. RCA upload for Admins and NOC Leads): the role's page list decides. */
+export function RequirePage({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const location = useLocation();
+  return canOpen(user?.role, location.pathname) ? <>{children}</> : <Unauthorized />;
+}
+
 export function Unauthorized() {
   const { user } = useAuth();
   return (
@@ -33,7 +40,7 @@ export function Unauthorized() {
       <ShieldAlert className="size-8 text-muted-foreground" aria-hidden="true" />
       <h1 className="text-lg font-semibold">You do not have access to this page</h1>
       <p className="text-sm text-muted-foreground">
-        This page is available to portal Admins only{user ? `; you are signed in as ${user.username} (${user.role_label})` : ''}.
+        This page is not available to your role{user ? `; you are signed in as ${user.username} (${user.role_label})` : ''}.
         Ask an Admin if you need it.
       </p>
       <Link to="/portfolio" className={buttonVariants({ size: 'sm' })}>Go to Site Portfolio</Link>

@@ -8,12 +8,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ChartCard } from '../../components/dashboard/ChartCard';
 import { DataTable } from '../../components/dashboard/DataTable';
 import { reportTypeColor } from '../../components/dashboard/constants';
-import { RankedBars, RcaFilterBar, Segmented, SourceValue, type BarRow } from '../../components/rca/RcaShared';
+import { CycleBadge, RankedBars, RcaFilterBar, Segmented, SourceValue, type BarRow } from '../../components/rca/RcaShared';
 import { FILTER_KEYS, formatMin, shortProject, type FilterKey } from '../../lib/rca';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDate, formatNumber } from '../../lib/format';
-import { fetchRcaOptions, fetchRcaSummary } from '../../services/api';
-import type { RcaCircle, RcaRanked, RcaSummary } from '../../types/rca';
+import { fetchRcaOptions, fetchRcaSummary, rcaCycleWorkbookUrl } from '../../services/api';
+import type { RcaCircle, RcaCycle, RcaOptions, RcaRanked, RcaSummary } from '../../types/rca';
+import { Field, SelectField } from '../../components/data/DataEntry';
 
 type Measure = 'records' | 'minutes';
 type CircleMeasure = 'records' | 'minutes' | 'rate';
@@ -55,6 +56,11 @@ export function RcaSummaryPage() {
           </div>
         </div>
         {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}
+        {options.data && <ReportingDateSelect options={options.data} params={params} onChange={(from, to) => setParams((cur) => {
+          const next = new URLSearchParams(cur);
+          if (from) { next.set('date_from', from); next.set('date_to', to); } else { next.delete('date_from'); next.delete('date_to'); }
+          return next;
+        }, { replace: true })} />}
         {options.data && <RcaFilterBar options={options.data} params={params} onChange={onFilter} onReset={() => setParams(new URLSearchParams(), { replace: true })} />}
       </Card>
 
@@ -62,13 +68,15 @@ export function RcaSummaryPage() {
       {!s && !summary.error && <Skeleton className="h-96 w-full" />}
       {s && (
         <>
-          {s.dates.length <= 1 && (
+          {s.dates.length <= 1 && !query.get('date_from') && !query.get('date_to') && (
             <p className="flex items-center gap-2 rounded-lg border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">
               <CalendarDays className="size-4 shrink-0" aria-hidden="true" />
               {s.dates.length ? `Single-date snapshot: ${formatDate(s.dates[0].date)}. Trends over time appear once RCA data for more reporting dates is imported.` : 'No RCA records match these filters.'}
             </p>
           )}
+          {s.cycle && <CyclePanel cycle={s.cycle} />}
           <Kpis s={s} />
+          {s.projects.length > 1 && <ProjectTable s={s} />}
           <div className="grid gap-5 xl:grid-cols-2">
             <ClassificationCard title="RCA classification: Final Bucket" items={s.final_buckets} field="final_bucket" onSelect={openRegister} />
             <ClassificationCard title="Secondary classification: Bucket - 2" items={s.bucket_2} field="bucket_2" onSelect={openRegister}
@@ -82,6 +90,96 @@ export function RcaSummaryPage() {
         </>
       )}
     </div>
+  );
+}
+
+const monthBounds = (month: string): [string, string] => {
+  const [y, m] = month.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return [`${month}-01`, `${month}-${String(last).padStart(2, '0')}`];
+};
+const monthLabel = (month: string) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+/**
+ * One reporting date, or a month aggregated from the dates that have records (offered only for months with records).
+ * It sets the From / To filters, so the summary below is calculated by the API for exactly those dates.
+ */
+function ReportingDateSelect({ options, params, onChange }: { options: RcaOptions; params: URLSearchParams; onChange: (from: string, to: string) => void }) {
+  const from = params.get('date_from') ?? '';
+  const to = params.get('date_to') ?? '';
+  const month = options.months.find((m) => monthBounds(m.month).join() === [from, to].join());
+  const value = !from && !to ? 'all' : from === to && options.dates.includes(from) ? `day:${from}` : month ? `month:${month.month}` : 'custom';
+  const choices = [
+    { value: 'all', label: 'All reporting dates' },
+    ...[...options.dates].reverse().map((d) => ({ value: `day:${d}`, label: formatDate(d) })),
+    ...options.months.map((m) => ({ value: `month:${m.month}`, label: `${monthLabel(m.month)} — month (${m.dates_with_records} reporting date${m.dates_with_records === 1 ? '' : 's'} with records)` })),
+    ...(value === 'custom' ? [{ value: 'custom', label: 'Custom range (From / To below)' }] : []),
+  ];
+  const selected = options.months.find((m) => value === `month:${m.month}`);
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <Field id="rca-reporting-date" label="Reporting date" plain className="w-96 max-w-full">
+        <SelectField id="rca-reporting-date" value={value} placeholder="Reporting date" options={choices} onChange={(v) => {
+          if (v === 'all' || v === 'custom') onChange('', '');
+          else if (v.startsWith('day:')) onChange(v.slice(4), v.slice(4));
+          else onChange(...monthBounds(v.slice(6)));
+        }} />
+      </Field>
+      <p className="pb-2 text-sm font-medium" aria-live="polite">
+        {value === 'all' ? 'Showing every reporting date' : value.startsWith('day:') ? `Showing ${formatDate(from)}`
+          : selected ? `Showing ${monthLabel(selected.month)}: the sum of ${selected.dates_with_records} reporting date${selected.dates_with_records === 1 ? '' : 's'} with records` : `Showing ${formatDate(from)} – ${formatDate(to)}`}
+      </p>
+    </div>
+  );
+}
+
+/** The reporting period of the filtered dates (or the latest one): expected data received, pending, and its consolidated report. */
+function CyclePanel({ cycle }: { cycle: RcaCycle & { matches_filter: boolean } }) {
+  const st = cycle.status;
+  const report = st.code === 'final' ? `Final report v${st.final_version}` : st.complete ? 'Draft report' : 'Partial report';
+  return (
+    <Card className="gap-1 rounded-xl px-4 py-3" aria-label="Reporting period">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+          {cycle.matches_filter ? 'Reporting period' : 'Latest reporting period'} {cycle.period_label}{cycle.name ? ` · ${cycle.name}` : ''}
+          <CycleBadge code={st.code} label={st.label} />
+          {st.required > 0 && <span className="font-normal tabular-nums">{st.received} of {st.required} expected projects / circles have accepted data</span>}
+        </p>
+        <span className="flex gap-3 text-xs">
+          <Link to={`/rca/submissions?cycle=${cycle.id}`} className="font-medium underline-offset-2 hover:underline">Open submissions →</Link>
+          <a href={rcaCycleWorkbookUrl(cycle.id)} className="font-medium underline-offset-2 hover:underline">{report} (Excel)</a>
+        </span>
+      </div>
+      {st.outstanding.length > 0 && (
+        <p className="text-xs text-amber-800">Pending: {st.outstanding.map((o) => `${o.circle} ${shortProject(o.project)}`).join(', ')}. The figures cover the accepted records only.</p>
+      )}
+      {!cycle.matches_filter && <p className="text-xs text-muted-foreground">The figures below follow the filters above, not only this period.</p>}
+    </Card>
+  );
+}
+
+function ProjectTable({ s }: { s: RcaSummary }) {
+  return (
+    <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Project-wise summary">
+      <p className="text-sm font-medium">Project-wise</p>
+      <Table>
+        <TableHeader>
+          <TableRow>{['Project', 'Records', 'Outage minutes', 'Affected sites', 'Other Media (RCA not applicable)', 'RCA required — missing information'].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow>
+        </TableHeader>
+        <TableBody>
+          {s.projects.map((p) => (
+            <TableRow key={p.project}>
+              <TableCell className="font-medium">{p.project}</TableCell>
+              <TableCell className="tabular-nums">{formatNumber(p.records)}</TableCell>
+              <TableCell className="tabular-nums">{formatMin(p.outage_minutes)}</TableCell>
+              <TableCell className="tabular-nums">{formatNumber(p.affected_sites)}</TableCell>
+              <TableCell className="tabular-nums">{formatNumber(p.rca_not_applicable)}</TableCell>
+              <TableCell className="tabular-nums">{formatNumber(p.incomplete_records)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Card>
   );
 }
 

@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
-import { RequireAdmin, RequireAuth } from './components/auth/Guards';
+import { RequireAdmin, RequireAuth, RequirePage } from './components/auth/Guards';
 import { AuthProvider } from './context/AuthProvider';
 import { TrackingProvider } from './context/TrackingProvider';
 import { WorkbookProvider } from './context/WorkbookProvider';
@@ -27,6 +27,7 @@ const RcaRegisterPage = lazy(() => import('./pages/rca/RcaRegisterPage').then((m
 const RcaSummaryPage = lazy(() => import('./pages/rca/RcaSummaryPage').then((m) => ({ default: m.RcaSummaryPage })));
 const RcaMappingPage = lazy(() => import('./pages/rca/RcaMappingPage').then((m) => ({ default: m.RcaMappingPage })));
 const RcaImportPage = lazy(() => import('./pages/rca/RcaImportPage').then((m) => ({ default: m.RcaImportPage })));
+const RcaSubmissionsPage = lazy(() => import('./pages/rca/RcaSubmissionsPage').then((m) => ({ default: m.RcaSubmissionsPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage').then((m) => ({ default: m.UsersPage })));
 
 /** The signed-in application: every page here needs a session; Admin-only pages check the role too. */
@@ -53,11 +54,12 @@ function PortalRoutes() {
               {/* The former Raw CSV files page: now CSV arrival tracking (uploads moved to /data/upload-csv). */}
               <Route path="/daily-ingestion" element={<RequireAdmin><CsvArrivalPage /></RequireAdmin>} />
               <Route path="/admin/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
-              {/* RCA: the register for every role; summary, cause mapping and import for Admins (the API checks too). */}
+              {/* RCA: the register for every role; upload for Admins and NOC Leads; summary, submissions and cause mapping for Admins (the API checks too). */}
               <Route path="/rca" element={<RcaRegisterPage />} />
               <Route path="/rca/summary" element={<RequireAdmin><RcaSummaryPage /></RequireAdmin>} />
               <Route path="/rca/mappings" element={<RequireAdmin><RcaMappingPage /></RequireAdmin>} />
-              <Route path="/rca/import" element={<RequireAdmin><RcaImportPage /></RequireAdmin>} />
+              <Route path="/rca/import" element={<RequirePage><RcaImportPage /></RequirePage>} />
+              <Route path="/rca/submissions" element={<RequireAdmin><RcaSubmissionsPage /></RequireAdmin>} />
               <Route path="/data/database" element={<Navigate to="/workbook" replace />} />
               {/* Earlier report-type links now open the dashboard with that filter applied. */}
               <Route path="/4g-saturation" element={<Navigate to="/?report_type=4G+Saturation" replace />} />

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   BriefcaseBusiness, ChevronRight, ClipboardPen, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
-  LayoutDashboard, MapPinPlus, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ChartBar, Tags, FileUp, Layers3, UserCheck, Trophy,
+  LayoutDashboard, MapPinPlus, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { canOpen, useAuth } from '../context/auth';
@@ -57,8 +57,8 @@ const entries: NavEntry[] = [
   { kind: 'heading', heading: 'RCA' },
   { kind: 'link', item: page('/rca', 'RCA Register', ClipboardList) },
   { kind: 'link', item: page('/rca/summary', 'RCA Summary', ChartBar) },
-  { kind: 'link', item: page('/rca/mappings', 'Cause Mapping', Tags) },
-  { kind: 'link', item: page('/rca/import', 'RCA Import', FileUp) },
+  { kind: 'link', item: page('/rca/submissions', 'RCA Submissions', ClipboardCheck) },
+  { kind: 'link', item: page('/rca/import', 'Upload RCA Data', FileUp) },
   { kind: 'heading', heading: 'Data' },
   {
     kind: 'group', id: 'data-management', label: 'Data Management', icon: FolderCog,

@@ -9,12 +9,49 @@ Three kinds of data are kept apart:
 - Workflow (RcaWorkflow, RcaComment, RcaEvent): follow-up entered by users. Absent until someone
   records it, so an imported record shows "not recorded", never a guessed status.
 
-A site may have many RCA records over time: an imported record is unique per (reporting date,
-project, site); manually recorded incidents are not limited.
+A site may have many RCA records, also several on one date (separate outages): an imported record is
+unique per (reporting date, project, site, occurrence), where occurrence ranks the site's rows of that date
+by cause and outage (see parser). Manually recorded incidents are not limited.
 """
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+
+
+class RcaReportingCycle(models.Model):
+    """One RCA reporting period: a reporting date or a date range (the RCA workbook's "Date" values) and the
+    project / circle data it is expected to cover.
+
+    Periods never overlap, so every RCA record belongs to at most one period. The status is derived
+    (cycles.status), never stored: from the expected scope, the accepted records and the final reports.
+    """
+    reporting_date = models.DateField(unique=True, help_text='First day of the period (the only day for a single-date period).')
+    period_end = models.DateField(null=True, blank=True, help_text='Last day of the period; blank for a single reporting date.')
+    name = models.CharField(max_length=200, blank=True, help_text='Report name, e.g. "October 2026 RCA Report".')
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-reporting_date']
+
+    def __str__(self):
+        return f'RCA period {self.reporting_date}–{self.end}'
+
+    @property
+    def end(self):
+        return self.period_end or self.reporting_date
+
+
+class RcaRequiredSubmission(models.Model):
+    """One project / circle the period is expected to cover, configured by an Admin (the expected scope)."""
+    cycle = models.ForeignKey(RcaReportingCycle, on_delete=models.CASCADE, related_name='required')
+    project = models.CharField(max_length=20)
+    circle = models.CharField(max_length=20)
+
+    class Meta:
+        ordering = ['project', 'circle']
+        constraints = [models.UniqueConstraint(fields=['cycle', 'project', 'circle'], name='rca_required_unit')]
 
 
 class RcaImportBatch(models.Model):
@@ -22,6 +59,7 @@ class RcaImportBatch(models.Model):
         PREVIEWED = 'previewed', 'Previewed'
         COMMITTED = 'committed', 'Committed'
         FAILED = 'failed', 'Failed'
+        REJECTED = 'rejected', 'Rejected (validation errors)'
         DISCARDED = 'discarded', 'Discarded'
 
     original_filename = models.CharField(max_length=255)
@@ -39,12 +77,30 @@ class RcaImportBatch(models.Model):
     rows = models.JSONField(default=list, blank=True)
     conflict_action = models.CharField(max_length=20, blank=True, help_text='"skip" or "overwrite", chosen at commit when conflicts exist.')
     error = models.TextField(blank=True)
+    # Report details entered with the upload (blank for imports made before they existed).
+    report_name = models.CharField(max_length=200, blank=True)
+    period_start = models.DateField(null=True, blank=True)
+    period_end = models.DateField(null=True, blank=True)
+    project_scope = models.CharField(max_length=20, blank=True, help_text='"4G Saturation", "LWE" or "both".')
+    remarks = models.TextField(blank=True)
+    # The reporting period the upload was accepted into (set at commit; earlier if the period already exists).
+    cycle = models.ForeignKey(RcaReportingCycle, null=True, blank=True, on_delete=models.PROTECT, related_name='submissions')
+    units = models.JSONField(default=list, blank=True, help_text='[[project, circle], ...] represented in the valid rows.')
+    missing_action = models.CharField(max_length=20, blank=True,
+                                      help_text='"keep" or "withdraw": stored records of the units that the file no longer lists.')
+    stored_path = models.CharField(max_length=500, blank=True, help_text='Copy of the uploaded file kept for audit.')
+    file_size = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ['-uploaded_at']
 
     def __str__(self):
         return f'RCA import #{self.pk} {self.original_filename} ({self.status})'
+
+
+class ActiveRecordManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(withdrawn_at__isnull=True)
 
 
 class RcaRecord(models.Model):
@@ -59,6 +115,7 @@ class RcaRecord(models.Model):
     circle_raw = models.CharField(max_length=60)
     site_id = models.CharField(max_length=60, help_text='As in the source (trimmed).')
     site_key = models.CharField(max_length=60, help_text='Matching key: trimmed, upper case, inner spaces collapsed.')
+    occurrence = models.PositiveSmallIntegerField(default=1, help_text="Rank among the site's RCA rows of the date (1 for a single row).")
     site_name = models.CharField(max_length=200, blank=True)
     oa = models.CharField(max_length=100, blank=True)
     ba = models.CharField(max_length=100, blank=True)
@@ -78,12 +135,20 @@ class RcaRecord(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Set when a circle's corrected file no longer lists the record and the Admin chose to withdraw it. Kept for the
+    # audit trail, left out of every register, summary and report (``objects``); ``all_objects`` includes it.
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    withdrawn_by_batch = models.ForeignKey(RcaImportBatch, null=True, blank=True, on_delete=models.PROTECT, related_name='withdrawn_records')
+
+    objects = ActiveRecordManager()
+    all_objects = models.Manager()
 
     class Meta:
+        base_manager_name = 'all_objects'
         ordering = ['-reporting_date', '-outage_minutes', 'id']
         constraints = [
-            models.UniqueConstraint(fields=['reporting_date', 'project', 'site_key'], condition=Q(source='import'),
-                                    name='rca_import_identity'),
+            models.UniqueConstraint(fields=['reporting_date', 'project', 'site_key', 'occurrence'], condition=Q(source='import'),
+                                    name='rca_import_incident'),
         ]
         indexes = [
             models.Index(fields=['reporting_date']),
@@ -95,6 +160,30 @@ class RcaRecord(models.Model):
 
     def __str__(self):
         return f'{self.reporting_date} {self.project} {self.site_id}'
+
+
+class RcaReport(models.Model):
+    """A final consolidated RCA Master workbook of a cycle, kept per version for traceability.
+
+    Partial (in-progress) workbooks are built on request and not stored, so they never create versions.
+    """
+    cycle = models.ForeignKey(RcaReportingCycle, on_delete=models.PROTECT, related_name='reports')
+    version = models.PositiveIntegerField()
+    generated_at = models.DateTimeField(auto_now_add=True)
+    generated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    automatic = models.BooleanField(default=False, help_text='Generated when the last required submission was accepted.')
+    filename = models.CharField(max_length=200)
+    stored_path = models.CharField(max_length=500)
+    checksum_sha256 = models.CharField(max_length=64)
+    records_checksum = models.CharField(max_length=64, help_text='Fingerprint of the accepted records the report was built from.')
+    record_count = models.PositiveIntegerField()
+    summary = models.JSONField(default=dict, help_text='The RCA Summary computed from the same records.')
+    submissions = models.JSONField(default=list, help_text='Required units and their accepted files at generation.')
+    superseded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-version']
+        constraints = [models.UniqueConstraint(fields=['cycle', 'version'], name='rca_report_version')]
 
 
 class RcaCauseCategory(models.Model):

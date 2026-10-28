@@ -33,7 +33,8 @@ import type {
   Role,
 } from '../types';
 import type {
-  RcaCauses, RcaImportBatch, RcaOptions, RcaPage, RcaRecordDetail, RcaRecordInput, RcaSummary, RcaWorkflowInput,
+  RcaCauses, RcaCycleDetail, RcaCycleList, RcaImportBatch, RcaOptions, RcaPage, RcaRecordDetail, RcaRecordInput, RcaReportVersion,
+  RcaSummary, RcaUploadDetails, RcaWorkflowInput,
 } from '../types/rca';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
@@ -289,16 +290,30 @@ export const createRcaRecord = (record: RcaRecordInput) => send<RcaRecordDetail>
 export const updateRcaWorkflow = (id: number, workflow: RcaWorkflowInput) => send<RcaRecordDetail>(`/rca/records/${id}/workflow/`, { ...workflow }, 'PUT');
 export const addRcaComment = (id: number, text: string, evidence: string) => send<RcaRecordDetail>(`/rca/records/${id}/comments/`, { text, evidence });
 export const fetchRcaSummary = (params: URLSearchParams, signal?: AbortSignal) => request<RcaSummary>('/rca/summary/', params, { signal });
-export const fetchRcaImports = (signal?: AbortSignal) => request<{ imports: RcaImportBatch[]; records: number }>('/rca/imports/', undefined, { signal });
-export async function previewRcaImport(file: File) {
+/** The signed-in user's uploads; an Admin may ask for every upload. */
+export const fetchRcaImports = (signal?: AbortSignal, all = false) =>
+  request<{ imports: RcaImportBatch[]; records: number; all: boolean }>('/rca/imports/', all ? new URLSearchParams({ all: '1' }) : undefined, { signal });
+export const fetchRcaImport = (id: number, signal?: AbortSignal) => request<RcaImportBatch>(`/rca/imports/${id}/`, undefined, { signal });
+export async function previewRcaImport(file: File, details: RcaUploadDetails) {
   const form = new FormData();
   form.append('file', file);
+  for (const [key, value] of Object.entries(details)) form.append(key, value);
   return request<RcaImportBatch>('/rca/imports/preview/', undefined, { method: 'POST', body: form });
 }
-export const commitRcaImport = (id: number, conflictAction: '' | 'skip' | 'overwrite') =>
-  send<RcaImportBatch & { records: number }>(`/rca/imports/${id}/commit/`, { conflict_action: conflictAction });
+export const commitRcaImport = (id: number, choices: { conflict_action?: '' | 'skip' | 'overwrite'; missing_action?: '' | 'keep' | 'withdraw'; accept_rejected?: boolean } = {}) =>
+  send<RcaImportBatch & { records: number; final_report: RcaReportVersion | null }>(`/rca/imports/${id}/commit/`, { ...choices });
 export const discardRcaImport = (id: number) => send<RcaImportBatch>(`/rca/imports/${id}/discard/`);
 export const rcaIssuesUrl = (id: number) => `${API_BASE_URL}/rca/imports/${id}/issues.csv`;
+export const rcaImportWorkbookUrl = (id: number) => `${API_BASE_URL}/rca/imports/${id}/report.xlsx`;
+export const fetchRcaCycles = (signal?: AbortSignal) => request<RcaCycleList>('/rca/cycles/', undefined, { signal });
+export const fetchRcaCycle = (id: number, signal?: AbortSignal) => request<RcaCycleDetail>(`/rca/cycles/${id}/`, undefined, { signal });
+export const startRcaCycle = (period: { name: string; period_start: string; period_end: string; notes: string }, units: [string, string][]) =>
+  send<RcaCycleDetail>('/rca/cycles/', { ...period, units });
+export const setRcaRequired = (id: number, units: [string, string][]) => send<RcaCycleDetail>(`/rca/cycles/${id}/required/`, { units }, 'PUT');
+export const finalizeRcaCycle = (id: number) =>
+  send<RcaCycleDetail & { created: boolean; report: RcaReportVersion }>(`/rca/cycles/${id}/finalize/`);
+export const rcaCycleWorkbookUrl = (id: number) => `${API_BASE_URL}/rca/cycles/${id}/report.xlsx`;
+export const rcaReportFileUrl = (cycle: number, report: number) => `${API_BASE_URL}/rca/cycles/${cycle}/reports/${report}.xlsx`;
 export const fetchRcaCauses = (signal?: AbortSignal) => request<RcaCauses>('/rca/causes/', undefined, { signal });
 export const createRcaCategory = (name: string, description = '') => send<{ id: number; name: string }>('/rca/causes/categories/', { name, description });
 export const mapRcaCauses = (keys: string[], category: number) => send<RcaCauses>('/rca/causes/mappings/', { keys, category });
