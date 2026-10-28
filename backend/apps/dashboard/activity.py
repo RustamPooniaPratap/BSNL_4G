@@ -27,6 +27,8 @@ CIRCLES = {
     'odisha': 'OD', 'orissa': 'OD', 'rajasthan': 'RJ', 'madhya pradesh': 'MP', 'jharkhand': 'JH', 'bihar': 'BH',
     'chhattisgarh': 'CG', 'uttar pradesh': 'UP', 'west bengal': 'WB', 'andhra pradesh': 'AP', 'telangana': 'TL',
     'maharashtra': 'MH',
+    # Spellings used in the escalation matrix's LWE rows.
+    'chattishgarh': 'CG', 'chhattishgarh': 'CG', 'maharastra': 'MH', 'telangna': 'TL', 'west bangal': 'WB',
 }
 KINDS = {'on_air': 'Site On Air Date', 'om_start': 'O&M Start Date'}
 

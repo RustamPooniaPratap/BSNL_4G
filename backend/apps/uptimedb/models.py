@@ -116,3 +116,116 @@ class AppSetting(models.Model):
 
     def __str__(self):
         return f'{self.key}={self.value}'
+
+
+class EscalationImportBatch(models.Model):
+    """One import of the Consolidated Escalation Matrix ("Raw Data" sheet): preview first, then commit."""
+
+    class Status(models.TextChoices):
+        PREVIEWED = 'previewed', 'Previewed'
+        COMMITTED = 'committed', 'Committed'
+        FAILED = 'failed', 'Failed'
+
+    original_filename = models.CharField(max_length=255)
+    checksum_sha256 = models.CharField(max_length=64, db_index=True)
+    sheet_name = models.CharField(max_length=64)
+    stored_path = models.CharField(max_length=500, help_text='Staged copy of the file (the original is never modified).')
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PREVIEWED)
+    imported_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    initiated_via = models.CharField(max_length=40, default='command')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    committed_at = models.DateTimeField(null=True, blank=True)
+    # {"inserted": n, "updated": n, "unchanged": n, "not_in_this_file": n}
+    counts = models.JSONField(default=dict, blank=True)
+    # Parse summary and the cross-check against the Up-Time Report tables.
+    report = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f'#{self.pk} {self.original_filename} ({self.status})'
+
+
+class EscalationSite(models.Model):
+    """One site of the Consolidated Escalation Matrix: dates, status and the escalation chain.
+
+    Identity: (project, normalised BSNL Site ID). It is linked to the Up-Time Report site with the same project,
+    circle and ID (``uptime_site``), which also connects it to the monthly, daily and RCA records. Dates the source
+    writes as text ("NO", "-") are NULL, with the text kept in the matching ``*_raw`` field.
+    """
+
+    class Match(models.TextChoices):
+        MATCHED = 'matched', 'Matched to an Up-Time Report site'
+        NOT_IN_UPTIME = 'not_in_uptime', 'Dashboard project, but not in the Up-Time Report'
+        OTHER_ENTITY = 'other_entity', 'Not a dashboard project (e.g. VI-HPSC, Sterlite)'
+
+    project = models.CharField(max_length=40, help_text='"4G Saturation" or "LWE"; other entities as written.')
+    entity_raw = models.CharField(max_length=60, blank=True)
+    site_type = models.CharField(max_length=60, blank=True)
+    circle = models.CharField(max_length=40, help_text='Circle code as on the dashboard (e.g. Chattishgarh to CG).')
+    circle_raw = models.CharField(max_length=60, blank=True)
+    site_id = models.CharField(max_length=60, help_text='BSNL Site ID as in the source.')
+    site_key = models.CharField(max_length=60, help_text='Matching key: trimmed, upper case, inner spaces collapsed.')
+    site_name = models.CharField(max_length=200, blank=True)
+    village_code = models.CharField(max_length=100, blank=True)
+    ba = models.CharField(max_length=100, blank=True)
+    oa = models.CharField(max_length=100, blank=True)
+    district = models.CharField(max_length=100, blank=True)
+    sub_district = models.CharField(max_length=100, blank=True)
+    commissioning_date = models.DateField(null=True, blank=True)
+    commissioning_raw = models.CharField(max_length=60, blank=True)
+    commissioning_status = models.CharField(max_length=40, blank=True)
+    om_status = models.CharField(max_length=40, blank=True)
+    om_start_date = models.DateField(null=True, blank=True)
+    om_start_raw = models.CharField(max_length=60, blank=True)
+    eb_status = models.CharField(max_length=40, blank=True)
+    dg_status = models.CharField(max_length=40, blank=True)
+    case_type = models.CharField(max_length=40, blank=True)
+    on_air_status = models.CharField(max_length=40, blank=True)
+    on_air_date = models.DateField(null=True, blank=True)
+    on_air_raw = models.CharField(max_length=60, blank=True)
+    ie_emp_code = models.CharField(max_length=40, blank=True)
+    ie_name = models.CharField(max_length=120, blank=True)
+    ie_contact = models.CharField(max_length=60, blank=True)
+    ci_emp_code = models.CharField(max_length=40, blank=True)
+    ci_name = models.CharField(max_length=120, blank=True)
+    ci_contact = models.CharField(max_length=60, blank=True)
+    il_emp_code = models.CharField(max_length=40, blank=True)
+    il_name = models.CharField(max_length=120, blank=True)
+    il_contact = models.CharField(max_length=60, blank=True)
+    om_manager_emp_code = models.CharField(max_length=40, blank=True)
+    om_manager_name = models.CharField(max_length=120, blank=True)
+    om_manager_contact = models.CharField(max_length=60, blank=True)
+    cbh_name = models.CharField(max_length=120, blank=True)
+    cbh_contact = models.CharField(max_length=60, blank=True)
+    ct_status = models.CharField(max_length=40, blank=True)
+    ct_name = models.CharField(max_length=120, blank=True)
+    ct_contact = models.CharField(max_length=60, blank=True)
+    site_address = models.TextField(blank=True)
+    latitude = models.FloatField(null=True, blank=True, help_text='NULL when the source has 0 or text.')
+    longitude = models.FloatField(null=True, blank=True, help_text='NULL when the source has 0 or text.')
+    rigger_emp_code = models.CharField(max_length=40, blank=True)
+    rigger_name = models.CharField(max_length=120, blank=True)
+    rigger_contact = models.CharField(max_length=60, blank=True)
+    remarks = models.TextField(blank=True)
+    smps_make = models.CharField(max_length=60, blank=True)
+    bts_id_b1 = models.CharField(max_length=60, blank=True, help_text='BTS Site ID_B1(21MHz).')
+    bts_id_b28 = models.CharField(max_length=60, blank=True, help_text='BTS Site ID_B28(7MHz).')
+    master_bts_id = models.CharField(max_length=60, blank=True)
+    # Source columns without a field above (e.g. the unnamed LWE connection status column), kept as written.
+    extra = models.JSONField(default=dict, blank=True)
+    uptime_site = models.OneToOneField(UptimeSite, null=True, blank=True, on_delete=models.SET_NULL, related_name='escalation')
+    match_status = models.CharField(max_length=20, choices=Match.choices, default=Match.NOT_IN_UPTIME)
+    batch = models.ForeignKey(EscalationImportBatch, on_delete=models.PROTECT, related_name='sites')
+    source_file = models.CharField(max_length=255, blank=True)
+    source_row = models.PositiveIntegerField(help_text='1-based Excel row in source_file.')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['project', 'site_key'], name='escalation_site_identity')]
+        indexes = [models.Index(fields=['project', 'circle']), models.Index(fields=['site_key'])]
+
+    def __str__(self):
+        return f'{self.project} {self.circle} {self.site_id}'

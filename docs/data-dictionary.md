@@ -94,3 +94,20 @@ Results are shown on the **Data source & quality** page and returned by `GET /ap
 - `Data/raw/nw_aval_btsipid_wise_*.csv`: CNMC exports, the input for the planned ingestion pipeline. Columns used by `match_master.py`: `BTS IP ID`, `Nw Avail (4G TCS)`, `Report Date` (`dd-mm-yyyy`).
 - `Data/reference/` held the workbook for inspection only. The application does not read it; the dashboard uses the uploaded copy in `Data/processed/workbooks/`.
 - **No LWE ID-mapping reference file exists in the repository.** It is required before raw LWE files can be processed.
+
+## Consolidated Escalation Matrix (stored in PostgreSQL)
+
+Source: `Data/reference/Consolidated Escalation Matrix _<month>.xlsx`, sheet **Raw Data** (header on row 3, one row per site).
+Import with `python manage.py import_escalation` (preview of the latest matrix) and then `--commit <id>`.
+
+| Table / view | Grain | Contents |
+|---|---|---|
+| `uptimedb_escalationsite` | One row per (project, BSNL Site ID) | Site type, district, commissioning / On-Air / O&M Start dates, EB / DG status, case type, the escalation chain (IE, CI, IL, O&M Manager, CBH, CT, rigger, with contacts), address, coordinates, BTS IDs. Unnamed columns go to `extra` (e.g. "Column AZ", the LWE connection status). |
+| `uptimedb_escalationimportbatch` | One row per import | File, checksum, status, counts and the cross-check report. |
+| `site_overview` (view) | One row per Up-Time Report site | The Up-Time site joined with its escalation details and its number of RCA records. |
+
+**Links.** `uptimedb_escalationsite.uptime_site_id` points to `uptimedb_uptimesite.id` (same project, circle and normalised site ID), and through it to `uptimedb_sitemonthlyperformance` / `uptimedb_sitedailyperformance` (`site_id`). RCA records join on `(project, site_key)`. Links are refreshed after every Up-Time or escalation import. `match_status` is `matched`, `not_in_uptime`, or `other_entity` (VI-HPSC and Sterlite rows, which are not dashboard projects).
+
+**Normalisation.** Entities "4G Saturation" / "LWE" become the dashboard projects; circle names become codes, including the matrix's spellings Chattishgarh, Maharastra, Telangna and West Bangal. Dates written as text ("NO", "-") are NULL, with the text in `*_raw`; coordinates of 0 are NULL. The serial number and the "@" / "Combo" helper columns are not stored.
+
+**Cross-check (reported, never applied).** Sites in only one source; CI / IE names that differ (ignoring case and spacing); On-Air status vs the Up-Time Report; O&M Status vs the latest month's O&M Start flag.

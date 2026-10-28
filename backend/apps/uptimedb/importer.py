@@ -188,6 +188,9 @@ def commit(batch: DataImportBatch, *, user=None, conflict_source: str = '') -> D
     batch.conflict_source = conflict_source if batch.reconciliation_path else ''
     batch.imported_by = batch.imported_by or user
     batch.save(update_fields=['status', 'counts', 'committed_at', 'conflict_source', 'imported_by'])
+    # Sites added by this import are linked to their escalation matrix rows.
+    from .escalation import link_uptime_sites
+    link_uptime_sites()
     datasource.clear_cache()
     audit('import_committed', _Actor(user) if user else None, batch=batch.pk, file=batch.original_filename,
           conflict_source=batch.conflict_source or '-', daily_only=bool(options.get('daily_only')),
