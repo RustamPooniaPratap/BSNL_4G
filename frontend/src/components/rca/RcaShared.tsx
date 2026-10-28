@@ -1,0 +1,146 @@
+import type { ReactNode } from 'react';
+import { RotateCcw, Search } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
+import { Field, SelectField } from '../data/DataEntry';
+import { formatDate } from '../../lib/format';
+import { ALL, FILTER_KEYS, NOT_RECORDED, type FilterKey } from '../../lib/rca';
+import type { RcaOptions, RcaStatus } from '../../types/rca';
+
+const STATUS_TONE: Record<RcaStatus, string> = {
+  investigation: 'border-sky-200 bg-sky-50 text-sky-800',
+  rca_review: 'border-violet-200 bg-violet-50 text-violet-800',
+  action_pending: 'border-amber-200 bg-amber-50 text-amber-800',
+  action_completed: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  closed: 'border-slate-300 bg-slate-100 text-slate-800',
+};
+
+export function StatusBadge({ status, label }: { status: RcaStatus | null; label: string | null }) {
+  if (!status) return <span className="text-xs text-muted-foreground italic">{NOT_RECORDED}</span>;
+  return <Badge variant="outline" className={cn('font-medium', STATUS_TONE[status])}>{label}</Badge>;
+}
+
+/** A source value, with blank or "-" shown as unclassified (the value itself is kept as written). */
+export function SourceValue({ value, unclassified, notApplicable }: { value: string; unclassified: boolean; notApplicable?: boolean }) {
+  if (!unclassified) return <>{value}</>;
+  // A blank cause field of an Other Media record is expected (RCA not applicable), not missing information.
+  if (notApplicable) return <span className="text-muted-foreground" title={`Source value: "${value || 'blank'}". RCA is not applicable to Other Media.`}>{value || '—'} <span className="text-[10px]">(not applicable)</span></span>;
+  return <span className="text-muted-foreground italic" title={`Source value: "${value || 'blank'}"`}>Unclassified{value ? ` (${value})` : ''}</span>;
+}
+
+export function RcaFilterBar({ options, params, onChange, onReset, search = false, statusFilter = false, actions }: {
+  options: RcaOptions; params: URLSearchParams; onChange: (key: FilterKey, value: string) => void; onReset: () => void;
+  search?: boolean; statusFilter?: boolean; actions?: ReactNode;
+}) {
+  const get = (k: FilterKey) => params.get(k) ?? '';
+  const project = get('project');
+  const circles = options.circles.filter((c) => !project || c.project === project);
+  const select = (key: FilterKey, label: string, all: string, items: { value: string; label: string }[], width = 'w-40') => (
+    <Field id={`rca-${key}`} label={label} plain className={width}>
+      <SelectField id={`rca-${key}`} value={get(key) || ALL} placeholder={all} onChange={(v) => onChange(key, v === ALL ? '' : v)}
+        options={[{ value: ALL, label: all }, ...items]} />
+    </Field>
+  );
+  const dates = options.dates;
+  const active = FILTER_KEYS.some((k) => get(k));
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-end gap-3">
+        {search && (
+          <Field id="rca-q" label="Search" plain className="w-60">
+            <div className="relative">
+              <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input id="rca-q" value={get('q')} onChange={(e) => onChange('q', e.target.value)} placeholder="Site ID, name, OA, BA or RCA text" className="pl-8" />
+            </div>
+          </Field>
+        )}
+        <Field id="rca-date-from" label="From" plain className="w-36">
+          <Input id="rca-date-from" type="date" value={get('date_from')} min={dates[0]} max={dates.at(-1)} onChange={(e) => onChange('date_from', e.target.value)} />
+        </Field>
+        <Field id="rca-date-to" label="To" plain className="w-36">
+          <Input id="rca-date-to" type="date" value={get('date_to')} min={dates[0]} max={dates.at(-1)} onChange={(e) => onChange('date_to', e.target.value)} />
+        </Field>
+        {select('project', 'Project', 'All projects', options.projects.map((p) => ({ value: p, label: p })), 'w-36')}
+        {select('circle', 'Circle', 'All circles', [...new Map(circles.map((c) => [c.circle, c])).values()]
+          .map((c) => ({ value: c.circle, label: `${c.circle} · ${c.circle_raw}` })), 'w-44')}
+        {select('final_bucket', 'Final Bucket', 'All Final Buckets', options.final_buckets, 'w-44')}
+        {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', options.bucket_2, 'w-44')}
+        {select('category', 'Cause category', 'All categories', [
+          ...options.categories, { value: 'unreviewed', label: 'Unreviewed descriptions' },
+        ], 'w-48')}
+        {select('rca', 'RCA applicability', 'All records', [
+          { value: 'required', label: 'RCA required' }, { value: 'missing', label: 'RCA Required — Missing Information' },
+          { value: 'not_applicable', label: 'Other Media — RCA Not Applicable' },
+        ], 'w-56')}
+        {statusFilter && select('status', 'Follow-up status', 'All statuses', [...options.statuses, { value: 'not_recorded', label: NOT_RECORDED }], 'w-44')}
+        <Button type="button" variant="ghost" size="icon" className="size-9" aria-label="Reset filters" title="Reset filters" disabled={!active} onClick={onReset}>
+          <RotateCcw />
+        </Button>
+        {actions && <div className="ml-auto flex items-end gap-2">{actions}</div>}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {dates.length === 0 ? 'No RCA records imported yet.'
+          : dates.length === 1 ? `RCA data covers one reporting date: ${formatDate(dates[0])}.`
+            : `RCA data covers ${dates.length} reporting dates, ${formatDate(dates[0])} to ${formatDate(dates.at(-1))}.`}
+        {!options.categories.length && ' Cause categories appear here once an Admin reviews the RCA descriptions.'}
+      </p>
+    </div>
+  );
+}
+
+export interface BarRow {
+  key: string;
+  label: string;
+  value: number | null;
+  display: string;
+  note?: string;
+  muted?: boolean;
+  title?: string;
+}
+
+/** Ranked horizontal bars (largest first, as given), each with its value; muted rows are unclassified. */
+export function RankedBars({ rows, label, color = 'var(--chart-1)', onSelect }: {
+  rows: BarRow[]; label: string; color?: string; onSelect?: (key: string) => void;
+}) {
+  const max = Math.max(1, ...rows.map((r) => r.value ?? 0));
+  return (
+    <ol className="space-y-1" aria-label={label}>
+      {rows.map((r) => {
+        const body = (
+          <>
+            <span className={cn('truncate text-left text-xs', r.muted ? 'text-muted-foreground italic' : 'font-medium')}>{r.label}</span>
+            <span className="relative h-3.5 rounded-sm bg-muted/60">
+              {r.value != null && r.value > 0 && (
+                <span className="absolute inset-y-0 left-0 rounded-sm" style={{ width: `${(100 * r.value) / max}%`, background: r.muted ? 'var(--muted-foreground)' : color, opacity: r.muted ? 0.45 : 1 }} />
+              )}
+            </span>
+            <span className="text-right text-xs tabular-nums">{r.display}{r.note && <span className="ml-1 text-[10px] text-muted-foreground">{r.note}</span>}</span>
+          </>
+        );
+        const cls = 'grid w-full grid-cols-[minmax(0,11rem)_1fr_minmax(5.5rem,auto)] items-center gap-2 rounded px-1 py-0.5';
+        return (
+          <li key={r.key} title={r.title}>
+            {onSelect ? (
+              <button type="button" className={cn(cls, 'hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none')} onClick={() => onSelect(r.key)}>{body}</button>
+            ) : <div className={cls}>{body}</div>}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+export function Segmented<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: [T, string][]; label: string }) {
+  return (
+    <div className="inline-flex rounded-lg border p-0.5" role="group" aria-label={label}>
+      {options.map(([v, text]) => (
+        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}
+          className={cn('rounded-md px-2.5 py-1 text-xs font-medium', value === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}

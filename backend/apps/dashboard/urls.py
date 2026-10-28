@@ -1,0 +1,41 @@
+from django.urls import path
+
+from .views import (
+    alerts_view,
+    breakdowns_view,
+    filters_view,
+    monthly_view,
+    om_heads_view,
+    conversion_activity_view,
+    period_view,
+    thresholds_view,
+    record_detail_view,
+    records_view,
+    source_view,
+    summary_view,
+    team_monthly_view,
+    team_top_view,
+    teams_view,
+    trends_view,
+    workbook_view,
+)
+
+urlpatterns = [
+    path('filters/', filters_view, name='dashboard-filters'),
+    path('summary/', summary_view, name='dashboard-summary'),
+    path('trends/', trends_view, name='dashboard-trends'),
+    path('breakdowns/', breakdowns_view, name='dashboard-breakdowns'),
+    path('records/', records_view, name='dashboard-records'),
+    path('records/<str:site_id>/', record_detail_view, name='dashboard-record-detail'),
+    path('source/', source_view, name='dashboard-source'),
+    path('monthly/', monthly_view, name='dashboard-monthly'),
+    path('thresholds/', thresholds_view, name='dashboard-thresholds'),
+    path('period/', period_view, name='dashboard-period'),
+    path('teams/', teams_view, name='dashboard-teams'),
+    path('teams/monthly/', team_monthly_view, name='dashboard-teams-monthly'),
+    path('teams/top/', team_top_view, name='dashboard-teams-top'),
+    path('workbook/', workbook_view, name='dashboard-workbook'),
+    path('alerts/', alerts_view, name='dashboard-alerts'),
+    path('om-heads/', om_heads_view, name='dashboard-om-heads'),
+    path('conversion-activity/', conversion_activity_view, name='dashboard-conversion-activity'),
+]

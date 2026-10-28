@@ -1,0 +1,226 @@
+/** RCA register API types (backend: apps/rca). Source facts are as written in the RCA workbook. */
+
+export type RcaStatus = 'investigation' | 'rca_review' | 'action_pending' | 'action_completed' | 'closed';
+export type RcaReview = 'pending' | 'confirmed' | 'needs_revision';
+export type RcaVerification = 'effective' | 'not_effective' | 'not_verifiable';
+
+export interface RcaRecord {
+  id: number;
+  reporting_date: string;
+  project: string;
+  /** As written in the source, e.g. "4G Satu". */
+  project_raw: string;
+  circle: string;
+  circle_raw: string;
+  site_id: string;
+  site_name: string;
+  oa: string;
+  ba: string;
+  om_start_raw: string;
+  om_start: boolean | null;
+  outage_minutes: number | null;
+  final_bucket: string;
+  final_bucket_unclassified: boolean;
+  bucket_2: string;
+  bucket_2_unclassified: boolean;
+  rca_text: string;
+  rca_unclassified: boolean;
+  /** False for Other Media (Final Bucket): RCA recording is not applicable. */
+  rca_applicable: boolean;
+  /** Admin-approved canonical category; null = description not reviewed yet. */
+  category: { id: number; name: string } | null;
+  source: 'import' | 'manual';
+  status: RcaStatus | null;
+  status_label: string | null;
+}
+
+export interface RcaWorkflow {
+  status: RcaStatus | null;
+  status_label: string | null;
+  review_status: RcaReview | null;
+  review_status_label: string | null;
+  corrective_action: string | null;
+  owner: string | null;
+  target_date: string | null;
+  completed_date: string | null;
+  verification: RcaVerification | null;
+  verification_label: string | null;
+  reviewer: string | null;
+  reviewed_at: string | null;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+export interface RcaRecordDetail extends RcaRecord {
+  source_file: string | null;
+  source_row: number | null;
+  batch: number | null;
+  created_by: string | null;
+  created_at: string;
+  workflow: RcaWorkflow | null;
+  comments: { id: number; author: string | null; text: string; evidence: string | null; created_at: string }[];
+  history: { action: string; user: string | null; at: string; changes: Record<string, unknown> }[];
+  other_records: { id: number; reporting_date: string; outage_minutes: number | null; rca_text: string }[];
+  warning?: string | null;
+}
+
+export interface RcaPage {
+  count: number;
+  page: number;
+  page_size: number;
+  pages: number;
+  results: RcaRecord[];
+}
+
+export interface RcaOption { value: string; label: string; unclassified?: boolean }
+
+export interface RcaOptions {
+  dates: string[];
+  projects: string[];
+  circles: { project: string; circle: string; circle_raw: string }[];
+  final_buckets: RcaOption[];
+  bucket_2: RcaOption[];
+  categories: RcaOption[];
+  statuses: RcaOption[];
+  total_records: number;
+}
+
+export interface RcaRanked {
+  key: string;
+  label: string;
+  unclassified: boolean;
+  /** Final Bucket for which RCA is not applicable (Other Media): shown, but not as a technical cause. */
+  rca_not_applicable: boolean;
+  records: number;
+  outage_minutes: number | null;
+  /** Source spellings grouped under this label (case and spaces ignored). */
+  variants: string[];
+}
+
+export interface RcaCircle {
+  project: string;
+  circle: string;
+  records: number;
+  outage_minutes: number | null;
+  affected_sites: number;
+  /** Sites in the dashboard's current Master data; null when unavailable. */
+  portfolio_sites: number | null;
+  records_per_100_sites: number | null;
+  minutes_per_portfolio_site: number | null;
+}
+
+export interface RcaSummary {
+  kpis: {
+    records: number;
+    affected_sites: number;
+    outage_minutes: number | null;
+    records_with_minutes: number;
+    /** RCA-applicable records with a blank or "-" cause field ("RCA Required — Missing Information"). */
+    incomplete_records: number;
+    incomplete_by_field: { final_bucket: number; bucket_2: number; rca: number };
+    missing_label: string;
+    rca_applicable_records: number;
+    completeness_pct: number | null;
+    rca_not_applicable: { label: string; final_buckets: string[]; records: number; outage_minutes: number | null; blank_bucket_2: number };
+  };
+  dates: { date: string; records: number }[];
+  final_buckets: RcaRanked[];
+  bucket_2: RcaRanked[];
+  circles: RcaCircle[];
+  population_source: string | null;
+  categories: {
+    mapped: { id: number; name: string; records: number; outage_minutes: number | null }[];
+    unreviewed: { records: number; outage_minutes: number | null; descriptions: number };
+    no_description: { records: number; outage_minutes: number | null };
+  };
+  top_records: RcaRecord[];
+}
+
+export interface RcaCauseItem {
+  key: string;
+  text: string;
+  spellings: string[];
+  records: number;
+  outage_minutes: number | null;
+  category: { id: number; name: string } | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+}
+
+export interface RcaCauses {
+  categories: { id: number; name: string; description: string; descriptions: number }[];
+  queue: RcaCauseItem[];
+  mapped: RcaCauseItem[];
+  stats: { descriptions: number; mapped_descriptions: number; records: number; mapped_records: number; no_description_records: number };
+}
+
+export interface RcaIssue { severity: 'error' | 'warning' | 'info'; code: string; row: number | null; site_id: string; message: string }
+
+export interface RcaImportReport {
+  filename: string;
+  sheet: string;
+  rows_read: number;
+  valid_rows: number;
+  rejected_rows: number;
+  blank_rows: number;
+  unknown_columns: string[];
+  dates: Record<string, number>;
+  projects: Record<string, number>;
+  projects_raw: Record<string, number>;
+  circles: Record<string, number>;
+  circle_names: Record<string, number>;
+  distinct_sites: number;
+  outage_minutes: number;
+  final_buckets: Record<string, number>;
+  bucket_2: Record<string, number>;
+  distinct_rca: number;
+  label_variants: Record<string, string[][]>;
+  severity_counts: { error: number; warning: number; info: number };
+  issue_counts: Record<string, number>;
+  issues: RcaIssue[];
+  new_rows: number;
+  unchanged_rows: number;
+  conflict_rows: number;
+  conflicts: { row: number; site_id: string; record_id: number; differences: Record<string, { database: unknown; file: unknown }> }[];
+  already_imported: { batch: number; committed_at: string } | null;
+}
+
+export interface RcaImportBatch {
+  id: number;
+  status: 'previewed' | 'committed' | 'failed' | 'discarded';
+  file: string;
+  checksum: string;
+  sheet: string;
+  uploaded_at: string;
+  committed_at: string | null;
+  imported_by: string | null;
+  counts: Record<string, number>;
+  conflict_action: string | null;
+  error: string | null;
+  report?: RcaImportReport;
+}
+
+export interface RcaWorkflowInput {
+  status?: RcaStatus | '';
+  review_status?: RcaReview | '';
+  corrective_action?: string;
+  owner?: string;
+  target_date?: string;
+  completed_date?: string;
+  verification?: RcaVerification | '';
+}
+
+export interface RcaRecordInput {
+  reporting_date: string;
+  project: string;
+  circle: string;
+  site_id: string;
+  site_name?: string;
+  oa?: string;
+  ba?: string;
+  om_start_raw?: string;
+  outage_minutes?: number | string | null;
+  final_bucket?: string;
+  bucket_2?: string;
+  rca_text: string;
+}
