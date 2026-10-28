@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { CalendarDays, ChartBar, Info } from 'lucide-react';
+import { CalendarDays, Info } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,12 +9,14 @@ import { ChartCard } from '../../components/dashboard/ChartCard';
 import { DataTable } from '../../components/dashboard/DataTable';
 import { reportTypeColor } from '../../components/dashboard/constants';
 import { CycleBadge, RankedBars, RcaFilterBar, Segmented, SourceValue, type BarRow } from '../../components/rca/RcaShared';
-import { FILTER_KEYS, formatMin, shortProject, type FilterKey } from '../../lib/rca';
+import { FILTER_KEYS, formatMin, rcaCoverageText, shortProject, type FilterKey } from '../../lib/rca';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDate, formatNumber } from '../../lib/format';
 import { fetchRcaOptions, fetchRcaSummary, rcaCycleWorkbookUrl } from '../../services/api';
 import type { RcaCircle, RcaCycle, RcaOptions, RcaRanked, RcaSummary } from '../../types/rca';
-import { Field, SelectField } from '../../components/data/DataEntry';
+import { SelectField } from '../../components/data/DataEntry';
+import { Field } from '../../components/dashboard/FilterBar';
+import { PageHeading } from '../../context/pageHeader';
 
 type Measure = 'records' | 'minutes';
 type CircleMeasure = 'records' | 'minutes' | 'rate';
@@ -47,22 +49,17 @@ export function RcaSummaryPage() {
 
   return (
     <div className="space-y-4">
-      <Card className="gap-3 rounded-xl px-5 py-4">
-        <div className="flex items-start gap-3">
-          <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><ChartBar className="size-5" aria-hidden="true" /></span>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">RCA Summary</h1>
-            <p className="text-sm text-muted-foreground">RCA records stored in the database. Incident counts and outage minutes are shown separately: they rank causes differently.</p>
-          </div>
-        </div>
-        {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}
-        {options.data && <ReportingDateSelect options={options.data} params={params} onChange={(from, to) => setParams((cur) => {
-          const next = new URLSearchParams(cur);
-          if (from) { next.set('date_from', from); next.set('date_to', to); } else { next.delete('date_from'); next.delete('date_to'); }
-          return next;
-        }, { replace: true })} />}
-        {options.data && <RcaFilterBar options={options.data} params={params} onChange={onFilter} onReset={() => setParams(new URLSearchParams(), { replace: true })} />}
-      </Card>
+      <PageHeading title="RCA Summary"
+        subtitle={options.data ? `${showingText(options.data, params)} · ${rcaCoverageText(options.data.dates)}` : 'Accepted RCA records'} />
+      {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}
+      {options.data ? (
+        <RcaFilterBar options={options.data} params={params} onChange={onFilter} onReset={() => setParams(new URLSearchParams(), { replace: true })}
+          lead={<ReportingDateSelect options={options.data} params={params} onChange={(from, to) => setParams((cur) => {
+            const next = new URLSearchParams(cur);
+            if (from) { next.set('date_from', from); next.set('date_to', to); } else { next.delete('date_from'); next.delete('date_to'); }
+            return next;
+          }, { replace: true })} />} />
+      ) : !options.error && <Skeleton className="h-16 w-full" />}
 
       {summary.error && <Alert variant="destructive"><AlertDescription>{summary.error.message}</AlertDescription></Alert>}
       {!s && !summary.error && <Skeleton className="h-96 w-full" />}
@@ -115,22 +112,26 @@ function ReportingDateSelect({ options, params, onChange }: { options: RcaOption
     ...options.months.map((m) => ({ value: `month:${m.month}`, label: `${monthLabel(m.month)} — month (${m.dates_with_records} reporting date${m.dates_with_records === 1 ? '' : 's'} with records)` })),
     ...(value === 'custom' ? [{ value: 'custom', label: 'Custom range (From / To below)' }] : []),
   ];
-  const selected = options.months.find((m) => value === `month:${m.month}`);
   return (
-    <div className="flex flex-wrap items-end gap-3">
-      <Field id="rca-reporting-date" label="Reporting date" plain className="w-96 max-w-full">
-        <SelectField id="rca-reporting-date" value={value} placeholder="Reporting date" options={choices} onChange={(v) => {
-          if (v === 'all' || v === 'custom') onChange('', '');
-          else if (v.startsWith('day:')) onChange(v.slice(4), v.slice(4));
-          else onChange(...monthBounds(v.slice(6)));
-        }} />
-      </Field>
-      <p className="pb-2 text-sm font-medium" aria-live="polite">
-        {value === 'all' ? 'Showing every reporting date' : value.startsWith('day:') ? `Showing ${formatDate(from)}`
-          : selected ? `Showing ${monthLabel(selected.month)}: the sum of ${selected.dates_with_records} reporting date${selected.dates_with_records === 1 ? '' : 's'} with records` : `Showing ${formatDate(from)} – ${formatDate(to)}`}
-      </p>
-    </div>
+    <Field id="rca-reporting-date" label="Reporting date" className="w-72">
+      <SelectField id="rca-reporting-date" value={value} placeholder="Reporting date" options={choices} onChange={(v) => {
+        if (v === 'all' || v === 'custom') onChange('', '');
+        else if (v.startsWith('day:')) onChange(v.slice(4), v.slice(4));
+        else onChange(...monthBounds(v.slice(6)));
+      }} />
+    </Field>
   );
+}
+
+/** What the summary shows (in the top bar): every date, one reporting date, a month aggregate or a custom range. */
+function showingText(options: RcaOptions, params: URLSearchParams) {
+  const from = params.get('date_from') ?? '';
+  const to = params.get('date_to') ?? '';
+  const month = options.months.find((m) => monthBounds(m.month).join() === [from, to].join());
+  if (!from && !to) return 'Showing every reporting date';
+  if (from === to) return `Showing ${formatDate(from)}`;
+  if (month) return `Showing ${monthLabel(month.month)}: the sum of ${month.dates_with_records} reporting date${month.dates_with_records === 1 ? '' : 's'} with records`;
+  return `Showing ${from ? formatDate(from) : 'the first date'} – ${to ? formatDate(to) : 'the latest date'}`;
 }
 
 /** The reporting period of the filtered dates (or the latest one): expected data received, pending, and its consolidated report. */

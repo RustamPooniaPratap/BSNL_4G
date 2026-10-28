@@ -94,7 +94,11 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-DB_ENGINE = os.getenv('DB_ENGINE', 'django.db.backends.sqlite3')
+# Required: the portal runs on PostgreSQL. SQLite is used only when asked for explicitly (the test command sets
+# DB_ENGINE=django.db.backends.sqlite3); a missing setting stops the server instead of silently using another database.
+DB_ENGINE = os.getenv('DB_ENGINE', '')
+if DB_ENGINE not in ('django.db.backends.postgresql', 'django.db.backends.sqlite3'):
+    raise ImproperlyConfigured('Set DB_ENGINE in backend/.env (django.db.backends.postgresql for the portal database).')
 
 if DB_ENGINE == 'django.db.backends.postgresql':
     DATABASES = {

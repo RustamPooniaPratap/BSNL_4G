@@ -7,26 +7,23 @@ import { Card } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { PageHeading } from '../../context/pageHeader';
 import { newSiteLink } from '../../lib/dataEntry';
 import type { SiteRecord } from '../../types';
 
 export type Step = 'edit' | 'review' | 'done';
 
-export function DataEntryHeader({ icon, title, description, step, accent }: {
+/** Page title (in the top bar), progress steps and the local-only notice. ``icon`` and ``accent`` are kept for callers; the bar shows no icon. */
+export function DataEntryHeader({ title, description, step }: {
   icon: ReactNode; title: string; description: string; step: Step; accent: string;
 }) {
   const steps: { id: Step; label: string }[] = [{ id: 'edit', label: 'Details' }, { id: 'review', label: 'Review' }, { id: 'done', label: 'Validated' }];
   const current = steps.findIndex((s) => s.id === step);
   return (
     <header className="space-y-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-lg [&_svg]:size-5', accent)} aria-hidden="true">{icon}</span>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-            <p className="mt-0.5 max-w-3xl text-sm text-muted-foreground">{description}</p>
-          </div>
-        </div>
+      {/* The title and description are shown in the top application bar, like every page. */}
+      <PageHeading title={title} subtitle={description} />
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <ol className="flex items-center gap-1.5 text-xs" aria-label="Progress">
           {steps.map((s, i) => (
             <li key={s.id} className="flex items-center gap-1.5" aria-current={i === current ? 'step' : undefined}>

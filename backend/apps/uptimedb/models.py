@@ -9,11 +9,25 @@ from django.db import models
 
 
 class DataImportBatch(models.Model):
+    """One import into the uptime tables: a Master workbook, or one circle's raw daily CSV (CNMC dump)."""
+
     class Status(models.TextChoices):
         PREVIEWED = 'previewed', 'Previewed'
         COMMITTED = 'committed', 'Committed'
         FAILED = 'failed', 'Failed'
+        REJECTED = 'rejected', 'Rejected (cannot be imported)'
         DISCARDED = 'discarded', 'Discarded'
+
+    class Kind(models.TextChoices):
+        MASTER_WORKBOOK = 'master_workbook', 'Master workbook'
+        RAW_DAILY_CSV = 'raw_daily_csv', 'Raw daily CSV'
+
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.MASTER_WORKBOOK)
+    # Raw daily CSV uploads: the details entered with the file (blank for Master workbook imports).
+    project = models.CharField(max_length=20, blank=True)
+    circle = models.CharField(max_length=20, blank=True)
+    reporting_date = models.DateField(null=True, blank=True)
+    remarks = models.TextField(blank=True)
 
     original_filename = models.CharField(max_length=255)
     checksum_sha256 = models.CharField(max_length=64, db_index=True)
@@ -40,6 +54,7 @@ class DataImportBatch(models.Model):
 
     class Meta:
         ordering = ['-uploaded_at']
+        indexes = [models.Index(fields=['kind', 'project', 'circle', 'reporting_date'])]
 
     def __str__(self):
         return f'#{self.pk} {self.original_filename} ({self.status})'

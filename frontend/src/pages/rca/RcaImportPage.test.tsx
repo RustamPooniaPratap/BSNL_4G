@@ -54,7 +54,7 @@ describe('Upload RCA Data', () => {
     m.previewRcaImport.mockResolvedValue(PREVIEW);
     m.commitRcaImport.mockResolvedValue(DONE);
     renderWithWorkbook(<RcaImportPage />, { url: '/rca/import', auth: authValue({ user: NOC }) });
-    expect(await screen.findByText('Uploaded as noc.lead')).toBeInTheDocument();  // the uploader is the signed-in account
+    expect(await screen.findByText(/uploaded as noc\.lead/)).toBeInTheDocument();  // the uploader is the signed-in account
     const validate = screen.getByRole('button', { name: 'Validate workbook' });
     expect(validate).toBeDisabled();
     await user.type(screen.getByLabelText(/Report name/), 'October 2026 RCA Report');

@@ -36,6 +36,7 @@ import type {
   RcaCauses, RcaCycleDetail, RcaCycleList, RcaImportBatch, RcaOptions, RcaPage, RcaRecordDetail, RcaRecordInput, RcaReportVersion,
   RcaSummary, RcaUploadDetails, RcaWorkflowInput,
 } from '../types/rca';
+import type { RawRowsPage, RawUpload, RawUploadDetails, RawUploadOptions } from '../types/rawUpload';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
@@ -254,7 +255,7 @@ export async function changePassword(currentPassword: string, newPassword: strin
 export const fetchUsers = (signal?: AbortSignal) => request<{ users: PortalUser[] }>('/auth/users/', undefined, { signal });
 export const createUser = (user: { username: string; first_name: string; last_name: string; email: string; role: Role }) =>
   send<{ user: PortalUser; temporary_password: string }>('/auth/users/', user);
-export const updateUser = (id: number, changes: { role?: Role; is_active?: boolean }) => send<{ user: PortalUser }>(`/auth/users/${id}/`, changes, 'PATCH');
+export const updateUser = (id: number, changes: { role?: Role; is_active?: boolean; circles?: string[] }) => send<{ user: PortalUser }>(`/auth/users/${id}/`, changes, 'PATCH');
 export const resetUserPassword = (id: number) => send<{ user: PortalUser; temporary_password: string }>(`/auth/users/${id}/reset-password/`);
 export const revokeUserSessions = (id: number) => send<{ sessions_revoked: number }>(`/auth/users/${id}/revoke-sessions/`);
 
@@ -318,3 +319,22 @@ export const fetchRcaCauses = (signal?: AbortSignal) => request<RcaCauses>('/rca
 export const createRcaCategory = (name: string, description = '') => send<{ id: number; name: string }>('/rca/causes/categories/', { name, description });
 export const mapRcaCauses = (keys: string[], category: number) => send<RcaCauses>('/rca/causes/mappings/', { keys, category });
 export const unmapRcaCauses = (keys: string[]) => send<RcaCauses>('/rca/causes/mappings/', { keys }, 'DELETE');
+
+// --- Raw daily CSV uploads (Data Entry -> Upload CSV) ------------------------------------------
+
+export const fetchRawUploadOptions = (signal?: AbortSignal) => request<RawUploadOptions>('/raw-uploads/options/', undefined, { signal });
+export const fetchRawUploads = (signal?: AbortSignal) => request<{ uploads: RawUpload[] }>('/raw-uploads/', undefined, { signal });
+export const fetchRawUpload = (id: number, signal?: AbortSignal) => request<RawUpload>(`/raw-uploads/${id}/`, undefined, { signal });
+export const fetchRawUploadRows = (id: number, status: string, page: number, signal?: AbortSignal) =>
+  request<RawRowsPage>(`/raw-uploads/${id}/rows/`, new URLSearchParams({ ...(status ? { status } : {}), page: String(page) }), { signal });
+export async function previewRawUpload(file: File, details: RawUploadDetails) {
+  const form = new FormData();
+  form.append('file', file);
+  for (const [key, value] of Object.entries(details)) form.append(key, value);
+  return request<RawUpload>('/raw-uploads/preview/', undefined, { method: 'POST', body: form });
+}
+export const commitRawUpload = (id: number) => send<RawUpload>(`/raw-uploads/${id}/commit/`, { confirm: true });
+export const discardRawUpload = (id: number) => send<RawUpload>(`/raw-uploads/${id}/discard/`);
+export const rawUploadIssuesUrl = (id: number) => `${API_BASE_URL}/raw-uploads/${id}/issues.csv`;
+export const rawExportUrl = (params: { project: string; circle: string; date_from: string; date_to: string; output: 'csv' | 'xlsx' }) =>
+  `${API_BASE_URL}/raw-uploads/export/?${new URLSearchParams(Object.entries(params).filter(([, v]) => v))}`;

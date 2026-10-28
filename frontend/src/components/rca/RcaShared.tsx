@@ -4,8 +4,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { Field, SelectField } from '../data/DataEntry';
-import { formatDate } from '../../lib/format';
+import { SelectField } from '../data/DataEntry';
+import { Field, FilterCard } from '../dashboard/FilterBar';
 import { ALL, FILTER_KEYS, NOT_RECORDED, type FilterKey } from '../../lib/rca';
 import type { RcaCycleCode, RcaOptions, RcaStatus, RcaUnitCode } from '../../types/rca';
 
@@ -47,15 +47,18 @@ export function SourceValue({ value, unclassified, notApplicable }: { value: str
   return <span className="text-muted-foreground italic" title={`Source value: "${value || 'blank'}"`}>Unclassified{value ? ` (${value})` : ''}</span>;
 }
 
-export function RcaFilterBar({ options, params, onChange, onReset, search = false, statusFilter = false, actions }: {
+/** The RCA filters, in the same compact filter card and label style as the dashboard pages. */
+export function RcaFilterBar({ options, params, onChange, onReset, search = false, statusFilter = false, actions, lead }: {
   options: RcaOptions; params: URLSearchParams; onChange: (key: FilterKey, value: string) => void; onReset: () => void;
   search?: boolean; statusFilter?: boolean; actions?: ReactNode;
+  /** Page-specific controls placed before the shared filters (e.g. a reporting-date selector). */
+  lead?: ReactNode;
 }) {
   const get = (k: FilterKey) => params.get(k) ?? '';
   const project = get('project');
   const circles = options.circles.filter((c) => !project || c.project === project);
   const select = (key: FilterKey, label: string, all: string, items: { value: string; label: string }[], width = 'w-40') => (
-    <Field id={`rca-${key}`} label={label} plain className={width}>
+    <Field id={`rca-${key}`} label={label} className={width}>
       <SelectField id={`rca-${key}`} value={get(key) || ALL} placeholder={all} onChange={(v) => onChange(key, v === ALL ? '' : v)}
         options={[{ value: ALL, label: all }, ...items]} />
     </Field>
@@ -63,47 +66,39 @@ export function RcaFilterBar({ options, params, onChange, onReset, search = fals
   const dates = options.dates;
   const active = FILTER_KEYS.some((k) => get(k));
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-end gap-3">
-        {search && (
-          <Field id="rca-q" label="Search" plain className="w-60">
-            <div className="relative">
-              <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input id="rca-q" value={get('q')} onChange={(e) => onChange('q', e.target.value)} placeholder="Site ID, name, OA, BA or RCA text" className="pl-8" />
-            </div>
-          </Field>
-        )}
-        <Field id="rca-date-from" label="From" plain className="w-36">
-          <Input id="rca-date-from" type="date" value={get('date_from')} min={dates[0]} max={dates.at(-1)} onChange={(e) => onChange('date_from', e.target.value)} />
+    <FilterCard label="RCA filters" actions={actions}>
+      {lead}
+      {search && (
+        <Field id="rca-q" label="Search" className="w-60">
+          <div className="relative">
+            <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input id="rca-q" value={get('q')} onChange={(e) => onChange('q', e.target.value)} placeholder="Site ID, name, OA, BA or RCA text" className="h-9 pl-8" />
+          </div>
         </Field>
-        <Field id="rca-date-to" label="To" plain className="w-36">
-          <Input id="rca-date-to" type="date" value={get('date_to')} min={dates[0]} max={dates.at(-1)} onChange={(e) => onChange('date_to', e.target.value)} />
-        </Field>
-        {select('project', 'Project', 'All projects', options.projects.map((p) => ({ value: p, label: p })), 'w-36')}
-        {select('circle', 'Circle', 'All circles', [...new Map(circles.map((c) => [c.circle, c])).values()]
-          .map((c) => ({ value: c.circle, label: `${c.circle} · ${c.circle_raw}` })), 'w-44')}
-        {select('final_bucket', 'Final Bucket', 'All Final Buckets', options.final_buckets, 'w-44')}
-        {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', options.bucket_2, 'w-44')}
-        {select('category', 'Cause category', 'All categories', [
-          ...options.categories, { value: 'unreviewed', label: 'Unreviewed descriptions' },
-        ], 'w-48')}
-        {select('rca', 'RCA applicability', 'All records', [
-          { value: 'required', label: 'RCA required' }, { value: 'missing', label: 'RCA Required — Missing Information' },
-          { value: 'not_applicable', label: 'Other Media — RCA Not Applicable' },
-        ], 'w-56')}
-        {statusFilter && select('status', 'Follow-up status', 'All statuses', [...options.statuses, { value: 'not_recorded', label: NOT_RECORDED }], 'w-44')}
-        <Button type="button" variant="ghost" size="icon" className="size-9" aria-label="Reset filters" title="Reset filters" disabled={!active} onClick={onReset}>
-          <RotateCcw />
-        </Button>
-        {actions && <div className="ml-auto flex items-end gap-2">{actions}</div>}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        {dates.length === 0 ? 'No RCA records imported yet.'
-          : dates.length === 1 ? `RCA data covers one reporting date: ${formatDate(dates[0])}.`
-            : `RCA data covers ${dates.length} reporting dates, ${formatDate(dates[0])} to ${formatDate(dates.at(-1))}.`}
-        {!options.categories.length && ' Cause categories appear here once an Admin reviews the RCA descriptions.'}
-      </p>
-    </div>
+      )}
+      <Field id="rca-date-from" label="From" className="w-36">
+        <Input id="rca-date-from" type="date" className="h-9" value={get('date_from')} min={dates[0]} max={dates.at(-1)} onChange={(e) => onChange('date_from', e.target.value)} />
+      </Field>
+      <Field id="rca-date-to" label="To" className="w-36">
+        <Input id="rca-date-to" type="date" className="h-9" value={get('date_to')} min={dates[0]} max={dates.at(-1)} onChange={(e) => onChange('date_to', e.target.value)} />
+      </Field>
+      {select('project', 'Project', 'All projects', options.projects.map((p) => ({ value: p, label: p })), 'w-36')}
+      {select('circle', 'Circle', 'All circles', [...new Map(circles.map((c) => [c.circle, c])).values()]
+        .map((c) => ({ value: c.circle, label: `${c.circle} · ${c.circle_raw}` })), 'w-44')}
+      {select('final_bucket', 'Final Bucket', 'All Final Buckets', options.final_buckets, 'w-44')}
+      {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', options.bucket_2, 'w-44')}
+      {select('category', 'Cause category', 'All categories', [
+        ...options.categories, { value: 'unreviewed', label: 'Unreviewed descriptions' },
+      ], 'w-48')}
+      {select('rca', 'RCA applicability', 'All records', [
+        { value: 'required', label: 'RCA required' }, { value: 'missing', label: 'RCA Required — Missing Information' },
+        { value: 'not_applicable', label: 'Other Media — RCA Not Applicable' },
+      ], 'w-56')}
+      {statusFilter && select('status', 'Follow-up status', 'All statuses', [...options.statuses, { value: 'not_recorded', label: NOT_RECORDED }], 'w-44')}
+      <Button type="button" variant="ghost" size="icon" className="size-9" aria-label="Reset filters" title="Reset filters" disabled={!active} onClick={onReset}>
+        <RotateCcw />
+      </Button>
+    </FilterCard>
   );
 }
 

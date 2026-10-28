@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ClipboardCheck, Download, FileCheck2 } from 'lucide-react';
+import { Download, FileCheck2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -8,7 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Field, SelectField } from '../../components/data/DataEntry';
+import { Field as FilterField, FilterCard } from '../../components/dashboard/FilterBar';
 import { CycleBadge } from '../../components/rca/RcaShared';
+import { PageHeading } from '../../context/pageHeader';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDateTime, formatNumber } from '../../lib/format';
 import { formatMin, periodText, shortProject } from '../../lib/rca';
@@ -39,35 +41,29 @@ export function RcaSubmissionsPage() {
 
   return (
     <div className="space-y-4">
-      <Card className="gap-3 rounded-xl px-5 py-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><ClipboardCheck className="size-5" aria-hidden="true" /></span>
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight">RCA Submissions</h1>
-              <p className="text-sm text-muted-foreground">
-                Uploads of RCA data and, per reporting period, which expected projects and circles have accepted data. A successful upload does not by itself
-                mean every circle reported: a project / circle counts as received only when accepted records for it exist in the period.
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button asChild variant="outline"><Link to="/rca/import">Upload RCA data</Link></Button>
-            <Button type="button" variant={starting ? 'ghost' : 'outline'} onClick={() => setStarting((s) => !s)}>{starting ? 'Cancel' : 'Start a reporting period'}</Button>
-          </div>
-        </div>
-        {list.error && <Alert variant="destructive"><AlertDescription>{list.error.message}</AlertDescription></Alert>}
-        {starting && list.data && (
-          <StartPeriod defaults={list.data.default_units} available={list.data.available_units}
-            onStarted={(created) => { setStarting(false); choose(created.id); refresh(); }} />
-        )}
-        {list.data && (list.data.cycles.length ? (
-          <Field id="rca-cycle" label="Reporting period" plain className="w-[28rem] max-w-full">
+      <PageHeading title="RCA Submissions"
+        subtitle={`${list.data ? `${list.data.cycles.length} reporting period${list.data.cycles.length === 1 ? '' : 's'}` : 'Loading'} · a project / circle counts as received only when accepted records for it exist`} />
+      {list.error && <Alert variant="destructive"><AlertDescription>{list.error.message}</AlertDescription></Alert>}
+      <FilterCard label="Reporting period"
+        footer={list.data && !list.data.cycles.length && !starting
+          ? 'No reporting period yet. The first accepted upload creates its period; you can also start one here with its expected scope.' : undefined}
+        actions={(
+          <>
+            <Button asChild variant="outline" className="h-9"><Link to="/rca/import">Upload RCA data</Link></Button>
+            <Button type="button" className="h-9" variant={starting ? 'ghost' : 'outline'} onClick={() => setStarting((s) => !s)}>{starting ? 'Cancel' : 'Start a reporting period'}</Button>
+          </>
+        )}>
+        {list.data && list.data.cycles.length > 0 && (
+          <FilterField id="rca-cycle" label="Reporting period" className="w-[28rem] max-w-full">
             <SelectField id="rca-cycle" value={selected ? String(selected) : ''} placeholder="Choose a period" onChange={(v) => choose(Number(v))}
               options={list.data.cycles.map((c) => ({ value: String(c.id), label: `${c.period_label}${c.name ? ` · ${c.name}` : ''} · ${c.status.label}` }))} />
-          </Field>
-        ) : !starting && <p className="text-sm text-muted-foreground">No reporting period yet. The first accepted upload creates its period; you can also start one here with its expected scope.</p>)}
-      </Card>
+          </FilterField>
+        )}
+      </FilterCard>
+      {starting && list.data && (
+        <StartPeriod defaults={list.data.default_units} available={list.data.available_units}
+          onStarted={(created) => { setStarting(false); choose(created.id); refresh(); }} />
+      )}
 
       {list.data && list.data.cycles.length > 0 && <DailyStatus cycles={list.data.cycles} selected={selected} onOpen={choose} />}
 

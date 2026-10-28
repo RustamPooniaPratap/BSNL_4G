@@ -13,3 +13,10 @@ export const formatMin = (v: number | null | undefined) => (v == null ? NOT_RECO
 /** A reporting period: one date, or "first – last". */
 export const periodText = (start: string | null, end: string | null) =>
   !start ? '—' : !end || end === start ? formatDate(start) : `${formatDate(start)} – ${formatDate(end)}`;
+
+/** Which reporting dates the stored RCA records cover (the page context shown in the top bar). */
+export function rcaCoverageText(dates: string[]): string {
+  if (!dates.length) return 'No RCA records imported yet';
+  if (dates.length === 1) return `RCA data for ${formatDate(dates[0])}`;
+  return `RCA data covers ${dates.length} reporting dates, ${formatDate(dates[0])} to ${formatDate(dates.at(-1))}`;
+}

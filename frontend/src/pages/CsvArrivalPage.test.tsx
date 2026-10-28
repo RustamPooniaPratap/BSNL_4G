@@ -329,7 +329,7 @@ describe('Email actions', () => {
     renderPage();
     await screen.findByText('CSV Arrival & Follow-up');
     await addContactEmail(user, 'MP LWE', 'circle.mp@example.com');
-    const toolbar = screen.getByRole('toolbar', { name: 'Reporting date and actions' });
+    const toolbar = screen.getByRole('search', { name: 'Tracking filters' });
     await user.click(within(toolbar).getByRole('button', { name: /Send reminder/ }));
     const list = await screen.findByRole('list', { name: 'Pending reports' });
     expect(within(list).getAllByRole('listitem')).toHaveLength(4);
@@ -341,17 +341,16 @@ describe('Email actions', () => {
     expect(api.sendReminder).toHaveBeenCalledTimes(1);
   });
 
-  it('groups the toolbar: date on the left, email actions together, Record arrival as the primary action', async () => {
+  it('groups the filter card: date and filters on the left, email actions together, Record arrival as the primary action', async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText('CSV Arrival & Follow-up');
-    const toolbar = screen.getByRole('toolbar', { name: 'Reporting date and actions' });
+    const toolbar = screen.getByRole('search', { name: 'Tracking filters' });
     expect(within(within(toolbar).getByRole('group', { name: 'Email' })).getAllByRole('button').map((b) => b.textContent?.trim()))
       .toEqual(['Send reminder', 'Compose email']);
-    expect(within(toolbar).getByText('Sat, 17 Oct 2026')).toBeInTheDocument();
-    expect(within(toolbar).getByText('Today')).toBeInTheDocument();
+    expect(screen.getByText(/^Sat, 17 Oct 2026 \(today\) · /)).toBeInTheDocument();  // the page context, in the top bar
     fireEvent.change(within(toolbar).getByLabelText('Reporting date'), { target: { value: '2026-10-16' } });
-    expect(within(toolbar).getByText('Fri, 16 Oct 2026')).toBeInTheDocument();
+    expect(screen.getByText(/^Fri, 16 Oct 2026 · /)).toBeInTheDocument();
     expect(screen.getByText('Circle-wise submissions · 16 Oct 2026')).toBeInTheDocument();
     await user.click(within(toolbar).getByRole('button', { name: /Record arrival/ }));
     expect(await screen.findByText('Record CSV arrival')).toBeInTheDocument();

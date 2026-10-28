@@ -239,4 +239,30 @@ describe('user management', () => {
     await user.click(screen.getByRole('button', { name: 'Done, hide it' }));
     expect(screen.queryByTestId('temporary-password')).not.toBeInTheDocument();
   });
+
+  it('assigns the circles a CI user may upload raw daily data for', async () => {
+    const user = userEvent.setup();
+    const ci = { id: 9, username: 'odisha.ci', name: '', email: '', role: 'ci', circles: [] as string[], is_active: true, is_superuser: false,
+      must_change_password: false, last_login: null, date_joined: '2026-10-23T10:00:00' };
+    const admin = { ...ci, id: 1, username: 'asha.admin', role: 'admin', circles: [] };
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/auth/csrf/')) return json({ csrf_token: 't' });
+      if (url.endsWith('/auth/users/9/')) {
+        ci.circles = JSON.parse((init as RequestInit).body as string).circles;
+        return json({ user: ci });
+      }
+      return json({ users: [admin, ci] });
+    });
+    renderWithWorkbook(<UsersPage />, { url: '/admin/users' });
+    const row = await screen.findByRole('row', { name: 'odisha.ci' });
+    expect(row).toHaveTextContent('None assigned');
+    expect(screen.getByRole('row', { name: 'asha.admin' })).toHaveTextContent('All circles');
+    await user.click(within(row).getByRole('button', { name: 'Edit circles of odisha.ci' }));
+    await user.click(within(row).getByRole('checkbox', { name: 'OD' }));
+    await user.click(within(row).getByRole('button', { name: 'Save' }));
+    const [, init] = fetchMock.mock.calls.find(([u, i]) => String(u).endsWith('/auth/users/9/') && (i as RequestInit)?.method === 'PATCH')!;
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ circles: ['OD'] });
+    expect(await screen.findByText('odisha.ci can upload for OD.')).toBeInTheDocument();
+  });
 });

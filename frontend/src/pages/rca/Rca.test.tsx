@@ -89,7 +89,7 @@ describe('RCA Register', () => {
     expect(within(row).getByText('Unclassified (-)')).toBeInTheDocument();  // Bucket - 2 "-" is not a cause
     expect(within(row).getByText('Not recorded')).toBeInTheDocument();  // no status until someone records one
     expect(within(row).getByText('Unreviewed')).toBeInTheDocument();
-    expect(screen.getByText(/one reporting date: 21 Oct 2026/)).toBeInTheDocument();
+    expect(screen.getByText(/RCA data for 21 Oct 2026/)).toBeInTheDocument();
   });
 
   it('sends the filters and search to the API and keeps them in the URL', async () => {
@@ -180,18 +180,18 @@ describe('RCA Summary', () => {
     const user = userEvent.setup();
     m.fetchRcaOptions.mockResolvedValue({ ...OPTIONS, dates: ['2026-10-21', '2026-10-22'], months: [{ month: '2026-10', dates_with_records: 2 }] });
     renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary' });
-    expect(await screen.findByText('Showing every reporting date')).toBeInTheDocument();
+    expect(await screen.findByText(/^Showing every reporting date · /)).toBeInTheDocument();
     await user.click(screen.getByRole('combobox', { name: 'Reporting date' }));
     const choices = (await screen.findAllByRole('option')).map((o) => o.textContent);
     expect(choices).toEqual(['All reporting dates', '22 Oct 2026', '21 Oct 2026', 'Oct 2026 — month (2 reporting dates with records)']);
     await user.click(screen.getByRole('option', { name: '22 Oct 2026' }));
     expect(screen.getByTestId('location')).toHaveTextContent('date_from=2026-10-22&date_to=2026-10-22');
-    expect(await screen.findByText('Showing 22 Oct 2026')).toBeInTheDocument();
+    expect(await screen.findByText(/^Showing 22 Oct 2026 · /)).toBeInTheDocument();
     expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-22', date_to: '2026-10-22' }), expect.anything());
     await user.click(screen.getByRole('combobox', { name: 'Reporting date' }));
     await user.click(await screen.findByRole('option', { name: /Oct 2026 — month/ }));
     expect(screen.getByTestId('location')).toHaveTextContent('date_from=2026-10-01&date_to=2026-10-31');
-    expect(await screen.findByText('Showing Oct 2026: the sum of 2 reporting dates with records')).toBeInTheDocument();
+    expect(await screen.findByText(/^Showing Oct 2026: the sum of 2 reporting dates with records · /)).toBeInTheDocument();
   });
 
   it('is an Admin page: a CI is refused', () => {

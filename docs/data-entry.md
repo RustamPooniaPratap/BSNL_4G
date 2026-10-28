@@ -1,11 +1,11 @@
-# Data management (frontend only)
+# Data management
 
 Three workflows under **Data Entry** in the sidebar prepare records and check them **in the browser only**. Nothing is saved, uploaded, or written to the database or the Master workbook. Site checks read the active workbook through the existing read-only `GET /api/dashboard/records/` endpoint. No backend code or API contract changed.
 
 | Route | Sidebar | Prepares | Confirmation message |
 |---|---|---|---|
 | `/data/add-row` | Add Row | one daily record: outage minutes for one existing site on one date | Record validated locally. Backend integration is not enabled yet. |
-| `/data/upload-csv` | Upload CSV | many daily records for one report type, circle and date | CSV validated locally. Backend ingestion is not enabled yet. |
+| `/data/upload-csv` | Upload CSV | the raw daily CNMC availability file of one circle and date | Validated on the server and saved to PostgreSQL after explicit confirmation (see below). |
 | `/data/new-site` | Add Site | one master site record | Site details validated locally. Master DB integration is not enabled yet. |
 
 Each workflow goes **Details → Review → Validated**, and you can go back to edit at every step. Drafts live in page state only; nothing is kept in browser storage.
@@ -74,3 +74,20 @@ Each workflow goes **Details → Review → Validated**, and you can go back to 
 3. **Fields not in the workbook:** District, Block, GP code, site status (Active/Inactive), On-Air date and O&M Start date aren't columns in the workbook, so the form doesn't ask for them.
 4. **Unknown Site IDs** block confirmation in both Add Row and Upload CSV.
 5. **Existing values:** a daily record for a site and date that already has a value only gets a warning; whether it should replace the value is a decision for the backend phase.
+
+## Upload CSV: raw daily data to PostgreSQL
+
+Route `/data/upload-csv`. API under `/api/raw-uploads/` (`apps/uptimedb/raw_views.py`); processing in `apps/uptimedb/raw/` (parser, rules, resolvers, service). Every step is enforced on the server; the browser only checks the file type and size before sending.
+
+1. **Details:** project (4G Saturation or LWE), circle, reporting date, the CSV and optional remarks. The uploader is the signed-in account.
+2. **Who:** Admin and NOC Lead for every circle; a CI user only for the circles an Admin assigns on Users & Roles (none assigned: no upload, no export). Uploads, previews, reports and commits are visible to the uploader and Admins only.
+3. **File:** the daily dump (`nw_aval_btsipid_wise_day…`). The header is found by its column names within the first 10 rows (a title row above it is reported as a preamble); columns are matched by name. The monthly dump (MONTH / YEAR columns) is refused. Binary, empty and over-size files are refused.
+4. **File-level checks** (any failure blocks the whole file): one Report Date, equal to the entered date; only the selected circle (the dump writes `OR` for Odisha: mapped to `OD`).
+5. **Row checks:** the BTS IP ID must resolve to exactly one approved master site of the selected project and circle (unknown, other-circle, other-project, blank and ambiguous IDs are rejected; master sites are never created); availability (`Nw Avail (4G TCS)`) must be a number 0–100 (blank or invalid is rejected, never read as 0); a site repeated with the same value is skipped, with different values rejected.
+6. **Against stored data:** an identical stored value is skipped; a different stored value is never overwritten (rejected as a conflict); a stored day without a value is filled.
+7. **Outage minutes** = 1440 × (1 − availability / 100), calculated on the server and stored unrounded.
+8. **Preview** shows every row with its master site, availability, outage and reason, and the counts per category; nothing is written to the daily table. **Import** needs an explicit second confirmation; the commit re-reads the stored copy (checksum), repeats the checks in one transaction and refuses if the approved records changed.
+9. **Results:** inserted / skipped / rejected counts from the server, a validation report (CSV of every row not imported), and a consolidated export (CSV / Excel) of the stored daily records of approved master sites, limited to the user's circles.
+10. **Dashboard:** the import is a committed `DataImportBatch` (kind `raw_daily_csv`), so database-backed pages rebuild from the new rows; the Excel / PostgreSQL source setting is never changed by an upload.
+
+**LWE:** files are validated with the same pipeline, but no LWE row is importable until the authoritative raw-ID mapping (and any 2100 / 700 MHz selection) is configured in `apps/uptimedb/raw/resolvers.py` (`LweResolver`) and the availability column is confirmed in `rules.py`.

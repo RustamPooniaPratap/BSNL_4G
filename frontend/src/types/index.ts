@@ -685,6 +685,8 @@ export interface AuthUser {
   role: Role | null;
   role_label: string;
   must_change_password: boolean;
+  /** Circles for raw daily uploads and exports: null = every circle (Admin, NOC Lead). */
+  circles?: string[] | null;
 }
 
 /** An account as listed for Admins. Passwords are never returned, except a new temporary one once. */
@@ -694,6 +696,8 @@ export interface PortalUser {
   name: string;
   email: string;
   role: Role | null;
+  /** Circles assigned to a CI user for raw daily uploads. */
+  circles: string[];
   is_active: boolean;
   is_superuser: boolean;
   must_change_password: boolean;

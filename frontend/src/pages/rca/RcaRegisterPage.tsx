@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, ClipboardList, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -10,8 +10,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Field, SelectField } from '../../components/data/DataEntry';
 import { RcaRecordSheet } from '../../components/rca/RcaRecordSheet';
+import { Field as FilterField } from '../../components/dashboard/FilterBar';
 import { RcaFilterBar, SourceValue, StatusBadge } from '../../components/rca/RcaShared';
-import { FILTER_KEYS, formatMin, shortProject, type FilterKey } from '../../lib/rca';
+import { PageHeading } from '../../context/pageHeader';
+import { FILTER_KEYS, formatMin, rcaCoverageText, shortProject, type FilterKey } from '../../lib/rca';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDate, formatNumber } from '../../lib/format';
 import { createRcaRecord, fetchRcaOptions, fetchRcaRecords } from '../../services/api';
@@ -50,29 +52,22 @@ export function RcaRegisterPage() {
 
   return (
     <div className="space-y-4">
-      <Card className="gap-3 rounded-xl px-5 py-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><ClipboardList className="size-5" aria-hidden="true" /></span>
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight">RCA Register</h1>
-              <p className="text-sm text-muted-foreground">Root-cause records as reported, with follow-up. Source fields (Final Bucket, Bucket - 2, RCA) are shown as written.</p>
-            </div>
-          </div>
-          <Button type="button" size="sm" onClick={() => setCreating(true)} disabled={!options.data}><Plus /> Record RCA</Button>
-        </div>
-        {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}
-        {options.data && (
-          <RcaFilterBar options={options.data} params={params} onChange={onFilter} search statusFilter
-            onReset={() => setParams(new URLSearchParams(), { replace: true })}
-            actions={(
-              <Field id="rca-order" label="Sort" plain className="w-48">
+      <PageHeading title="RCA Register"
+        subtitle={`${options.data ? rcaCoverageText(options.data.dates) : 'Loading'} · source fields (Final Bucket, Bucket - 2, RCA) shown as written`} />
+      {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}
+      {options.data ? (
+        <RcaFilterBar options={options.data} params={params} onChange={onFilter} search statusFilter
+          onReset={() => setParams(new URLSearchParams(), { replace: true })}
+          actions={(
+            <>
+              <FilterField id="rca-order" label="Sort" className="w-48">
                 <SelectField id="rca-order" value={params.get('ordering') || 'outage_desc'} placeholder="Sort" options={ORDERINGS}
                   onChange={(v) => update({ ordering: v === 'outage_desc' ? '' : v, page: '' })} />
-              </Field>
-            )} />
-        )}
-      </Card>
+              </FilterField>
+              <Button type="button" className="h-9" onClick={() => setCreating(true)}><Plus /> Record RCA</Button>
+            </>
+          )} />
+      ) : !options.error && <Skeleton className="h-16 w-full" />}
 
       <Card className="gap-0 overflow-hidden rounded-xl py-0">
         <div className="flex items-center justify-between border-b px-4 py-3">

@@ -35,7 +35,7 @@ def _batch_json(batch: DataImportBatch, *, full: bool = False) -> dict:
 
 
 def _get(batch_id: int) -> DataImportBatch:
-    batch = DataImportBatch.objects.filter(pk=batch_id).first()
+    batch = DataImportBatch.objects.filter(pk=batch_id, kind=DataImportBatch.Kind.MASTER_WORKBOOK).first()
     if batch is None:
         raise NotFound('No such import.')
     return batch
@@ -57,7 +57,7 @@ def _saved(upload) -> Path:
 @api_view(['GET'])
 @permission_classes([IsAdminRole])
 def import_list(request):
-    return Response({'imports': [_batch_json(b) for b in DataImportBatch.objects.select_related('imported_by')[:50]],
+    return Response({'imports': [_batch_json(b) for b in DataImportBatch.objects.select_related('imported_by').filter(kind=DataImportBatch.Kind.MASTER_WORKBOOK)[:50]],
                      'database': datasource.completeness()})
 
 

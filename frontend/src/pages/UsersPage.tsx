@@ -4,6 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageHeading } from '../context/pageHeader';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -67,12 +68,8 @@ export function UsersPage() {
 
   return (
     <div className="space-y-4">
-      <Card className="gap-0 rounded-2xl px-5 py-3 shadow-xs">
-        <h1 className="text-xl font-semibold tracking-tight">Users &amp; roles</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Create accounts, assign Admin or CI, reset temporary passwords and deactivate accounts. There is no self-registration.
-        </p>
-      </Card>
+      <PageHeading title="Users & Roles"
+        subtitle="Create accounts, assign Admin, NOC Lead or CI, reset temporary passwords and deactivate accounts · no self-registration" />
 
       {secret && (
         <Alert className="border-amber-300 bg-amber-50/70" role="status">
@@ -107,7 +104,7 @@ export function UsersPage() {
               <Table className="text-xs">
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    <TableHead className="pl-4">Login ID</TableHead><TableHead>Name</TableHead><TableHead className="w-36">Role</TableHead>
+                    <TableHead className="pl-4">Login ID</TableHead><TableHead>Name</TableHead><TableHead className="w-36">Role</TableHead><TableHead>Circles (raw uploads)</TableHead>
                     <TableHead>Status</TableHead><TableHead>Last sign-in</TableHead><TableHead className="pr-4 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -123,6 +120,11 @@ export function UsersPage() {
                           {locked || self ? <span className="inline-flex items-center gap-1"><ShieldCheck className="size-3.5" />{u.is_superuser ? 'Admin (superuser)' : ROLE_OPTIONS.find((o) => o.value === u.role)?.label ?? 'No role'}</span> : (
                             <SelectField id={`role-${u.id}`} value={u.role ?? ''} placeholder="No role" options={ROLE_OPTIONS} onChange={(r) => { void changeRole(u, r as Role); }} />
                           )}
+                        </TableCell>
+                        <TableCell>
+                          {u.role === 'ci' && !locked
+                            ? <CirclesEditor user={u} onSaved={(text) => { setMessage({ kind: 'ok', text }); reload(); }} onError={(text) => setMessage({ kind: 'error', text })} />
+                            : <span className="text-muted-foreground">All circles</span>}
                         </TableCell>
                         <TableCell>
                           {u.is_active ? <Badge variant="outline" className="border-emerald-300 text-emerald-800">Active</Badge> : <Badge variant="outline">Deactivated</Badge>}
@@ -213,5 +215,47 @@ function NewUserForm({ onCreated }: { onCreated: (user: PortalUser, password: st
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+const CIRCLES = ['AP', 'BH', 'CG', 'JH', 'MH', 'MP', 'OD', 'RJ', 'TL', 'UP', 'WB'];
+
+/** The circles a CI user may upload raw daily data for and export (checked again by the server). */
+function CirclesEditor({ user, onSaved, onError }: { user: PortalUser; onSaved: (message: string) => void; onError: (message: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const assigned = user.circles ?? [];
+  const [value, setValue] = useState<string[]>(assigned);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await updateUser(user.id, { circles: value });
+      setOpen(false);
+      onSaved(value.length ? `${user.username} can upload for ${value.join(', ')}.` : `${user.username} has no circle and cannot upload raw data.`);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!open) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        {assigned.length ? assigned.join(', ') : <span className="text-amber-700">None assigned</span>}
+        <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" aria-label={`Edit circles of ${user.username}`} onClick={() => { setValue(assigned); setOpen(true); }}>Edit</Button>
+      </span>
+    );
+  }
+  return (
+    <fieldset className="flex max-w-72 flex-wrap items-center gap-x-2 gap-y-1" aria-label={`Circles of ${user.username}`}>
+      {CIRCLES.map((c) => (
+        <label key={c} className="flex items-center gap-1">
+          <input type="checkbox" checked={value.includes(c)} onChange={() => setValue((v) => (v.includes(c) ? v.filter((x) => x !== c) : [...v, c].sort()))} />
+          {c}
+        </label>
+      ))}
+      <Button size="sm" className="h-6 px-2 text-xs" disabled={busy} onClick={() => { void save(); }}>Save</Button>
+      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setOpen(false)}>Cancel</Button>
+    </fieldset>
   );
 }

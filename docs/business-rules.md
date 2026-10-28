@@ -211,8 +211,8 @@ Every time a workbook is loaded, `crosscheck.py` reads the cached results in `Su
 | 4 | Is `On-Air` = `0` the same as blank (not On-Air)? | Treated as not On-Air |
 | 5 | Which scope should management see by default: On-Air or O&M Start? | On-Air |
 | 6 | Is there an availability **target** (for example 98.5%) to report achievement against? | No target applied; the 98.5% bucket is shown as a bucket only |
-| 7 | Outage-minute formula for raw CNMC files: is `1440 × (1 − availability/100)` correct for the reporting interval? | Not used; the dashboard reads outage minutes directly from the workbook |
+| 7 | Outage-minute formula for raw CNMC files: is `1440 × (1 − availability/100)` correct for the reporting interval? | **Resolved for 4G Saturation (29 Oct 2026):** for all 1,543 matching Odisha sites of the 13 Oct daily dump, `Nw Avail (4G TCS)` equals the workbook's daily uptime and `1440 × (1 − TCS/100)` equals its outage minutes at full precision. Used by the raw upload (`apps/uptimedb/raw/rules.py`). Not confirmed for LWE. |
 | 9 | Should monthly history be shown as reported at the time (frozen Summ figures) or recomputed from current site data? | Recomputed, clearly labelled |
 | 10 | Threshold percentages: of all sites in scope (workbook) or of sites that reported in the period? | All sites in scope; sites reported shown on hover |
 | 11 | Threshold Analysis population: O&M Start (workbook sheets) or On-Air (rest of the dashboard)? | O&M Start by default on that page; selectable |
-| 8 | LWE ID mapping and 2100 MHz selection rules for raw files: where is the mapping reference? | Not available in the repository; ingestion not implemented |
+| 8 | LWE ID mapping and 2100 MHz selection rules for raw files: where is the mapping reference? | Still open. Raw LWE IDs (e.g. JHDTJN001) differ from the master's (LWEJH0001); the escalation matrix's BTS IDs (B1 21 MHz / B28 7 MHz) are only a candidate. The raw upload validates LWE files but imports no LWE row (`LweResolver`) until the mapping is supplied. |

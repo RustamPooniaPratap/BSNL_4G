@@ -9,7 +9,6 @@ import { renderWithWorkbook } from '../../test/renderWithWorkbook';
 import type { RecordsResponse, SiteRecord } from '../../types';
 import { AddRowPage } from './AddRowPage';
 import { AddSitePage } from './AddSitePage';
-import { UploadCsvPage } from './UploadCsvPage';
 
 vi.mock('../../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/api')>()),
@@ -127,113 +126,7 @@ describe('Add Row', () => {
   });
 });
 
-describe('Upload CSV', () => {
-  const csvFile = (text: string, name = 'daily.csv') => new File([text], name, { type: 'text/csv' });
-  async function fillMeta(user: ReturnType<typeof userEvent.setup>) {
-    await choose(user, /Report type/, '4G Saturation');
-    await choose(user, /Circle/, 'MP');
-    fireEvent.change(screen.getByLabelText(/Reporting date/), { target: { value: '2026-10-16' } });
-  }
-  const upload = (file: File) => fireEvent.change(screen.getByLabelText('Choose CSV file'), { target: { files: [file] } });
-
-  it('asks for report type, circle and reporting date before a file can be chosen', async () => {
-    const user = userEvent.setup();
-    render(<UploadCsvPage />, '/data/upload-csv');
-    expect(await screen.findByText('Choose the report type, circle and reporting date above first.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Choose file' })).toBeDisabled();
-    expect(screen.getByLabelText('Choose CSV file')).toBeDisabled();
-    upload(csvFile('btsIpId,Outage Minutes,Report Date\nUVMPBPL00012,0,16-10-2026\n'));
-    expect(screen.queryByText('daily.csv')).not.toBeInTheDocument();  // ignored until the details are set
-    await fillMeta(user);
-    expect(screen.getByRole('button', { name: 'Choose file' })).toBeEnabled();
-  });
-
-  it('rejects unsupported and empty files', async () => {
-    const user = userEvent.setup();
-    render(<UploadCsvPage />, '/data/upload-csv');
-    await fillMeta(user);
-    upload(new File(['x'], 'daily.xlsx'));
-    expect(await screen.findByText(/Only .csv files are accepted here/)).toBeInTheDocument();
-    upload(new File([], 'empty.csv'));
-    expect(await screen.findByText('The file is empty.')).toBeInTheDocument();
-  });
-
-  it('previews, passes the date check, and confirms a clean file', async () => {
-    const user = userEvent.setup();
-    render(<UploadCsvPage />, '/data/upload-csv');
-    await fillMeta(user);
-    upload(csvFile('btsIpId,Outage Minutes,Report Date\nUVMPBPL00012,0,16-10-2026\nUVMPBPL00020,45,16/10/2026\n'));
-    expect(await screen.findByText('daily.csv')).toBeInTheDocument();
-    expect(screen.getByText(/2 data rows detected/)).toBeInTheDocument();
-    const dateCheck = screen.getByRole('region', { name: 'Reporting date check' });
-    expect(within(dateCheck).getByText('Passed')).toBeInTheDocument();
-    expect(within(dateCheck).getByText('Every row is dated 2026-10-16.')).toBeInTheDocument();
-
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Review and confirm' })).toBeEnabled());
-    expect(screen.getByText('Every row passed the checks.')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Review and confirm' }));
-    const review = screen.getByText('Confirm the upload details').closest('[data-slot="card"]') as HTMLElement;
-    expect(within(review).getByText('16 Oct 2026')).toBeInTheDocument();
-    expect(within(review).getByText(/daily.csv/)).toBeInTheDocument();
-    expect(within(review).getByText('2 (2 passed)')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Confirm CSV' }));
-    expect(screen.getByText('CSV validated locally. Backend ingestion is not enabled yet.')).toBeInTheDocument();
-  });
-
-  it('shows the expected date, the detected dates and the affected lines, and blocks confirmation', async () => {
-    const user = userEvent.setup();
-    render(<UploadCsvPage />, '/data/upload-csv');
-    await fillMeta(user);
-    upload(csvFile('btsIpId,Outage Minutes,Report Date\nUVMPBPL00012,0,16-10-2026\nUVMPBPL00020,5,17-10-2026\n'));
-    const dateCheck = await screen.findByRole('region', { name: 'Reporting date check' });
-    expect(within(dateCheck).getByText('Failed')).toBeInTheDocument();
-    expect(within(dateCheck).getByText('Expected 2026-10-16 on every row; found 2 different dates, 1 row with another date.')).toBeInTheDocument();
-    expect(within(dateCheck).getByText('17 Oct 2026').closest('li')).toHaveTextContent('17 Oct 2026 · 1 row (line 3)');
-    expect(screen.getByRole('list', { name: 'Problems found' })).toHaveTextContent('A file must cover one date.');
-    expect(screen.getByRole('button', { name: 'Review and confirm' })).toBeDisabled();
-  });
-
-  it('blocks a file without a reporting-date column', async () => {
-    const user = userEvent.setup();
-    render(<UploadCsvPage />, '/data/upload-csv');
-    await fillMeta(user);
-    upload(csvFile('btsIpId,Outage Minutes\nUVMPBPL00012,0\n'));
-    const dateCheck = await screen.findByRole('region', { name: 'Reporting date check' });
-    expect(within(dateCheck).getByText('The file has no reporting-date column.')).toBeInTheDocument();
-    expect(within(dateCheck).getByText('Missing')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Review and confirm' })).toBeDisabled();
-  });
-
-  it('lists problems, links unknown sites to Add New Site, and keeps confirmation disabled', async () => {
-    const user = userEvent.setup();
-    render(<UploadCsvPage />, '/data/upload-csv');
-    await fillMeta(user);
-    upload(csvFile('BTS IP ID,Nw Avail (4G TCS),Report Date,Circle\nUVMPBPL00012,99.5,16-10-2026,MP\nUVMPBPL09999,98,16-10-2026,RJ\nUVMPBPL00012,99.5,16-10-2026,MP\nUVMPBPL00020,9x\n'));
-    const problems = await screen.findByRole('list', { name: 'Problems found' });
-    const text = problems.textContent ?? '';
-    expect(text).toContain('Site UVMPBPL09999 is not in the 4G Saturation · MP master data.');
-    expect(text).toContain('Circle "RJ" does not match the selected circle MP.');
-    expect(text).toContain('Duplicate Site ID UVMPBPL00012 (first on line 2).');
-    expect(text).toContain('Has 2 values but the header has 4 columns.');
-    expect(text).toContain('not confirmed');
-    expect(screen.getByRole('link', { name: /UVMPBPL09999/ })).toHaveAttribute('href', '/data/new-site?site_id=UVMPBPL09999&report_type=4G+Saturation&circle=MP');
-    expect(screen.getByRole('button', { name: 'Review and confirm' })).toBeDisabled();
-  });
-
-  it('removes and replaces the file', async () => {
-    const user = userEvent.setup();
-    render(<UploadCsvPage />, '/data/upload-csv');
-    await fillMeta(user);
-    upload(csvFile('btsIpId,Outage Minutes,Report Date\nUVMPBPL00012,0,16-10-2026\n', 'first.csv'));
-    expect(await screen.findByText('first.csv')).toBeInTheDocument();
-    upload(csvFile('Site ID,Remarks,Report Date\nx,y,16-10-2026\n', 'second.csv'));  // "Replace" opens the same picker
-    expect(await screen.findByText('second.csv')).toBeInTheDocument();
-    expect(screen.getByText(/Missing the value column/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Remove/ }));
-    expect(screen.queryByText('second.csv')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Choose file' })).toBeInTheDocument();
-  });
-});
+// Upload CSV (server-validated raw daily upload) is tested in UploadCsvPage.test.tsx.
 
 describe('Add New Site', () => {
   it('requires the workbook\'s mandatory fields and a valid Site ID', async () => {

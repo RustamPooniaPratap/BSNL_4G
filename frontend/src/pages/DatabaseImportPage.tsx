@@ -4,6 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageHeading } from '../context/pageHeader';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -34,13 +35,8 @@ export function DatabaseImportPage() {
   const view = picked ?? source.data?.active ?? 'excel';
   return (
     <div className="space-y-4">
-      <Card className="gap-0 rounded-2xl px-5 py-3 shadow-xs">
-        <h1 className="text-xl font-semibold tracking-tight">Data source</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Choose where every dashboard page reads its data: <strong>Excel workbook</strong> (upload the Master workbook) or
-          <strong> PostgreSQL database</strong> (import workbooks into the database).
-        </p>
-      </Card>
+      <PageHeading title="Data Source"
+        subtitle="Where every dashboard page reads its data: the Excel workbook (upload the Master workbook) or the PostgreSQL database (import workbooks)" />
       {source.error ? <Alert variant="destructive"><AlertTitle>Data source unavailable</AlertTitle><AlertDescription>{source.error.message}</AlertDescription></Alert>
         : source.data ? <SourceSelector state={source.data} view={view} onView={setPicked} onChanged={() => { setPicked(null); refresh(); }} />
           : <Skeleton className="h-40 w-full" />}

@@ -27,6 +27,7 @@ from .audit import audit
 from .models import must_change_password, set_must_change_password
 from .permissions import IsAdminRole, IsSignedIn
 from .roles import ADMIN, CI, NOC_LEAD, ROLES, role_of, set_role
+from .scope import KNOWN_CIRCLES, allowed_circles, assigned_circles, set_circles
 from .throttles import LoginIPThrottle, LoginUserThrottle
 
 User = get_user_model()
@@ -40,6 +41,8 @@ def me_payload(user) -> dict:
         'role': role_of(user),
         'role_label': ROLES.get(role_of(user) or '', 'No role'),
         'must_change_password': must_change_password(user),
+        # Circles for raw daily uploads and exports: null = every circle (Admin, NOC Lead).
+        'circles': None if allowed_circles(user) is None else sorted(allowed_circles(user)),
     }
 
 
@@ -205,6 +208,7 @@ def user_payload(user) -> dict:
         'is_active': user.is_active,
         'is_superuser': user.is_superuser,
         'must_change_password': must_change_password(user),
+        'circles': assigned_circles(user),
         'last_login': user.last_login.isoformat(timespec='seconds') if user.last_login else None,
         'date_joined': user.date_joined.isoformat(timespec='seconds'),
     }
@@ -223,6 +227,7 @@ class CreateUserSerializer(serializers.Serializer):
     last_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
     email = serializers.EmailField(required=False, allow_blank=True, default='')
     role = serializers.ChoiceField(choices=list(ROLES))
+    circles = serializers.ListField(child=serializers.ChoiceField(choices=KNOWN_CIRCLES), required=False, default=list)
 
     def validate_username(self, value):
         if User.objects.filter(username__iexact=value).exists():
@@ -233,6 +238,8 @@ class CreateUserSerializer(serializers.Serializer):
 class UpdateUserSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=list(ROLES), required=False)
     is_active = serializers.BooleanField(required=False)
+    # Circles a CI user uploads raw daily data for (ignored for Admin and NOC Lead, who are not limited).
+    circles = serializers.ListField(child=serializers.ChoiceField(choices=KNOWN_CIRCLES), required=False)
 
 
 class UsersView(APIView):
@@ -254,6 +261,8 @@ class UsersView(APIView):
             user.save()
             set_role(user, v['role'])
             set_must_change_password(user, True)
+            if v['circles']:
+                set_circles(user, v['circles'])
         audit('user_created', request, user_id=user.pk, login_id=user.username, role=v['role'])
         # The temporary password is returned once, to the Admin who created it; it is never logged or stored in clear.
         return Response({'user': user_payload(user), 'temporary_password': password}, status=status.HTTP_201_CREATED)
@@ -281,6 +290,9 @@ class UserDetailView(APIView):
         if 'role' in v and v['role'] != _group_role(user):
             set_role(user, v['role'])
             audit('role_changed', request, user_id=user.pk, login_id=user.username, role=v['role'])
+        if 'circles' in v and sorted(set(v['circles'])) != assigned_circles(user):
+            set_circles(user, v['circles'])
+            audit('circles_changed', request, user_id=user.pk, login_id=user.username, circles=','.join(sorted(set(v['circles']))))
         if 'is_active' in v and v['is_active'] != user.is_active:
             user.is_active = v['is_active']
             user.save(update_fields=['is_active'])

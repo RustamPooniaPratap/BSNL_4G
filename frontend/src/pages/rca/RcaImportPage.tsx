@@ -1,12 +1,14 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, FileUp, Upload } from 'lucide-react';
+import { Download, Upload } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Field, SelectField } from '../../components/data/DataEntry';
+import { SelectField } from '../../components/data/DataEntry';
+import { Field as FilterField } from '../../components/dashboard/FilterBar';
+import { PageHeading } from '../../context/pageHeader';
 import { RcaImportPreview, type CommitChoices } from '../../components/rca/RcaImportPreview';
 import { useAuth } from '../../context/auth';
 import { useApiQuery } from '../../hooks/useApiQuery';
@@ -69,45 +71,37 @@ export function RcaImportPage() {
 
   return (
     <div className="space-y-4">
-      <Card className="gap-3 rounded-xl px-5 py-4">
-        <div className="flex items-start gap-3">
-          <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><FileUp className="size-5" aria-hidden="true" /></span>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Upload RCA Data</h1>
-            <p className="text-sm text-muted-foreground">
-              Upload the completed RCA workbook, such as the Daily RCA Compilation. Its data sheet (e.g. “RCA Backup”) is found by the columns Date, Project, Circle, Site ID, Site Name, OA, BA, O&M Start (Yes/No), Outage Min., Final Bucket, Bucket - 2 and RCA; summary and pivot sheets are ignored.
-              Upload it once a day with that day's reporting date. Rows of earlier dates (the workbook is cumulative) are compared with what is already stored and never removed;
-              rows dated after the reporting date are rejected. Every row needs a project of the chosen scope and a Site ID of the Up-Time Report. Nothing is imported until you confirm.
-            </p>
-          </div>
-        </div>
-        <form className="space-y-3" aria-label="Report details" onSubmit={(e) => { e.preventDefault(); if (ready) void validate(); }}>
-          <div className="flex flex-wrap items-end gap-3">
-            <Field id="report-name" label="Report name" required className="min-w-72 flex-1">
-              <Input id="report-name" value={details.report_name} onChange={(e) => set('report_name', e.target.value)} placeholder="e.g. October 2026 RCA Report" />
-            </Field>
-            <Field id="period-start" label="Reporting date" required className="w-52">
-              <Input id="period-start" type="date" value={details.period_start} onChange={(e) => set('period_start', e.target.value)} />
-            </Field>
-            <Field id="period-end" label="Last day (only for a multi-day period)" className="w-60">
-              <Input id="period-end" type="date" value={details.period_end} min={details.period_start || undefined} onChange={(e) => set('period_end', e.target.value)} />
-            </Field>
-            <Field id="project-scope" label="Project scope" required className="w-60">
-              <SelectField id="project-scope" value={details.project_scope} placeholder="Project scope" options={SCOPES} onChange={(v) => set('project_scope', v)} />
-            </Field>
-          </div>
-          <Field id="remarks" label="Remarks" hint="For example, notes on the reporting cycle or why this is a corrected workbook.">
-            <Input id="remarks" value={details.remarks} onChange={(e) => set('remarks', e.target.value)} />
-          </Field>
-          <div className="flex flex-wrap items-center gap-2">
+      <PageHeading title="Upload RCA Data"
+        subtitle={`Daily RCA workbook (cumulative: earlier dates are compared, never removed) · uploaded as ${user?.username ?? '—'}`} />
+      <Card className="gap-2 rounded-xl px-4 py-2.5 shadow-xs">
+        <form aria-label="Report details" className="flex flex-wrap items-end gap-x-3 gap-y-2 [&_[data-slot=select-trigger]]:h-9" onSubmit={(e) => { e.preventDefault(); if (ready) void validate(); }}>
+          <FilterField id="report-name" label="Report name *" className="w-64">
+            <Input id="report-name" className="h-9" value={details.report_name} onChange={(e) => set('report_name', e.target.value)} placeholder="e.g. October 2026 RCA Report" />
+          </FilterField>
+          <FilterField id="period-start" label="Reporting date *" className="w-40">
+            <Input id="period-start" type="date" className="h-9" value={details.period_start} onChange={(e) => set('period_start', e.target.value)} />
+          </FilterField>
+          <FilterField id="period-end" label="Last day (multi-day period)" className="w-44">
+            <Input id="period-end" type="date" className="h-9" value={details.period_end} min={details.period_start || undefined} onChange={(e) => set('period_end', e.target.value)} />
+          </FilterField>
+          <FilterField id="project-scope" label="Project scope *" className="w-60">
+            <SelectField id="project-scope" value={details.project_scope} placeholder="Project scope" options={SCOPES} onChange={(v) => set('project_scope', v)} />
+          </FilterField>
+          <FilterField id="remarks" label="Remarks" className="min-w-56 flex-1">
+            <Input id="remarks" className="h-9" value={details.remarks} onChange={(e) => set('remarks', e.target.value)} placeholder="e.g. corrected workbook" />
+          </FilterField>
+          <div className="flex flex-wrap items-end gap-2">
             <input ref={input} type="file" accept=".xlsx,.xlsm" className="hidden" aria-label="RCA workbook"
               onChange={(e) => { setFile(e.target.files?.[0] ?? null); setBatch(null); }} />
-            <Button type="button" variant="outline" onClick={() => input.current?.click()}><Upload /> Choose workbook</Button>
-            <span className="text-sm text-muted-foreground">{file ? file.name : 'No file chosen'}</span>
-            <Button type="submit" disabled={!ready || busy}>{busy && !batch ? 'Validating…' : 'Validate workbook'}</Button>
-            <span className="text-xs text-muted-foreground">Uploaded as {user?.username ?? '—'}</span>
+            <Button type="button" variant="outline" className="h-9" onClick={() => input.current?.click()}><Upload /> Choose workbook</Button>
+            <span className="max-w-56 truncate pb-2 text-sm text-muted-foreground" title={file?.name}>{file ? file.name : 'No file chosen'}</span>
+            <Button type="submit" className="h-9" disabled={!ready || busy}>{busy && !batch ? 'Validating…' : 'Validate workbook'}</Button>
           </div>
         </form>
+        <p className="text-xs text-muted-foreground">
+          The data sheet (e.g. “RCA Backup”) is found by its columns: Date, Project, Circle, Site ID, Site Name, OA, BA, O&M Start (Yes/No), Outage Min., Final Bucket, Bucket - 2, RCA.
+          Rows dated after the reporting date are rejected; every row needs a project of the scope and a Site ID of the Up-Time Report. Nothing is imported until you confirm.
+        </p>
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
       </Card>
 

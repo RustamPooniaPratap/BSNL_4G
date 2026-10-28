@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Search, Tags } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { PageHeading } from '../../context/pageHeader';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Field, SelectField } from '../../components/data/DataEntry';
@@ -66,26 +67,18 @@ export function RcaMappingPage() {
 
   return (
     <div className="space-y-4">
-      <Card className="gap-3 rounded-xl px-5 py-4">
-        <div className="flex items-start gap-3">
-          <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><Tags className="size-5" aria-hidden="true" /></span>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">RCA cause mapping</h1>
-            <p className="text-sm text-muted-foreground">
-              Map RCA descriptions to standardised cause categories. Only the descriptions you select are mapped; similar spellings are not merged automatically,
-              and the original RCA text is kept unchanged. Descriptions that differ only in case or spacing are listed once.
-            </p>
-          </div>
-        </div>
-        {data && (
+      <PageHeading title="RCA Cause Mapping"
+        subtitle="Only the selected descriptions are mapped; similar spellings are never merged automatically and the RCA text is kept unchanged" />
+      {data && (
+      <Card className="gap-0 rounded-xl px-4 py-2.5 shadow-xs">
           <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
             <div><dt className="inline text-muted-foreground">Reviewed descriptions: </dt><dd className="inline font-semibold">{formatNumber(data.stats.mapped_descriptions)} of {formatNumber(data.stats.descriptions)}</dd></div>
             <div><dt className="inline text-muted-foreground">Records covered: </dt><dd className="inline font-semibold">{formatNumber(data.stats.mapped_records)} of {formatNumber(data.stats.records)}</dd></div>
             <div><dt className="inline text-muted-foreground">Categories: </dt><dd className="inline font-semibold">{formatNumber(data.categories.length)}</dd></div>
             {data.stats.no_description_records > 0 && <div><dt className="inline text-muted-foreground">Records without a description: </dt><dd className="inline font-semibold">{formatNumber(data.stats.no_description_records)}</dd></div>}
           </dl>
-        )}
       </Card>
+      )}
 
       {loaded.error && !override && <Alert variant="destructive"><AlertDescription>{loaded.error.message}</AlertDescription></Alert>}
       {!data && !loaded.error && <Skeleton className="h-96 w-full" />}

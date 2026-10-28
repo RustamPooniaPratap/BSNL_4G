@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { CalendarDays, ChevronDown, FileUp, KeyRound, LogOut, Menu } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { ChevronDown, FileUp, KeyRound, LogOut, Menu } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
@@ -10,7 +10,7 @@ import { Sidebar } from '../components/Sidebar';
 import { useAuth } from '../context/auth';
 import { PageHeaderProvider, usePageHeaderState } from '../context/pageHeader';
 import { useWorkbook } from '../context/workbook';
-import { formatDate } from '../lib/format';
+import { routeTitle } from '../lib/pageTitles';
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -20,7 +20,9 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [pageHeader, setPageHeader] = usePageHeaderState();
   const { active } = useWorkbook();
-  const latestDate = active?.latest_reporting_date;
+  const location = useLocation();
+  // Every page shows its title in the bar: the page's own (with its context) or, until it sets one, the route's.
+  const title = pageHeader?.title || routeTitle(location.pathname, location.search);
   const isAdmin = useAuth().user?.role === 'admin';
 
   return (
@@ -46,20 +48,11 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setIsNavOpen(true)} aria-label="Open navigation">
               <Menu />
             </Button>
-            {pageHeader ? (
-              // The active page's title and reporting context (set by the page through <PageHeading>).
-              <div className="min-w-0 leading-tight">
-                <h1 className="truncate text-base font-semibold tracking-tight">{pageHeader.title}</h1>
-                {pageHeader.subtitle && <p className="truncate text-xs text-muted-foreground" title={pageHeader.subtitle}>{pageHeader.subtitle}</p>}
-              </div>
-            ) : latestDate && (
-              <span className="flex min-w-0 items-center gap-1.5 text-sm whitespace-nowrap text-muted-foreground">
-                <CalendarDays className="size-4 shrink-0" aria-hidden="true" />
-                {/* Shortened on phones so the bar never pushes the page sideways. */}
-                <span className="hidden sm:inline">Latest reporting date:</span><span className="sm:hidden">Latest:</span>
-                <strong className="font-semibold text-foreground">{formatDate(latestDate)}</strong>
-              </span>
-            )}
+            {/* The active page's title and its reporting context (set by the page through <PageHeading>). */}
+            <div className="min-w-0 leading-tight">
+              <h1 className="truncate text-base font-semibold tracking-tight">{title}</h1>
+              {pageHeader?.subtitle && <p className="truncate text-xs text-muted-foreground" title={pageHeader.subtitle}>{pageHeader.subtitle}</p>}
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {active && (

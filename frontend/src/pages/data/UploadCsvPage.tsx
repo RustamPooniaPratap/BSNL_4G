@@ -1,412 +1,363 @@
-import { useMemo, useRef, useState, type DragEvent } from 'react';
-import { Link } from 'react-router-dom';
-import { CircleAlert, CircleCheck, FileText, Loader2, MapPinPlus, RefreshCw, Sheet, TriangleAlert, Upload, X } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { CircleAlert, CircleCheck, Download, FileText, Upload, X } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { DataEntryHeader, Field, NoWorkbook, ReviewList, SelectField, ValidatedLocally, type Step } from '../../components/data/DataEntry';
+import { Field, FilterCard } from '../../components/dashboard/FilterBar';
+import { SelectField } from '../../components/data/DataEntry';
+import { PageHeading } from '../../context/pageHeader';
+import { useAuth } from '../../context/auth';
 import { useWorkbook } from '../../context/workbook';
 import { useApiQuery } from '../../hooks/useApiQuery';
-import { useSiteRegistry } from '../../hooks/useSiteRegistry';
+import { formatBytes } from '../../lib/dataEntry';
+import { formatDate, formatDateTime, formatNumber } from '../../lib/format';
 import {
-  COLUMN_ALIASES, VALIDATED_MESSAGES, fieldA11y, formatBytes, newSiteLink, parseCsv, parseDate, validateCsv,
-  type ColumnRole, type DateCheck, type ParsedCsv,
-} from '../../lib/dataEntry';
-import { formatDate, formatNumber } from '../../lib/format';
-import { fetchFilterOptions } from '../../services/api';
+  commitRawUpload, discardRawUpload, fetchRawUploadOptions, fetchRawUploadRows, fetchRawUploads, fetchRawUpload, previewRawUpload,
+  rawExportUrl, rawUploadIssuesUrl,
+} from '../../services/api';
+import type { RawProject, RawRowStatus, RawUpload, RawUploadOptions } from '../../types/rawUpload';
 
-const MAX_BYTES = 10 * 1024 * 1024;  // read in the browser, so keep it modest
-const PREVIEW_ROWS = 10;
-const ISSUES_SHOWN = 100;
-const ROLE_LABELS: Record<ColumnRole, string> = {
-  site_id: 'Site ID', outage_minutes: 'Outage minutes', availability_pct: 'Availability %', circle: 'Circle',
-  date: 'Date', site_name: 'Site name', report_type: 'Report type',
+const STATUS: Record<RawRowStatus, { label: string; tone: string }> = {
+  ready: { label: 'Ready', tone: 'border-emerald-300 bg-emerald-50 text-emerald-800' },
+  identical: { label: 'Already stored', tone: 'border-slate-300 bg-slate-50 text-slate-700' },
+  duplicate: { label: 'Duplicate / conflict', tone: 'border-amber-300 bg-amber-50 text-amber-800' },
+  out_of_scope: { label: 'Out of scope', tone: 'border-slate-300 bg-slate-100 text-slate-600' },
+  scope_mismatch: { label: 'Project / circle mismatch', tone: 'border-orange-300 bg-orange-50 text-orange-800' },
+  unresolved: { label: 'Unresolved ID', tone: 'border-orange-300 bg-orange-50 text-orange-800' },
+  availability: { label: 'Availability problem', tone: 'border-red-300 bg-red-50 text-red-800' },
+  date: { label: 'Date problem', tone: 'border-red-300 bg-red-50 text-red-800' },
+  other: { label: 'Invalid row', tone: 'border-red-300 bg-red-50 text-red-800' },
 };
 
-interface LoadedFile {
-  name: string;
-  size: number;
-  csv: ParsedCsv | null;
-  error: string | null;
-}
-
-/** A cleaned CSV of daily records for one report type, circle and reporting date, checked in the browser. */
+/**
+ * Data Entry -> Upload CSV: the raw daily CNMC availability file of one circle and date. The server validates it against
+ * the approved site master, calculates outage minutes and shows a preview; nothing is saved until the import is
+ * confirmed, and the result shown is the server's. The dashboard source setting is never changed by an import.
+ */
 export function UploadCsvPage() {
+  const { user } = useAuth();
   const workbook = useWorkbook();
-  const options = useApiQuery(workbook.active ? `${workbook.version}|filters` : null, fetchFilterOptions);
-  const [meta, setMeta] = useState({ reportType: '', circle: '', date: '' });
-  const [file, setFile] = useState<LoadedFile | null>(null);
-  const [reading, setReading] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [step, setStep] = useState<Step>('edit');
-  const input = useRef<HTMLInputElement>(null);
-  const registry = useSiteRegistry(workbook.version, meta.reportType, meta.circle);
-
-  const date = parseDate(meta.date);
-  const metaErrors = {
-    reportType: meta.reportType ? null : 'Choose a report type.',
-    circle: meta.circle ? null : 'Choose a circle.',
-    date: !meta.date ? 'Choose the reporting date.' : !date ? 'Enter a valid date.' : null,
-  };
-  const metaReady = !metaErrors.reportType && !metaErrors.circle && !metaErrors.date;
-  const validation = useMemo(
-    () => (file?.csv ? validateCsv(file.csv, { reportType: meta.reportType, circle: meta.circle, date: date ?? '' }, registry.sites ? new Set(registry.sites.keys()) : null) : null),
-    [file, meta.reportType, meta.circle, date, registry.sites],
-  );
-
-  const choose = async (picked: File | undefined) => {
-    // The upload details come first: dates, circles and Site IDs are checked against them.
-    if (!picked || !metaReady) return;
-    setStep('edit');
-    if (!picked.name.toLowerCase().endsWith('.csv')) {
-      setFile({ name: picked.name, size: picked.size, csv: null, error: 'Only .csv files are accepted here. Save the sheet as CSV (comma-separated) first.' });
-      return;
-    }
-    if (picked.size === 0) {
-      setFile({ name: picked.name, size: 0, csv: null, error: 'The file is empty.' });
-      return;
-    }
-    if (picked.size > MAX_BYTES) {
-      setFile({ name: picked.name, size: picked.size, csv: null, error: `The file is larger than ${formatBytes(MAX_BYTES)}; split it before checking.` });
-      return;
-    }
-    setReading(true);
+  const [version, setVersion] = useState(0);
+  const options = useApiQuery('raw-upload-options', (signal) => fetchRawUploadOptions(signal));
+  const history = useApiQuery(`raw-uploads-${version}`, (signal) => fetchRawUploads(signal));
+  const [batch, setBatch] = useState<RawUpload | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
     try {
-      const text = await picked.text();
-      setFile({ name: picked.name, size: picked.size, csv: parseCsv(text), error: null });
-    } catch {
-      setFile({ name: picked.name, size: picked.size, csv: null, error: 'The file could not be read.' });
+      await action();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setReading(false);
-      if (input.current) input.current.value = '';
+      setBusy(false);
     }
   };
-  const remove = () => { setFile(null); setStep('edit'); };
-
-  if (!workbook.loading && !workbook.active) return <NoWorkbook />;
-  if (!options.data) return <Skeleton className="h-96 w-full" aria-label="Loading form" />;
-
-  const circles = options.data.circles.filter((c) => !meta.reportType || c.report_types.includes(meta.reportType));
-  const checking = Boolean(validation && registry.loading);
-  const ready = metaReady && validation != null && validation.errorCount === 0 && validation.rowCount > 0 && !checking && !registry.error;
-  const unknownIds = validation
-    ? [...new Set(validation.issues.filter((i) => i.unknownSite && i.siteId).map((i) => i.siteId!))] : [];
-
-  const summary = file && validation && (
-    <ReviewList items={[
-      { label: 'Report type', value: meta.reportType || '—' },
-      { label: 'Circle', value: meta.circle || '—' },
-      { label: 'Reporting date', value: date ? formatDate(date) : '—' },
-      { label: 'File', value: `${file.name} (${formatBytes(file.size)})` },
-      { label: 'Rows', value: `${formatNumber(validation.rowCount)} (${formatNumber(validation.validRows)} passed)` },
-      { label: 'Values', value: validation.measure === 'availability_pct' ? 'Availability %' : validation.measure === 'outage_minutes' ? 'Outage minutes' : '—' },
-    ]} />
-  );
+  const o = options.data;
+  const scope = o?.assigned_circles == null ? 'every circle' : o.assigned_circles.length ? `circle${o.assigned_circles.length > 1 ? 's' : ''} ${o.assigned_circles.join(', ')}` : 'no circle';
 
   return (
-    <div className="space-y-5">
-      <DataEntryHeader
-        icon={<Sheet />}
-        accent="bg-violet-50 text-violet-700"
-        title="Upload CSV"
-        description="Check a cleaned CSV of daily records for one report type, circle and reporting date. The file is read in your browser and is not uploaded."
-        step={step}
-      />
-
-      {step === 'done' ? (
-        <ValidatedLocally message={VALIDATED_MESSAGES.csv}>
-          <div className="mt-3 space-y-3">{summary}</div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => { remove(); setMeta({ reportType: '', circle: '', date: '' }); }}>Check another file</Button>
-            <Button size="sm" variant="outline" onClick={() => setStep('edit')}>Back to this file</Button>
-          </div>
-        </ValidatedLocally>
-      ) : step === 'review' ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-semibold">Confirm the upload details</CardTitle>
-            <CardDescription className="text-xs">Confirming only records that the browser checks passed; nothing is sent.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {summary}
-            {validation!.warningCount > 0 && (
-              <p className="text-xs text-amber-700">{validation!.warningCount} warning{validation!.warningCount === 1 ? '' : 's'} to be aware of (see the checks on the previous step).</p>
-            )}
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => setStep('done')}>Confirm CSV</Button>
-              <Button variant="outline" onClick={() => setStep('edit')}>Back to edit</Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-semibold">1. Upload details</CardTitle>
-              <CardDescription className="text-xs">Apply to every row. If the file has its own circle or date column, rows that disagree are flagged, never overwritten.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field id="csv-report-type" label="Report type" required error={file ? metaErrors.reportType : null}>
-                  <SelectField id="csv-report-type" value={meta.reportType} placeholder="Choose report type"
-                    options={options.data.report_types.map((t) => ({ value: t.value, label: t.label }))}
-                    onChange={(reportType) => setMeta((m) => ({ ...m, reportType, circle: options.data!.circles.find((c) => c.value === m.circle)?.report_types.includes(reportType) ? m.circle : '' }))} />
-                </Field>
-                <Field id="csv-circle" label="Circle" required error={file ? metaErrors.circle : null}>
-                  <SelectField id="csv-circle" value={meta.circle} disabled={!meta.reportType}
-                    placeholder={meta.reportType ? 'Choose circle' : 'Choose report type first'}
-                    options={circles.map((c) => ({ value: c.value, label: c.label }))}
-                    onChange={(circle) => setMeta((m) => ({ ...m, circle }))} />
-                </Field>
-                <Field id="csv-date" label="Reporting date" required error={file ? metaErrors.date : null}>
-                  <Input type="date" {...fieldA11y('csv-date', file ? metaErrors.date : null)} value={meta.date}
-                    onChange={(e) => setMeta((m) => ({ ...m, date: e.target.value }))} />
-                </Field>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-semibold">2. CSV file</CardTitle>
-              <CardDescription className="text-xs">
-                Required columns: a Site ID ({COLUMN_ALIASES.site_id.join(' / ')}), the reporting date ({COLUMN_ALIASES.date.join(' / ')})
-                and one value column: outage minutes ({COLUMN_ALIASES.outage_minutes.join(' / ')}) or availability %
-                ({COLUMN_ALIASES.availability_pct.join(' / ')}). Optional: {COLUMN_ALIASES.circle[0]}, {COLUMN_ALIASES.site_name[0]},
-                {' '}{COLUMN_ALIASES.report_type.join(' / ')}. Other columns are listed but not checked.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <input ref={input} type="file" accept=".csv,text/csv" className="sr-only" aria-label="Choose CSV file"
-                disabled={!metaReady} onChange={(e) => void choose(e.target.files?.[0])} />
-              {!file ? (
-                <div
-                  onDragOver={(e: DragEvent) => { e.preventDefault(); setDragging(metaReady); }}
-                  onDragLeave={() => setDragging(false)}
-                  onDrop={(e: DragEvent) => { e.preventDefault(); setDragging(false); void choose(e.dataTransfer.files?.[0]); }}
-                  className={cn('flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-10 text-center',
-                    dragging ? 'border-primary bg-primary/5' : 'border-border', !metaReady && 'bg-muted/40')}
-                >
-                  {reading ? <Loader2 className="size-6 animate-spin text-muted-foreground" /> : <Upload className="size-6 text-muted-foreground" aria-hidden="true" />}
-                  {metaReady ? <p className="text-sm">Drag a .csv file here, or</p>
-                    : <p className="text-sm text-muted-foreground">Choose the report type, circle and reporting date above first.</p>}
-                  <Button type="button" size="sm" variant="outline" disabled={!metaReady} onClick={() => input.current?.click()}>Choose file</Button>
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <FileText className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{file.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatBytes(file.size)}{file.csv ? ` · ${formatNumber(file.csv.rows.length)} data rows · ${file.csv.headers.length} columns` : ''}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button type="button" size="sm" variant="outline" disabled={!metaReady} onClick={() => input.current?.click()}><RefreshCw /> Replace</Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={remove}><X /> Remove</Button>
-                  </div>
-                </div>
-              )}
-              {file?.error && (
-                <Alert variant="destructive"><CircleAlert /><AlertTitle>File not accepted</AlertTitle><AlertDescription>{file.error}</AlertDescription></Alert>
-              )}
-            </CardContent>
-          </Card>
-
-          {file?.csv && validation && (
-            <>
-              <Preview csv={file.csv} roles={validation.roles} />
-              <DateCheckCard check={validation.dateCheck} />
-              <Checks validation={validation} checking={checking} unknownIds={unknownIds} meta={meta} metaReady={metaReady} registryError={registry.error} />
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm font-semibold">3. Summary</CardTitle>
-                  <CardDescription className="text-xs">
-                    {ready ? 'All checks passed. Review and confirm.' : 'Confirmation is available once the upload details are complete and the file has no errors.'}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {summary}
-                  <Button disabled={!ready} onClick={() => setStep('review')}>Review and confirm</Button>
-                </CardContent>
-              </Card>
-            </>
-          )}
-        </>
+    <div className="space-y-4">
+      <PageHeading title="Upload CSV"
+        subtitle={`Raw daily CNMC availability file · validated on the server against the approved site master · ${user?.username ?? ''}: ${scope}`} />
+      {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}
+      {!o && !options.error && <Skeleton className="h-24 w-full" />}
+      {o && o.assigned_circles?.length === 0 && (
+        <Alert variant="destructive" role="alert">
+          <CircleAlert />
+          <AlertTitle>No circle is assigned to your account</AlertTitle>
+          <AlertDescription>Raw daily data can be uploaded only for assigned circles. Ask an Admin to assign your circle on Users &amp; Roles.</AlertDescription>
+        </Alert>
       )}
+      {o && <UploadForm options={o} busy={busy} onPreview={(file, details) => run(async () => { setBatch(await previewRawUpload(file, details)); setVersion((v) => v + 1); })} />}
+      {error && <Alert variant="destructive" role="alert"><AlertDescription>{error}</AlertDescription></Alert>}
+      {batch && (
+        <PreviewCard key={batch.id} batch={batch} busy={busy}
+          onCommit={() => run(async () => {
+            setBatch(await commitRawUpload(batch.id));
+            setVersion((v) => v + 1);
+            workbook.refresh();  // database-backed pages reload their figures; the source setting is unchanged
+          })}
+          onDiscard={() => run(async () => { await discardRawUpload(batch.id); setBatch(null); setVersion((v) => v + 1); })} />
+      )}
+      {o && <ExportCard options={o} />}
+      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="My uploads">
+        <h2 className="text-base font-semibold">{user?.role === 'admin' ? 'Raw uploads' : 'My uploads'}</h2>
+        {history.data?.uploads.length ? (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader><TableRow>{['#', 'File', 'Project', 'Circle', 'Reporting date', 'Uploaded', 'By', 'Status', 'Inserted · skipped · rejected', ''].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
+              <TableBody>
+                {history.data.uploads.map((b) => (
+                  <TableRow key={b.id}>
+                    <TableCell>{b.id}</TableCell>
+                    <TableCell className="max-w-48 truncate" title={b.file}>{b.file}</TableCell>
+                    <TableCell>{b.project}</TableCell>
+                    <TableCell>{b.circle}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDate(b.reporting_date)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(b.uploaded_at)}</TableCell>
+                    <TableCell>{b.uploaded_by ?? '—'}</TableCell>
+                    <TableCell className={cn((b.status === 'failed' || b.status === 'rejected') && 'text-destructive')}>{b.status_label}</TableCell>
+                    <TableCell className="text-xs tabular-nums">{b.daily ? `${formatNumber(b.daily.inserted + b.daily.filled)} · ${formatNumber(b.daily.skipped_identical + b.daily.skipped_repeats)} · ${formatNumber(b.daily.rejected)}` : b.error ? <span className="text-destructive">{b.error}</span> : '—'}</TableCell>
+                    <TableCell><Button type="button" size="sm" variant="ghost" onClick={() => run(async () => setBatch(await fetchRawUpload(b.id)))}>View</Button></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : <p className="text-sm text-muted-foreground">{history.error ? history.error.message : history.data ? 'No raw uploads yet.' : 'Loading…'}</p>}
+      </Card>
     </div>
   );
 }
 
-function Preview({ csv, roles }: { csv: ParsedCsv; roles: Partial<Record<ColumnRole, number>> }) {
-  const roleOf = (index: number) => (Object.entries(roles) as [ColumnRole, number][]).find(([, i]) => i === index)?.[0];
+function UploadForm({ options, busy, onPreview }: {
+  options: RawUploadOptions; busy: boolean; onPreview: (file: File, details: { project: RawProject; circle: string; reporting_date: string; remarks: string }) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [project, setProject] = useState<RawProject>('4G Saturation');
+  const circles = options.projects.find((p) => p.value === project)?.circles ?? [];
+  const fixed = options.assigned_circles?.length === 1 ? options.assigned_circles[0] : null;
+  const [circle, setCircle] = useState(fixed ?? '');
+  const [day, setDay] = useState('');
+  const [remarks, setRemarks] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const configured = options.projects.find((p) => p.value === project)?.configured ?? false;
+  const pick = (f: File | null) => {
+    setFileError(null);
+    setFile(null);
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith('.csv')) return setFileError(`${f.name}: choose the CSV file exported from CNMC (.csv).`);
+    if (f.size > options.max_bytes) return setFileError(`${f.name} is larger than ${formatBytes(options.max_bytes)}.`);
+    setFile(f);
+  };
+  const ready = file && circle && day && circles.includes(circle);
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-semibold">Preview</CardTitle>
-        <CardDescription className="text-xs">
-          {formatNumber(csv.rows.length)} data rows detected · showing the first {Math.min(PREVIEW_ROWS, csv.rows.length)}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="px-0">
-        <div className="overflow-x-auto">
-          <Table className="text-xs">
-            <TableHeader>
-              <TableRow className="bg-muted/50 hover:bg-muted/50">
-                <TableHead className="w-14 text-right">Line</TableHead>
-                {csv.headers.map((h, i) => {
-                  const role = roleOf(i);
-                  return (
-                    <TableHead key={`${h}-${i}`} className="whitespace-nowrap">
-                      {h || <span className="italic text-muted-foreground">(no name)</span>}
-                      <Badge variant={role ? 'secondary' : 'outline'} className="ml-1.5 font-normal">{role ? ROLE_LABELS[role] : 'not used'}</Badge>
-                    </TableHead>
-                  );
-                })}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {csv.rows.slice(0, PREVIEW_ROWS).map((row, r) => (
-                <TableRow key={csv.lines[r]}>
-                  <TableCell className="text-right text-muted-foreground tabular-nums">{csv.lines[r]}</TableCell>
-                  {csv.headers.map((_, c) => <TableCell key={c} className="whitespace-nowrap">{row[c] ?? <span className="text-destructive">missing</span>}</TableCell>)}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </CardContent>
-    </Card>
+    <>
+      <FilterCard label="Upload details"
+        footer={<>Availability is read from <strong>{options.projects.find((p) => p.value === project)?.availability_column}</strong>; {options.formula}. A blank availability is never read as 0.
+          {' '}The file must hold one Report Date, equal to the reporting date, and only the selected circle.</>}
+        actions={<Button type="button" className="h-9" disabled={!ready || busy} onClick={() => file && onPreview(file, { project, circle, reporting_date: day, remarks })}>
+          {busy ? 'Validating…' : 'Validate on server'}
+        </Button>}>
+        <Field id="raw-project" label="Project" className="w-40">
+          <SelectField id="raw-project" value={project} placeholder="Project" onChange={(v) => { setProject(v as RawProject); if (!fixed) setCircle(''); }}
+            options={options.projects.map((p) => ({ value: p.value, label: p.configured ? p.value : `${p.value} (mapping pending)` }))} />
+        </Field>
+        <Field id="raw-circle" label={fixed ? 'Circle (assigned)' : 'Circle'} className="w-32">
+          {fixed ? <Input id="raw-circle" className="h-9" value={fixed} readOnly aria-readonly="true" />
+            : <SelectField id="raw-circle" value={circle} placeholder={circles.length ? 'Circle' : 'None available'} disabled={!circles.length}
+              onChange={setCircle} options={circles.map((c) => ({ value: c, label: c }))} />}
+        </Field>
+        <Field id="raw-date" label="Reporting date" className="w-40">
+          <Input id="raw-date" type="date" className="h-9" value={day} onChange={(e) => setDay(e.target.value)} />
+        </Field>
+        <Field id="raw-remarks" label="Remarks (optional)" className="w-56">
+          <Input id="raw-remarks" className="h-9" value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="e.g. resent after correction" />
+        </Field>
+        <Field id="raw-file" label="CSV file" className="min-w-56">
+          <div className="flex h-9 items-center gap-2">
+            <input ref={input} id="raw-file" type="file" accept=".csv,text/csv" className="sr-only" aria-label="Raw daily CSV file"
+              onChange={(e) => pick(e.target.files?.[0] ?? null)} />
+            <Button type="button" variant="outline" className="h-9" onClick={() => input.current?.click()}><Upload /> Choose file</Button>
+            {file ? (
+              <span className="flex items-center gap-1 text-sm" title={file.name}>
+                <FileText className="size-4 text-muted-foreground" aria-hidden="true" />
+                <span className="max-w-40 truncate">{file.name}</span>
+                <span className="text-xs text-muted-foreground">{formatBytes(file.size)}</span>
+                <Button type="button" variant="ghost" size="icon" className="size-7" aria-label="Remove file"
+                  onClick={() => { setFile(null); if (input.current) input.current.value = ''; }}><X /></Button>
+              </span>
+            ) : <span className="text-sm text-muted-foreground">No file chosen</span>}
+          </div>
+        </Field>
+      </FilterCard>
+      {fileError && <Alert variant="destructive"><AlertDescription>{fileError}</AlertDescription></Alert>}
+      {!configured && (
+        <Alert><AlertDescription>
+          LWE files can be validated, but no LWE row can be imported yet: the mapping of raw LWE IDs to master sites (and the 2100 / 700 MHz selection) is not configured.
+        </AlertDescription></Alert>
+      )}
+    </>
   );
 }
 
-const LINES_SHOWN = 15;
-const lineList = (lines: number[]) =>
-  `line${lines.length === 1 ? '' : 's'} ${lines.slice(0, LINES_SHOWN).join(', ')}${lines.length > LINES_SHOWN ? ` and ${lines.length - LINES_SHOWN} more` : ''}`;
+const TILES: [keyof NonNullable<RawUpload['summary']>, string, string][] = [
+  ['total_rows', 'Rows in file', ''], ['valid_in_scope', 'Valid, in scope', ''], ['ready_to_import', 'Ready to import', 'text-emerald-700'],
+  ['identical_skipped', 'Already stored (skipped)', ''], ['out_of_scope', 'Out of scope', ''],
+  ['project_or_circle_mismatches', 'Project / circle mismatch', 'text-orange-700'], ['unresolved_or_ambiguous', 'Unresolved / ambiguous', 'text-orange-700'],
+  ['availability_problems', 'Missing / invalid availability', 'text-destructive'], ['duplicates_or_conflicts', 'Duplicates / conflicts', 'text-amber-700'],
+  ['date_mismatches', 'Date problems', 'text-destructive'], ['other_invalid', 'Other invalid', 'text-destructive'],
+];
 
-/** File-level reporting date check: the expected date, every date found, and on which lines. */
-function DateCheckCard({ check }: { check: DateCheck }) {
-  const passed = check.status === 'passed';
+function PreviewCard({ batch, busy, onCommit, onDiscard }: { batch: RawUpload; busy: boolean; onCommit: () => void; onDiscard: () => void }) {
+  const [status, setStatus] = useState<RawRowStatus | ''>('');
+  const [page, setPage] = useState(1);
+  const [confirming, setConfirming] = useState(false);
+  const rows = useApiQuery(`raw-rows-${batch.id}-${batch.status}-${status}-${page}`, (signal) => fetchRawUploadRows(batch.id, status, page, signal));
+  const s = batch.summary;
+  const committed = batch.status === 'committed';
+  const canCommit = batch.status === 'previewed' && !!s?.ready_to_import;
+  const byStatus = (st: RawRowStatus) => Object.entries(s?.by_code ?? {}).filter(([code]) => statusOf(code) === st).reduce((a, [, n]) => a + n, 0);
   return (
-    <Card className={cn(check.status === 'failed' && 'border-destructive/40')} role="region" aria-label="Reporting date check">
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-          Reporting date check
-          {passed ? <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" /> Passed</Badge>
-            : check.status === 'failed' ? <Badge variant="destructive">Failed</Badge> : <Badge variant="outline">Waiting</Badge>}
-        </CardTitle>
-        <CardDescription className="text-xs">{check.message}</CardDescription>
-      </CardHeader>
-      {check.status !== 'pending' && (
-        <CardContent>
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-[10rem_1fr]">
-            <dt className="text-xs text-muted-foreground">Expected (selected)</dt>
-            <dd className="font-medium">{check.expected ? formatDate(check.expected) : '—'}</dd>
-            <dt className="text-xs text-muted-foreground">Date column</dt>
-            <dd className="font-medium">{check.column ?? <span className="text-destructive">Missing</span>}</dd>
-            <dt className="text-xs text-muted-foreground">Dates in the file</dt>
-            <dd>
-              {check.detected.length ? (
-                <ul className="space-y-1">
-                  {check.detected.map((d) => (
-                    <li key={d.date} className={cn(d.date !== check.expected && 'text-destructive')}>
-                      <span className="font-medium">{formatDate(d.date)}</span>
-                      {' '}· {formatNumber(d.lines.length)} row{d.lines.length === 1 ? '' : 's'}
-                      {d.date !== check.expected && <span className="text-xs"> ({lineList(d.lines)})</span>}
-                    </li>
-                  ))}
-                </ul>
-              ) : '—'}
-            </dd>
-            {check.invalid.length > 0 && (
+    <Card className="gap-3 rounded-xl px-4 py-3" aria-label={committed ? 'Import result' : 'Validation preview'}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h2 className="text-base font-semibold">{committed ? 'Imported' : batch.status === 'previewed' ? 'Validation preview — nothing saved yet' : batch.status_label}: {batch.file}</h2>
+          <p className="text-xs text-muted-foreground">
+            Upload #{batch.id} · {batch.project} · {batch.circle} · {formatDate(batch.reporting_date)} · by {batch.uploaded_by ?? '—'} {formatDateTime(batch.uploaded_at)}
+            {batch.file_info ? ` · header on line ${batch.file_info.header_line}${batch.file_info.preamble.length ? ` (above it: “${batch.file_info.preamble.join(' / ')}”)` : ''}` : ''}
+          </p>
+        </div>
+        <a href={rawUploadIssuesUrl(batch.id)} className="inline-flex items-center gap-1.5 text-sm font-medium underline underline-offset-2"><Download className="size-4" /> Validation report (CSV)</a>
+      </div>
+      {batch.file_issues?.map((i) => (
+        <Alert key={i.code} variant="destructive" role="alert"><CircleAlert /><AlertTitle>The file cannot be imported</AlertTitle><AlertDescription>{i.message}</AlertDescription></Alert>
+      ))}
+      {batch.status === 'failed' && batch.error && <Alert variant="destructive" role="alert"><AlertDescription>{batch.error}</AlertDescription></Alert>}
+      {batch.already_imported && !committed && <Alert><AlertDescription>This exact file was already imported (upload #{batch.already_imported.batch}); importing it again adds nothing.</AlertDescription></Alert>}
+      {committed && batch.daily && (
+        <Alert className="border-emerald-300 bg-emerald-50" role="status">
+          <CircleCheck className="text-emerald-700" />
+          <AlertTitle>Saved to the database {formatDateTime(batch.committed_at)}</AlertTitle>
+          <AlertDescription>
+            {formatNumber(batch.daily.inserted)} daily records inserted{batch.daily.filled ? `, ${formatNumber(batch.daily.filled)} empty days filled` : ''},
+            {' '}{formatNumber(batch.daily.skipped_identical)} already stored and {formatNumber(batch.daily.skipped_repeats)} repeated rows skipped, {formatNumber(batch.daily.rejected)} rows not imported.
+            Database-backed dashboard pages now include them; the dashboard data source setting is unchanged.
+          </AlertDescription>
+        </Alert>
+      )}
+      {s && (
+        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-6">
+          {TILES.map(([key, label, tone]) => (
+            <div key={key} className="rounded-lg border px-3 py-2">
+              <dt className="text-xs text-muted-foreground">{label}</dt>
+              <dd className={cn('text-lg font-semibold tabular-nums', (s[key] as number) ? tone : '')}>{formatNumber(s[key] as number)}</dd>
+            </div>
+          ))}
+          {batch.master_scope && (
+            <div className="rounded-lg border px-3 py-2">
+              <dt className="text-xs text-muted-foreground">Master sites in file</dt>
+              <dd className="text-lg font-semibold tabular-nums">{formatNumber(batch.master_scope.sites_in_file)} <span className="text-xs font-normal text-muted-foreground">of {formatNumber(batch.master_scope.sites)}</span></dd>
+            </div>
+          )}
+        </dl>
+      )}
+      {batch.master_scope && batch.master_scope.missing_from_file > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {formatNumber(batch.master_scope.missing_from_file)} approved {batch.project} sites of {batch.circle} have no row in this file (e.g. {batch.master_scope.missing_examples.slice(0, 5).join(', ')}); their day stays a gap, never 0.
+        </p>
+      )}
+      {batch.availability_rule && (
+        <p className="text-xs text-muted-foreground">Availability source: <strong>{batch.availability_rule.column}</strong>{batch.availability_rule.confirmed ? '' : ' (not confirmed for this project)'} · {batch.availability_rule.formula}.</p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Show rows">
+        {(['', 'ready', 'identical', 'duplicate', 'out_of_scope', 'scope_mismatch', 'unresolved', 'availability', 'date', 'other'] as const).map((st) => {
+          const n = st ? byStatus(st) : s?.total_rows ?? 0;
+          if (st && !n) return null;
+          return (
+            <Button key={st || 'all'} type="button" size="sm" variant={status === st ? 'default' : 'outline'} className="h-7 text-xs" aria-pressed={status === st}
+              onClick={() => { setStatus(st); setPage(1); }}>
+              {st ? STATUS[st].label : 'All rows'} ({formatNumber(n)})
+            </Button>
+          );
+        })}
+      </div>
+      <div className="overflow-x-auto">
+        <Table aria-label="Rows">
+          <TableHeader>
+            <TableRow>{['Line', 'Raw BTS IP ID', 'Master site', 'Circle', 'Report date', 'Availability %', 'Outage min', 'Status', 'Reason'].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow>
+          </TableHeader>
+          <TableBody>
+            {(rows.data?.rows ?? []).map((r) => (
+              <TableRow key={r.line}>
+                <TableCell className="tabular-nums">{r.line}</TableCell>
+                <TableCell className="font-mono text-xs">{r.raw_id || <span className="text-muted-foreground italic">blank</span>}</TableCell>
+                <TableCell className="text-xs">{r.site_id ? <><span className="font-mono">{r.site_id}</span> <span className="text-muted-foreground">{r.site_name}</span></> : '—'}</TableCell>
+                <TableCell>{r.circle}</TableCell>
+                <TableCell className="whitespace-nowrap">{r.report_date}</TableCell>
+                <TableCell className="tabular-nums">{r.availability ?? (r.raw_availability ? <span className="text-destructive">{r.raw_availability}</span> : <span className="text-muted-foreground italic">blank</span>)}</TableCell>
+                <TableCell className="tabular-nums">{r.outage_minutes == null ? '—' : r.outage_minutes.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</TableCell>
+                <TableCell><Badge variant="outline" className={cn('font-medium', STATUS[r.status].tone)}>{r.label}</Badge></TableCell>
+                <TableCell className="max-w-96 text-xs whitespace-normal">{r.message}{r.note && <span className="block text-muted-foreground">{r.note}</span>}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        {rows.error && <p className="text-sm text-destructive">{rows.error.message}</p>}
+      </div>
+      {rows.data && rows.data.pages > 1 && (
+        <div className="flex items-center gap-2 text-xs">
+          <Button type="button" size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
+          <span>Page {rows.data.page} of {rows.data.pages} · {formatNumber(rows.data.count)} rows</span>
+          <Button type="button" size="sm" variant="outline" disabled={page >= rows.data.pages} onClick={() => setPage((p) => p + 1)}>Next</Button>
+        </div>
+      )}
+
+      {batch.status === 'previewed' && (
+        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+          {!canCommit ? <p className="text-sm text-muted-foreground">No row is ready to import.</p>
+            : confirming ? (
               <>
-                <dt className="text-xs text-muted-foreground">Missing or unreadable</dt>
-                <dd>
-                  <ul className="space-y-1 text-destructive">
-                    {check.invalid.map((i) => (
-                      <li key={i.value}>
-                        <span className="font-medium">{i.value ? `"${i.value}"` : 'Empty'}</span>{' '}
-                        <span className="text-xs">({lineList(i.lines)})</span>
-                      </li>
-                    ))}
-                  </ul>
-                </dd>
+                <p className="text-sm">Save <strong>{formatNumber(s!.ready_to_import)}</strong> daily records for {batch.circle} · {formatDate(batch.reporting_date)} to the database?</p>
+                <Button type="button" onClick={onCommit} disabled={busy}>{busy ? 'Importing…' : 'Yes, import'}</Button>
+                <Button type="button" variant="ghost" onClick={() => setConfirming(false)} disabled={busy}>Back</Button>
               </>
-            )}
-          </dl>
-        </CardContent>
+            ) : <Button type="button" onClick={() => setConfirming(true)}>Import {formatNumber(s!.ready_to_import)} records…</Button>}
+          <Button type="button" variant="ghost" onClick={onDiscard} disabled={busy}>Discard</Button>
+        </div>
       )}
     </Card>
   );
 }
 
-function Checks({ validation, checking, unknownIds, meta, metaReady, registryError }: {
-  validation: ReturnType<typeof validateCsv>; checking: boolean; unknownIds: string[];
-  meta: { reportType: string; circle: string }; metaReady: boolean; registryError: Error | null;
-}) {
-  const shown = validation.issues.slice(0, ISSUES_SHOWN);
+/** Reason code -> preview status group (mirrors the server's grouping for the filter counts). */
+function statusOf(code: string): RawRowStatus {
+  const groups: Record<string, RawRowStatus> = {
+    ready: 'ready', fills_missing: 'ready', identical: 'identical', duplicate_row: 'duplicate', conflicting_duplicate: 'duplicate',
+    conflict_existing: 'duplicate', unknown_site: 'out_of_scope', other_circle: 'scope_mismatch', other_project: 'scope_mismatch',
+    circle_mismatch: 'scope_mismatch', blank_site_id: 'unresolved', ambiguous_site: 'unresolved', lwe_mapping_not_configured: 'unresolved',
+    missing_availability: 'availability', invalid_availability: 'availability', availability_out_of_range: 'availability',
+    date_mismatch: 'date', invalid_date: 'date',
+  };
+  return groups[code] ?? 'other';
+}
+
+function ExportCard({ options }: { options: RawUploadOptions }) {
+  const [project, setProject] = useState<RawProject>('4G Saturation');
+  const circles = options.projects.find((p) => p.value === project)?.circles ?? [];
+  const [circle, setCircle] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const ready = from && to && (options.assigned_circles == null || options.assigned_circles.length > 0);
+  const url = (output: 'csv' | 'xlsx') => rawExportUrl({ project, circle, date_from: from, date_to: to, output });
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-          Checks
-          {checking ? <Badge variant="outline" className="gap-1"><Loader2 className="size-3 animate-spin" /> Checking Site IDs</Badge>
-            : validation.errorCount ? <Badge variant="destructive">{formatNumber(validation.errorCount)} error{validation.errorCount === 1 ? '' : 's'}</Badge>
-              : <Badge variant="secondary">No errors</Badge>}
-          {validation.warningCount > 0 && <Badge variant="outline" className="border-amber-300 text-amber-800">{formatNumber(validation.warningCount)} warning{validation.warningCount === 1 ? '' : 's'}</Badge>}
-        </CardTitle>
-        <CardDescription className="text-xs">
-          {!metaReady ? 'Choose the report type and circle to check Site IDs against the master data.'
-            : `Site IDs are checked against the ${meta.reportType} · ${meta.circle} sites in the loaded Master workbook.`}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {registryError && <Alert variant="destructive"><AlertTitle>Master data could not be loaded</AlertTitle><AlertDescription>{registryError.message}</AlertDescription></Alert>}
-        {unknownIds.length > 0 && (
-          <Alert className="border-amber-300 bg-amber-50/70">
-            <MapPinPlus className="text-amber-700" />
-            <AlertTitle>{unknownIds.length} Site ID{unknownIds.length === 1 ? '' : 's'} not in the master data</AlertTitle>
-            <AlertDescription>
-              <p>Unknown sites are never created from daily data. Add them as new sites first, or correct the IDs.</p>
-              <ul className="mt-1.5 flex flex-wrap gap-1.5">
-                {unknownIds.slice(0, 12).map((id) => (
-                  <li key={id}>
-                    <Link to={newSiteLink(id, meta.reportType, meta.circle)} className="inline-flex items-center gap-1 rounded border bg-background px-1.5 py-0.5 font-mono text-[11px] underline-offset-2 hover:underline">
-                      <MapPinPlus className="size-3" /> {id}
-                    </Link>
-                  </li>
-                ))}
-                {unknownIds.length > 12 && <li className="text-xs">and {unknownIds.length - 12} more</li>}
-              </ul>
-            </AlertDescription>
-          </Alert>
-        )}
-        {shown.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{checking ? 'Waiting for the master data…' : 'Every row passed the checks.'}</p>
-        ) : (
-          <ul className="max-h-80 divide-y overflow-auto rounded-md border text-xs" aria-label="Problems found">
-            {shown.map((issue, i) => (
-              <li key={i} className="flex gap-2 px-3 py-1.5">
-                {issue.severity === 'error'
-                  ? <CircleAlert className="mt-px size-3.5 shrink-0 text-destructive" aria-label="Error" />
-                  : <TriangleAlert className="mt-px size-3.5 shrink-0 text-amber-600" aria-label="Warning" />}
-                <span className="w-16 shrink-0 text-muted-foreground tabular-nums">{issue.line ? `Line ${issue.line}` : 'File'}</span>
-                <span>{issue.message}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {validation.issues.length > ISSUES_SHOWN && (
-          <p className="text-xs text-muted-foreground">Showing the first {ISSUES_SHOWN} of {formatNumber(validation.issues.length)} findings.</p>
-        )}
-      </CardContent>
-    </Card>
+    <FilterCard label="Export consolidated daily data"
+      footer="Daily records stored in the database for approved master sites of the chosen project, limited to your circles; one row per site and day."
+      actions={ready ? (
+        <>
+          <Button asChild variant="outline" className="h-9"><a href={url('csv')}><Download /> CSV</a></Button>
+          <Button asChild variant="outline" className="h-9"><a href={url('xlsx')}><Download /> Excel</a></Button>
+        </>
+      ) : <span className="pb-2 text-xs text-muted-foreground">Choose the dates to export.</span>}>
+      <Field id="export-project" label="Export: project" className="w-40">
+        <SelectField id="export-project" value={project} placeholder="Project" onChange={(v) => { setProject(v as RawProject); setCircle(''); }}
+          options={options.projects.map((p) => ({ value: p.value, label: p.value }))} />
+      </Field>
+      <Field id="export-circle" label="Circle" className="w-36">
+        <SelectField id="export-circle" value={circle || 'all'} placeholder="Circle" onChange={(v) => setCircle(v === 'all' ? '' : v)}
+          options={[{ value: 'all', label: options.assigned_circles == null ? 'All circles' : 'All my circles' }, ...circles.map((c) => ({ value: c, label: c }))]} />
+      </Field>
+      <Field id="export-from" label="From" className="w-40"><Input id="export-from" type="date" className="h-9" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+      <Field id="export-to" label="To" className="w-40"><Input id="export-to" type="date" className="h-9" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></Field>
+    </FilterCard>
   );
 }

@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageHeading } from '../context/pageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useWorkbook } from '../context/workbook';
@@ -63,10 +64,7 @@ export function DataSourcePage() {
 
   return (
     <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight">Data source and quality</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">What the dashboard reads, what was validated, and how each figure is defined.</p>
-      </header>
+      <PageHeading title="Data Source & Quality" subtitle="What the dashboard reads, what was validated, and how each figure is defined" />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">

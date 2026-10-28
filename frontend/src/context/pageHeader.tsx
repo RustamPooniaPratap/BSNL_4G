@@ -4,7 +4,7 @@ import { Children, createContext, isValidElement, useContext, useEffect, useStat
 /**
  * The active page's title and reporting context, shown in the top application bar (AppLayout) instead of
  * a title card in the page. A page renders <PageHeading title=… subtitle=… />; when it has none, the bar
- * shows the latest reporting date. Outside AppLayout (e.g. in tests) PageHeading renders its own heading.
+ * shows the route's title (lib/pageTitles). Outside AppLayout (e.g. in tests) PageHeading renders its own heading.
  */
 export interface PageHeader { title: string; subtitle: string }
 

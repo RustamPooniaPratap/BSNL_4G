@@ -5,6 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageHeading } from '../context/pageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useWorkbook } from '../context/workbook';
@@ -71,12 +72,8 @@ export function WorkbookPage({ embedded = false }: { embedded?: boolean } = {}) 
   return (
     <div className="space-y-4">
       {!embedded && (
-        <header>
-          <h1 className="text-xl font-semibold tracking-tight">Master workbook</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            The dashboard reads only the workbook uploaded here. A new upload replaces the current one only if it passes validation.
-          </p>
-        </header>
+        <PageHeading title="Master Workbook"
+          subtitle="The Excel source of the dashboard · a new upload replaces the current one only if it passes validation" />
       )}
 
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-5">

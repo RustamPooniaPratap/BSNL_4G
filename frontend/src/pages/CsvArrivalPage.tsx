@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  AlarmClock, ArrowDown, ArrowUp, ArrowUpDown, BellRing, CalendarDays, ChevronRight, CircleCheck, ClipboardList, FileCheck2, Hourglass, Inbox, Info,
+  AlarmClock, ArrowDown, ArrowUp, ArrowUpDown, BellRing, RotateCcw, ChevronRight, CircleCheck, ClipboardList, FileCheck2, Hourglass, Inbox, Info,
   Mail, MessageSquarePlus, PhoneOff, Plus, Search, Settings2, UserPen,
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -12,7 +12,9 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { Field, NoWorkbook, SelectField } from '../components/data/DataEntry';
+import { NoWorkbook, SelectField } from '../components/data/DataEntry';
+import { Field as FilterField, FilterCard } from '../components/dashboard/FilterBar';
+import { PageHeading } from '../context/pageHeader';
 import { ArrivalForm, ComposeEmail, ContactForm, DeadlineForm, FollowUpForm, ReminderSend } from '../components/tracking/TrackingForms';
 import { useTracking } from '../context/tracking';
 import { useWorkbook } from '../context/workbook';
@@ -141,52 +143,62 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
 
   return (
     <div className="space-y-4">
-      <Card className="gap-0 rounded-2xl px-5 py-3 shadow-xs">
-        <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight">CSV Arrival &amp; Follow-up</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Track daily 4G and LWE submissions, pending reports and follow-ups across reporting circles.
-            </p>
-          </div>
-          <EmailModeChip status={emailStatus.data} error={emailStatus.error} />
-        </header>
-
-      <div role="toolbar" aria-label="Reporting date and actions"
-        className="mt-2.5 flex flex-col gap-3 border-t pt-2.5 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
-          <Field plain id="track-date" label="Reporting date" className="w-44">
-            <Input id="track-date" type="date" className="h-9" value={reportingDate}
-              onChange={(e) => { if (e.target.value) { setReportingDate(e.target.value); setPage(1); } }} />
-          </Field>
-          <p className="flex h-9 items-center gap-1.5 text-sm text-muted-foreground" aria-live="polite">
-            <CalendarDays className="size-4" aria-hidden="true" />
-            <span>{new Date(`${reportingDate}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' })}, {formatDate(reportingDate)}</span>
-            {reportingDate === today && <Badge variant="secondary" className="ml-1">Today</Badge>}
-          </p>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground" id="email-actions-label">Email</span>
-            <div role="group" aria-labelledby="email-actions-label" className="grid grid-cols-2 sm:inline-flex">
-              <Button variant="outline" className="rounded-r-none" disabled={pendingCount === 0}
+      <PageHeading title="CSV Arrival & Follow-up"
+        subtitle={`${new Date(`${reportingDate}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' })}, ${formatDate(reportingDate)}${reportingDate === today ? ' (today)' : ''} · daily 4G and LWE submissions, pending reports and follow-ups`} />
+      <FilterCard label="Tracking filters"
+        actions={(
+          <>
+            <EmailModeChip status={emailStatus.data} error={emailStatus.error} />
+            <div role="group" aria-label="Email" className="inline-flex">
+              <Button variant="outline" className="h-9 rounded-r-none" disabled={pendingCount === 0}
                 title={pendingCount ? 'Send the standard reminder for a pending report' : 'No pending reports for this date'}
                 onClick={() => setPanel({ kind: 'reminderPick' })}>
                 <BellRing /> Send reminder
               </Button>
-              <Button variant="outline" className="-ml-px rounded-l-none" title="Write or edit an email before sending"
+              <Button variant="outline" className="-ml-px h-9 rounded-l-none" title="Write or edit an email before sending"
                 onClick={() => setPanel({ kind: 'compose' })}>
                 <Mail /> Compose email
               </Button>
             </div>
+            <Button variant="outline" className="h-9" onClick={() => setPanel({ kind: 'deadlines' })}><Settings2 /> Deadlines</Button>
+            <Button className="h-9" onClick={() => recordArrival()}><Plus /> Record arrival</Button>
+          </>
+        )}>
+        <FilterField id="track-date" label="Reporting date" className="w-40">
+          <Input id="track-date" type="date" className="h-9" value={reportingDate}
+            onChange={(e) => { if (e.target.value) { setReportingDate(e.target.value); setPage(1); } }} />
+        </FilterField>
+        <FilterField id="track-search" label="Search" className="w-56">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input id="track-search" type="search" value={filters.search} maxLength={80} className="h-9 pl-8"
+              placeholder="Circle, contact, file, phone, email" onChange={(e) => setFilter({ search: e.target.value })} />
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:flex">
-            <Button variant="outline" onClick={() => setPanel({ kind: 'deadlines' })}><Settings2 /> Deadlines</Button>
-            <Button onClick={() => recordArrival()}><Plus /> Record arrival</Button>
-          </div>
-        </div>
-      </div>
-      </Card>
+        </FilterField>
+        <FilterField id="track-circle" label="Circle / State" className="w-36">
+          <SelectField id="track-circle" value={filters.circle || 'all'} placeholder="All" onChange={(v) => setFilter({ circle: v === 'all' ? '' : v })}
+            options={[{ value: 'all', label: 'All circles' }, ...circles.map((c) => ({ value: c, label: c }))]} />
+        </FilterField>
+        <FilterField id="track-type" label="Project" className="w-28">
+          <SelectField id="track-type" value={filters.reportType || 'all'} placeholder="All" onChange={(v) => setFilter({ reportType: v === 'all' ? '' : v })}
+            options={[{ value: 'all', label: 'All' }, ...reportTypes.map((t) => ({ value: t, label: shortType(t) }))]} />
+        </FilterField>
+        <FilterField id="track-status" label="Arrival status" className="w-36">
+          <SelectField id="track-status" value={filters.status || 'all'} placeholder="All" onChange={(v) => setFilter({ status: v === 'all' ? '' : (v as ArrivalStatus) })}
+            options={[{ value: 'all', label: 'All statuses' }, ...(Object.keys(STATUS_LABELS) as ArrivalStatus[]).map((s) => ({ value: s, label: STATUS_LABELS[s] }))]} />
+        </FilterField>
+        <FilterField id="track-contact" label="Contact details" className="w-32">
+          <SelectField id="track-contact" value={filters.contact} placeholder="All" onChange={(v) => setFilter({ contact: v as TrackingFilters['contact'] })}
+            options={[{ value: 'all', label: 'All' }, { value: 'complete', label: 'Complete' }, { value: 'missing', label: 'Missing' }]} />
+        </FilterField>
+        <label className="flex h-9 items-center gap-1.5 text-xs text-muted-foreground">
+          <input type="checkbox" className="size-3.5 accent-primary" checked={filters.openOnly} onChange={(e) => setFilter({ openOnly: e.target.checked })} />
+          Late / pending only
+        </label>
+        <Button variant="ghost" size="icon" className="size-9" aria-label="Clear filters" title="Clear filters" disabled={isDefault} onClick={() => setFilter(DEFAULT_FILTERS)}>
+          <RotateCcw />
+        </Button>
+      </FilterCard>
 
       <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
         <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
@@ -225,39 +237,6 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 px-0">
-          <div className="grid grid-cols-2 gap-3 px-4 md:grid-cols-3 xl:grid-cols-[minmax(0,1.6fr)_repeat(4,minmax(0,1fr))_auto] xl:items-end" role="search" aria-label="Tracking filters">
-            <Field plain id="track-search" label="Search" className="col-span-2 md:col-span-3 xl:col-span-1">
-              <div className="relative">
-                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                <Input id="track-search" type="search" value={filters.search} maxLength={80} className="pl-8"
-                  placeholder="Circle, contact, file, phone, email" onChange={(e) => setFilter({ search: e.target.value })} />
-              </div>
-            </Field>
-            <Field plain id="track-circle" label="Circle / State">
-              <SelectField id="track-circle" value={filters.circle || 'all'} placeholder="All" onChange={(v) => setFilter({ circle: v === 'all' ? '' : v })}
-                options={[{ value: 'all', label: 'All circles' }, ...circles.map((c) => ({ value: c, label: c }))]} />
-            </Field>
-            <Field plain id="track-type" label="Project">
-              <SelectField id="track-type" value={filters.reportType || 'all'} placeholder="All" onChange={(v) => setFilter({ reportType: v === 'all' ? '' : v })}
-                options={[{ value: 'all', label: 'All' }, ...reportTypes.map((t) => ({ value: t, label: shortType(t) }))]} />
-            </Field>
-            <Field plain id="track-status" label="Arrival status">
-              <SelectField id="track-status" value={filters.status || 'all'} placeholder="All" onChange={(v) => setFilter({ status: v === 'all' ? '' : (v as ArrivalStatus) })}
-                options={[{ value: 'all', label: 'All statuses' }, ...(Object.keys(STATUS_LABELS) as ArrivalStatus[]).map((s) => ({ value: s, label: STATUS_LABELS[s] }))]} />
-            </Field>
-            <Field plain id="track-contact" label="Contact details">
-              <SelectField id="track-contact" value={filters.contact} placeholder="All" onChange={(v) => setFilter({ contact: v as TrackingFilters['contact'] })}
-                options={[{ value: 'all', label: 'All' }, { value: 'complete', label: 'Complete' }, { value: 'missing', label: 'Missing' }]} />
-            </Field>
-            <div className="col-span-2 flex flex-wrap items-center gap-3 md:col-span-3 xl:col-span-1">
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <input type="checkbox" className="size-3.5 accent-primary" checked={filters.openOnly} onChange={(e) => setFilter({ openOnly: e.target.checked })} />
-                Late / pending only
-              </label>
-              <Button variant="ghost" size="sm" disabled={isDefault} onClick={() => setFilter(DEFAULT_FILTERS)}>Clear filters</Button>
-            </div>
-          </div>
-
           {rows.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted-foreground">
               <Inbox className="size-6" aria-hidden="true" />
