@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '../../services/api';
@@ -48,6 +48,9 @@ const PREVIEW: RawUpload = {
   already_imported: null, rows: ROWS,
 };
 const CI_OD = { ...CI_USER, circles: ['OD'] };
+/** Each workflow step as "label: state", from the indicator's data-state (what the server reported). */
+const steps = () => within(screen.getByRole('list', { name: 'Upload progress' })).getAllByRole('listitem')
+  .map((li) => `${li.textContent!.replace(/\s*\(.*\)$/, '').replace(/^\d/, '')}: ${li.getAttribute('data-state')}`);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -67,8 +70,10 @@ describe('Upload CSV', () => {
     const circle = await screen.findByLabelText('Circle (assigned)');
     expect(circle).toHaveValue('OD');
     expect(circle).toHaveAttribute('readonly');
-    const validate = screen.getByRole('button', { name: 'Validate on server' });
+    const validate = screen.getByRole('button', { name: 'Validate CSV' });
     expect(validate).toBeDisabled();
+    expect(screen.getByText('Still needed: reporting date, CSV file.')).toBeInTheDocument();
+    expect(steps()).toEqual(['Upload: current', 'Validate & Preview: todo', 'Confirm Import: todo', 'Results: todo']);
     await user.type(screen.getByLabelText('Reporting date'), '2026-10-13');
     await user.upload(screen.getByLabelText('Raw daily CSV file'), new File(['BTS IP ID,Circle,Report Date\n'], 'nw_aval_day.csv', { type: 'text/csv' }));
     expect(screen.getByText('nw_aval_day.csv')).toBeInTheDocument();
@@ -76,6 +81,8 @@ describe('Upload CSV', () => {
     expect(m.previewRawUpload).toHaveBeenCalledWith(expect.any(File), { project: '4G Saturation', circle: 'OD', reporting_date: '2026-10-13', remarks: '' });
 
     const preview = await screen.findByLabelText('Validation preview');
+    expect(steps()).toEqual(['Upload: done', 'Validate & Preview: done', 'Confirm Import: current', 'Results: todo']);
+    expect(within(screen.getByLabelText('Selected file')).getByText('Validation passed')).toBeInTheDocument();
     expect(within(preview).getByText(/nothing saved yet/)).toBeInTheDocument();
     expect(within(preview).getByText(/header on line 2 \(above it: “Network availability report”\)/)).toBeInTheDocument();
     const tile = (label: string) => within(preview).getByText(label, { selector: 'dt' }).nextSibling?.textContent;
@@ -88,7 +95,7 @@ describe('Upload CSV', () => {
     expect(rows[3]).toHaveTextContent('blank');
     expect(within(preview).getByRole('link', { name: /Validation report/ })).toHaveAttribute('href', expect.stringContaining('/raw-uploads/7/issues.csv'));
 
-    await user.click(within(preview).getByRole('button', { name: 'Import 1 records…' }));
+    await user.click(within(preview).getByRole('button', { name: 'Import 1 record…' }));
     expect(m.commitRawUpload).not.toHaveBeenCalled();  // a second, explicit confirmation
     await user.click(within(preview).getByRole('button', { name: 'Yes, import' }));
     expect(m.commitRawUpload).toHaveBeenCalledWith(7);
@@ -96,6 +103,7 @@ describe('Upload CSV', () => {
     expect(within(result).getByText(/1 daily records inserted/)).toBeInTheDocument();
     expect(within(result).getByText(/the dashboard data source setting is unchanged/)).toBeInTheDocument();
     expect(refresh).toHaveBeenCalled();  // database-backed pages reload
+    expect(steps()).toEqual(['Upload: done', 'Validate & Preview: done', 'Confirm Import: done', 'Results: done']);
     expect(m.uploadDataFile).not.toHaveBeenCalled();
   });
 
@@ -107,9 +115,11 @@ describe('Upload CSV', () => {
     renderWithWorkbook(<UploadCsvPage />, { url: '/data/upload-csv', auth: authValue({ user: CI_OD }) });
     await user.type(await screen.findByLabelText('Reporting date'), '2026-10-14');
     await user.upload(screen.getByLabelText('Raw daily CSV file'), new File(['x'], 'day.csv', { type: 'text/csv' }));
-    await user.click(screen.getByRole('button', { name: 'Validate on server' }));
+    await user.click(screen.getByRole('button', { name: 'Validate CSV' }));
     expect(await screen.findByText(/not the entered reporting date 14-10-2026/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Import/ })).not.toBeInTheDocument();
+    expect(steps()).toEqual(['Upload: done', 'Validate & Preview: failed', 'Confirm Import: todo', 'Results: todo']);  // never shown as passed
+    expect(within(screen.getByLabelText('Selected file')).getByText('Blocked — see the preview')).toBeInTheDocument();
   });
 
   it('refuses non-CSV files in the browser and explains an unassigned account', async () => {
@@ -119,8 +129,46 @@ describe('Upload CSV', () => {
     expect(await screen.findByText('No circle is assigned to your account')).toBeInTheDocument();
     await user.upload(screen.getByLabelText('Raw daily CSV file'), new File(['x'], 'data.xlsx'));
     expect(screen.getByText(/choose the CSV file exported from CNMC/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Validate on server' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Validate CSV' })).toBeDisabled();
     expect(m.previewRawUpload).not.toHaveBeenCalled();
+  });
+
+  it('selects a file by drag and drop, and Replace / Remove clear a stale preview', async () => {
+    const user = userEvent.setup();
+    m.previewRawUpload.mockResolvedValue(PREVIEW);
+    renderWithWorkbook(<UploadCsvPage />, { url: '/data/upload-csv', auth: authValue({ user: CI_OD }) });
+    const zone = (await screen.findByText('Upload your daily CSV file')).closest('div')!;
+    const dropped = new File(['BTS IP ID,Circle,Report Date\n'], 'dropped.csv', { type: 'text/csv' });
+    fireEvent.dragOver(zone, { dataTransfer: { files: [dropped] } });
+    expect(screen.getByText('Drop the CSV to select it')).toBeInTheDocument();
+    fireEvent.drop(zone, { dataTransfer: { files: [dropped] } });
+    const selected = screen.getByLabelText('Selected file');
+    expect(selected).toHaveTextContent('dropped.csv');
+    expect(selected).toHaveTextContent('Ready to validate');
+    fireEvent.drop(zone, { dataTransfer: { files: [dropped, dropped] } });
+    expect(screen.getByText('Drop one CSV file at a time.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Selected file')).not.toBeInTheDocument();
+    fireEvent.drop(zone, { dataTransfer: { files: [dropped] } });
+    await user.type(screen.getByLabelText('Reporting date'), '2026-10-13');
+    await user.click(screen.getByRole('button', { name: 'Validate CSV' }));
+    expect(await screen.findByLabelText('Validation preview')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Remove file' }));
+    expect(screen.queryByLabelText('Validation preview')).not.toBeInTheDocument();  // a stale preview cannot be imported
+    expect(screen.getByRole('button', { name: 'Validate CSV' })).toBeDisabled();
+    expect(screen.getByText('Still needed: CSV file.')).toBeInTheDocument();
+  });
+
+  it('explains why validation failed next to the file and keeps the import steps open', async () => {
+    const user = userEvent.setup();
+    m.previewRawUpload.mockRejectedValue(new api.ApiError('This is the monthly summary dump (MONTH and YEAR columns, no Report Date).', 400));
+    renderWithWorkbook(<UploadCsvPage />, { url: '/data/upload-csv', auth: authValue({ user: CI_OD }) });
+    await user.type(await screen.findByLabelText('Reporting date'), '2026-10-13');
+    await user.upload(screen.getByLabelText('Raw daily CSV file'), new File(['x'], 'monthly.csv', { type: 'text/csv' }));
+    await user.click(screen.getByRole('button', { name: 'Validate CSV' }));
+    expect(await screen.findByText('The file could not be validated')).toBeInTheDocument();
+    expect(screen.getByText(/monthly summary dump/)).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Selected file')).getByText('Validation failed')).toBeInTheDocument();
+    expect(steps()).toEqual(['Upload: current', 'Validate & Preview: failed', 'Confirm Import: todo', 'Results: todo']);
   });
 
   it('links the consolidated export to the chosen filters', async () => {

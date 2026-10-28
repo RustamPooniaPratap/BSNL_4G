@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react';
-import { CircleAlert, CircleCheck, Download, FileText, Upload, X } from 'lucide-react';
+import { useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { Check, CircleAlert, CircleCheck, CloudUpload, Download, FileSpreadsheet, FolderOpen, History, Info, Loader2, MapPin, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
@@ -46,28 +47,40 @@ export function UploadCsvPage() {
   const options = useApiQuery('raw-upload-options', (signal) => fetchRawUploadOptions(signal));
   const history = useApiQuery(`raw-uploads-${version}`, (signal) => fetchRawUploads(signal));
   const [batch, setBatch] = useState<RawUpload | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true);
+  const [phase, setPhase] = useState<Phase>('idle');
+  const [error, setError] = useState<{ phase: 'validate' | 'import' | 'other'; message: string } | null>(null);
+  const [form, setForm] = useState<FormState>({ project: '4G Saturation', circle: '', day: '', remarks: '' });
+  const [file, setFile] = useState<File | null>(null);
+  const o = options.data;
+  const fixed = o?.assigned_circles?.length === 1 ? o.assigned_circles[0] : null;
+  const circle = fixed ?? form.circle;
+
+  const run = async (kind: Phase, action: () => Promise<void>) => {
+    setPhase(kind);
     setError(null);
     try {
       await action();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError({ phase: kind === 'validating' ? 'validate' : kind === 'importing' ? 'import' : 'other', message: e instanceof Error ? e.message : String(e) });
     } finally {
-      setBusy(false);
+      setPhase('idle');
     }
   };
-  const o = options.data;
-  const scope = o?.assigned_circles == null ? 'every circle' : o.assigned_circles.length ? `circle${o.assigned_circles.length > 1 ? 's' : ''} ${o.assigned_circles.join(', ')}` : 'no circle';
+  // Any change to the file or the details makes an earlier preview stale: it is cleared so it can never be imported by mistake.
+  const changeFile = (next: File | null) => { setFile(next); setBatch(null); setError(null); };
+  const changeForm = (patch: Partial<FormState>) => { setForm((f) => ({ ...f, ...patch })); setBatch(null); setError(null); };
+  const validate = () => file && run('validating', async () => {
+    setBatch(await previewRawUpload(file, { project: form.project, circle, reporting_date: form.day, remarks: form.remarks }));
+    setVersion((v) => v + 1);
+  });
 
   return (
     <div className="space-y-4">
-      <PageHeading title="Upload CSV"
-        subtitle={`Raw daily CNMC availability file · validated on the server against the approved site master · ${user?.username ?? ''}: ${scope}`} />
+      <PageHeading title="Raw Data Upload & Consolidation"
+        subtitle="Upload daily CNMC availability data, validate site scope, calculate outage minutes, and update the reporting database." />
+      <WorkflowSteps batch={batch} phase={phase} error={error?.phase ?? null} />
       {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}
-      {!o && !options.error && <Skeleton className="h-24 w-full" />}
+      {!o && !options.error && <Skeleton className="h-64 w-full" />}
       {o && o.assigned_circles?.length === 0 && (
         <Alert variant="destructive" role="alert">
           <CircleAlert />
@@ -75,117 +88,258 @@ export function UploadCsvPage() {
           <AlertDescription>Raw daily data can be uploaded only for assigned circles. Ask an Admin to assign your circle on Users &amp; Roles.</AlertDescription>
         </Alert>
       )}
-      {o && <UploadForm options={o} busy={busy} onPreview={(file, details) => run(async () => { setBatch(await previewRawUpload(file, details)); setVersion((v) => v + 1); })} />}
-      {error && <Alert variant="destructive" role="alert"><AlertDescription>{error}</AlertDescription></Alert>}
+      {o && (
+        <UploadPanel options={o} username={user?.username ?? ''} form={form} circle={circle} fixed={fixed} file={file} batch={batch} phase={phase}
+          error={error} onForm={changeForm} onFile={changeFile} onValidate={validate} />
+      )}
+      {error?.phase === 'other' && <Alert variant="destructive" role="alert"><AlertDescription>{error.message}</AlertDescription></Alert>}
       {batch && (
-        <PreviewCard key={batch.id} batch={batch} busy={busy}
-          onCommit={() => run(async () => {
+        <PreviewCard key={batch.id} batch={batch} busy={phase !== 'idle'}
+          onCommit={() => run('importing', async () => {
             setBatch(await commitRawUpload(batch.id));
             setVersion((v) => v + 1);
             workbook.refresh();  // database-backed pages reload their figures; the source setting is unchanged
           })}
-          onDiscard={() => run(async () => { await discardRawUpload(batch.id); setBatch(null); setVersion((v) => v + 1); })} />
+          onDiscard={() => run('discarding', async () => { await discardRawUpload(batch.id); setBatch(null); setVersion((v) => v + 1); })} />
       )}
-      {o && <ExportCard options={o} />}
-      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="My uploads">
-        <h2 className="text-base font-semibold">{user?.role === 'admin' ? 'Raw uploads' : 'My uploads'}</h2>
-        {history.data?.uploads.length ? (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader><TableRow>{['#', 'File', 'Project', 'Circle', 'Reporting date', 'Uploaded', 'By', 'Status', 'Inserted · skipped · rejected', ''].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
-              <TableBody>
-                {history.data.uploads.map((b) => (
-                  <TableRow key={b.id}>
-                    <TableCell>{b.id}</TableCell>
-                    <TableCell className="max-w-48 truncate" title={b.file}>{b.file}</TableCell>
-                    <TableCell>{b.project}</TableCell>
-                    <TableCell>{b.circle}</TableCell>
-                    <TableCell className="whitespace-nowrap">{formatDate(b.reporting_date)}</TableCell>
-                    <TableCell className="whitespace-nowrap">{formatDateTime(b.uploaded_at)}</TableCell>
-                    <TableCell>{b.uploaded_by ?? '—'}</TableCell>
-                    <TableCell className={cn((b.status === 'failed' || b.status === 'rejected') && 'text-destructive')}>{b.status_label}</TableCell>
-                    <TableCell className="text-xs tabular-nums">{b.daily ? `${formatNumber(b.daily.inserted + b.daily.filled)} · ${formatNumber(b.daily.skipped_identical + b.daily.skipped_repeats)} · ${formatNumber(b.daily.rejected)}` : b.error ? <span className="text-destructive">{b.error}</span> : '—'}</TableCell>
-                    <TableCell><Button type="button" size="sm" variant="ghost" onClick={() => run(async () => setBatch(await fetchRawUpload(b.id)))}>View</Button></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+      {error?.phase === 'import' && (
+        <Alert variant="destructive" role="alert"><CircleAlert /><AlertTitle>The import did not complete</AlertTitle><AlertDescription>{error.message} Nothing was saved.</AlertDescription></Alert>
+      )}
+      <div className="grid items-start gap-4 xl:grid-cols-5">
+        {o && <div className="xl:col-span-2"><ExportCard options={o} /></div>}
+        <Card className="gap-2 rounded-xl px-4 py-3 xl:col-span-3" aria-label="My uploads">
+          <div className="flex items-center gap-2">
+            <History className="size-4 text-muted-foreground" aria-hidden="true" />
+            <h2 className="text-sm font-semibold">{user?.role === 'admin' ? 'Raw uploads' : 'My uploads'}</h2>
           </div>
-        ) : <p className="text-sm text-muted-foreground">{history.error ? history.error.message : history.data ? 'No raw uploads yet.' : 'Loading…'}</p>}
+          {history.data?.uploads.length ? (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader><TableRow>{['#', 'File', 'Project', 'Circle', 'Reporting date', 'Uploaded', 'By', 'Status', 'Inserted · skipped · rejected', ''].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
+                <TableBody>
+                  {history.data.uploads.map((b) => (
+                    <TableRow key={b.id}>
+                      <TableCell>{b.id}</TableCell>
+                      <TableCell className="max-w-40 truncate" title={b.file}>{b.file}</TableCell>
+                      <TableCell>{b.project}</TableCell>
+                      <TableCell>{b.circle}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatDate(b.reporting_date)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatDateTime(b.uploaded_at)}</TableCell>
+                      <TableCell>{b.uploaded_by ?? '—'}</TableCell>
+                      <TableCell className={cn((b.status === 'failed' || b.status === 'rejected') && 'text-destructive')}>{b.status_label}</TableCell>
+                      <TableCell className="text-xs tabular-nums">{b.daily ? `${formatNumber(b.daily.inserted + b.daily.filled)} · ${formatNumber(b.daily.skipped_identical + b.daily.skipped_repeats)} · ${formatNumber(b.daily.rejected)}` : b.error ? <span className="text-destructive">{b.error}</span> : '—'}</TableCell>
+                      <TableCell><Button type="button" size="sm" variant="ghost" onClick={() => run('loading', async () => setBatch(await fetchRawUpload(b.id)))}>View</Button></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : <p className="text-sm text-muted-foreground">{history.error ? history.error.message : history.data ? 'No raw uploads yet.' : 'Loading…'}</p>}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+type Phase = 'idle' | 'validating' | 'importing' | 'discarding' | 'loading';
+interface FormState { project: RawProject; circle: string; day: string; remarks: string }
+type StepState = 'todo' | 'current' | 'active' | 'done' | 'failed';
+
+/** Upload -> Validate & Preview -> Confirm Import -> Results, from what the server actually reported (never ahead of it). */
+function WorkflowSteps({ batch, phase, error }: { batch: RawUpload | null; phase: Phase; error: 'validate' | 'import' | 'other' | null }) {
+  const accepted = !!batch;  // the server received the file and recorded the upload
+  const ready = batch?.status === 'previewed' && !!batch.summary?.ready_to_import;
+  const committed = batch?.status === 'committed';
+  const validateFailed = (!!batch && !committed && !ready && batch.status !== 'discarded') || error === 'validate';
+  const steps: [string, StepState][] = [
+    ['Upload', accepted ? 'done' : phase === 'validating' ? 'active' : 'current'],
+    ['Validate & Preview', committed || ready ? 'done' : validateFailed ? 'failed' : phase === 'validating' ? 'active' : 'todo'],
+    ['Confirm Import', committed ? 'done' : error === 'import' ? 'failed' : phase === 'importing' ? 'active' : ready ? 'current' : 'todo'],
+    ['Results', committed ? 'done' : 'todo'],
+  ];
+  return (
+    <Card className="rounded-xl px-4 py-2.5 shadow-xs">
+      <ol className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs" aria-label="Upload progress">
+        {steps.map(([label, state], i) => (
+          <li key={label} className="flex items-center gap-2" aria-current={state === 'current' || state === 'active' ? 'step' : undefined}
+            data-state={state}>
+            <span className={cn('flex size-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold',
+              state === 'done' && 'border-emerald-600 bg-emerald-600 text-white',
+              state === 'failed' && 'border-destructive bg-destructive text-white',
+              (state === 'current' || state === 'active') && 'border-primary text-primary',
+              state === 'todo' && 'text-muted-foreground')}>
+              {state === 'done' ? <Check className="size-3.5" aria-hidden="true" /> : state === 'failed' ? <X className="size-3.5" aria-hidden="true" />
+                : state === 'active' ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : i + 1}
+            </span>
+            <span className={cn('font-medium', state === 'todo' && 'text-muted-foreground', state === 'failed' && 'text-destructive')}>
+              {label}<span className="sr-only"> ({STEP_TEXT[state]})</span>
+            </span>
+            {i < steps.length - 1 && <span className="mx-1 h-px w-6 bg-border sm:w-10" aria-hidden="true" />}
+          </li>
+        ))}
+      </ol>
+    </Card>
+  );
+}
+const STEP_TEXT: Record<StepState, string> = { todo: 'not started', current: 'next', active: 'in progress', done: 'completed', failed: 'did not pass' };
+
+function UploadPanel({ options, username, form, circle, fixed, file, batch, phase, error, onForm, onFile, onValidate }: {
+  options: RawUploadOptions; username: string; form: FormState; circle: string; fixed: string | null; file: File | null; batch: RawUpload | null;
+  phase: Phase; error: { phase: string; message: string } | null; onForm: (patch: Partial<FormState>) => void; onFile: (file: File | null) => void;
+  onValidate: () => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const project = options.projects.find((p) => p.value === form.project);
+  const circles = project?.circles ?? [];
+  const [today] = useState(() => new Date().toLocaleDateString('en-CA'));  // the user's local date, YYYY-MM-DD
+  const errors = {
+    circle: !circle ? 'Choose the circle of the file.' : !circles.includes(circle) ? `You cannot upload ${form.project} data for ${circle}.` : null,
+    day: !form.day ? 'Choose the reporting date of the file.' : form.day > today ? 'The reporting date cannot be in the future.' : null,
+    file: !file ? 'Choose the CSV file.' : null,
+  };
+  const missing = [errors.circle && 'circle', errors.day && 'reporting date', errors.file && 'CSV file'].filter(Boolean) as string[];
+  const busy = phase !== 'idle';
+  const show = (field: keyof typeof errors) => (touched[field] ? errors[field] : null);
+  const pick = (picked: File | null) => {
+    setFileError(null);
+    setTouched((t) => ({ ...t, file: true }));
+    if (input.current) input.current.value = '';  // the same file can be chosen again after Remove
+    if (!picked) return onFile(null);
+    const problem = !picked.name.toLowerCase().endsWith('.csv') ? `${picked.name}: choose the CSV file exported from CNMC (.csv).`
+      : picked.size === 0 ? `${picked.name} is empty.` : picked.size > options.max_bytes ? `${picked.name} is larger than ${formatBytes(options.max_bytes)}.` : null;
+    if (problem) {
+      setFileError(problem);
+      return onFile(null);
+    }
+    onFile(picked);
+  };
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragging(false);
+    if (busy) return;
+    const files = event.dataTransfer.files;
+    if (files.length > 1) {
+      setFileError('Drop one CSV file at a time.');
+      return onFile(null);
+    }
+    pick(files[0] ?? null);
+  };
+  const fileState: { label: string; tone: string } | null = !file ? null
+    : phase === 'validating' ? { label: 'Validating on the server…', tone: 'border-sky-300 bg-sky-50 text-sky-800' }
+      : phase === 'importing' ? { label: 'Import in progress…', tone: 'border-sky-300 bg-sky-50 text-sky-800' }
+        : error?.phase === 'import' ? { label: 'Import failed', tone: 'border-red-300 bg-red-50 text-red-800' }
+          : error?.phase === 'validate' ? { label: 'Validation failed', tone: 'border-red-300 bg-red-50 text-red-800' }
+            : batch?.status === 'committed' ? { label: 'Imported', tone: 'border-emerald-300 bg-emerald-50 text-emerald-800' }
+              : batch?.status === 'previewed' && batch.summary?.ready_to_import ? { label: 'Validation passed', tone: 'border-emerald-300 bg-emerald-50 text-emerald-800' }
+                : batch ? { label: batch.status === 'previewed' ? 'Nothing importable' : 'Blocked — see the preview', tone: 'border-red-300 bg-red-50 text-red-800' }
+                  : { label: 'Ready to validate', tone: 'border-slate-300 bg-slate-50 text-slate-700' };
+
+  return (
+    <div className="grid items-stretch gap-4 lg:grid-cols-5">
+      <Card className="gap-3 rounded-xl px-4 py-3 lg:col-span-2" aria-label="Upload details">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">Upload details</h2>
+          <span className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground" title="Circles you may upload for">
+            <MapPin className="size-3" aria-hidden="true" />
+            {username}: {options.assigned_circles == null ? 'all circles' : options.assigned_circles.length ? options.assigned_circles.join(', ') : 'no circle'}
+          </span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <DetailField id="raw-project" label="Project" required>
+            <SelectField id="raw-project" value={form.project} placeholder="Project" disabled={busy}
+              onChange={(v) => onForm({ project: v as RawProject, ...(fixed ? {} : { circle: '' }) })}
+              options={options.projects.map((p) => ({ value: p.value, label: p.configured ? p.value : `${p.value} (mapping pending)` }))} />
+          </DetailField>
+          <DetailField id="raw-circle" label={fixed ? 'Circle (assigned)' : 'Circle'} required error={show('circle')}>
+            {fixed ? <Input id="raw-circle" className="h-9 bg-muted/40" value={fixed} readOnly aria-readonly="true" />
+              : <SelectField id="raw-circle" value={form.circle} placeholder={circles.length ? 'Choose circle' : 'None available'} disabled={!circles.length || busy}
+                error={show('circle')} onChange={(v) => { setTouched((t) => ({ ...t, circle: true })); onForm({ circle: v }); }}
+                options={circles.map((c) => ({ value: c, label: c }))} />}
+          </DetailField>
+          <DetailField id="raw-date" label="Reporting date" required error={show('day')}>
+            <Input id="raw-date" type="date" className="h-9" value={form.day} max={today} disabled={busy} aria-invalid={show('day') ? true : undefined}
+              onChange={(e) => onForm({ day: e.target.value })} onBlur={() => setTouched((t) => ({ ...t, day: true }))} />
+          </DetailField>
+          <DetailField id="raw-remarks" label="Remarks (optional)">
+            <Input id="raw-remarks" className="h-9" value={form.remarks} disabled={busy} onChange={(e) => onForm({ remarks: e.target.value })} placeholder="e.g. resent after correction" />
+          </DetailField>
+        </div>
+        <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <p className="flex items-center gap-1.5 font-medium text-foreground"><Info className="size-3.5" aria-hidden="true" /> How the file is checked</p>
+          <p className="mt-1">One Report Date equal to the reporting date, only the selected circle, and sites of the approved {form.project} master.
+            Availability is read from <strong>{project?.availability_column}</strong>; {options.formula}. A blank availability is never read as 0.</p>
+        </div>
+        {!project?.configured && (
+          <Alert><AlertDescription className="text-xs">
+            LWE files can be validated, but no LWE row can be imported yet: the mapping of raw LWE IDs to master sites (and the 2100 / 700 MHz selection) is not configured.
+          </AlertDescription></Alert>
+        )}
+      </Card>
+
+      <Card className="gap-3 rounded-xl px-4 py-3 lg:col-span-3" aria-label="CSV file">
+        <div
+          onDragOver={(e) => { e.preventDefault(); if (!busy) setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          data-dragging={dragging || undefined}
+          className={cn('relative flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors',
+            dragging ? 'border-primary bg-primary/5' : fileError ? 'border-destructive/50 bg-destructive/5' : 'border-border bg-muted/20',
+            busy && 'opacity-70')}>
+          <input ref={input} id="raw-file" type="file" accept=".csv,text/csv" className="sr-only" aria-label="Raw daily CSV file" disabled={busy}
+            onChange={(e) => pick(e.target.files?.[0] ?? null)} />
+          <span className={cn('grid size-12 place-items-center rounded-full', dragging ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-primary')}>
+            <CloudUpload className="size-6" aria-hidden="true" />
+          </span>
+          <h2 className="text-base font-semibold">{dragging ? 'Drop the CSV to select it' : 'Upload your daily CSV file'}</h2>
+          <p className="text-sm text-muted-foreground">Drag and drop your CSV here, or browse files from your computer.</p>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => input.current?.click()}><FolderOpen /> Browse Files</Button>
+          <p className="max-w-md text-xs text-muted-foreground">
+            The daily CNMC availability dump (<span className="font-mono">nw_aval_btsipid_wise_day…</span>) as .csv, up to {formatBytes(options.max_bytes)}.
+            The server checks every row before anything is imported, and nothing is saved until you confirm.
+          </p>
+        </div>
+        {fileError && <p className="flex items-center gap-1.5 text-sm text-destructive" role="alert"><CircleAlert className="size-4" aria-hidden="true" />{fileError}</p>}
+        {!file && !fileError && touched.file && <p className="text-sm text-destructive">{errors.file}</p>}
+        {file && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2" aria-label="Selected file">
+            <span className="grid size-9 shrink-0 place-items-center rounded-md bg-emerald-50 text-emerald-700"><FileSpreadsheet className="size-5" aria-hidden="true" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium" title={file.name}>{file.name}</p>
+              <p className="text-xs text-muted-foreground">CSV · {formatBytes(file.size)}</p>
+            </div>
+            {fileState && <Badge variant="outline" className={cn('font-medium', fileState.tone)}>{phase !== 'idle' && <Loader2 className="animate-spin" />}{fileState.label}</Badge>}
+            <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => input.current?.click()}><RefreshCw /> Replace</Button>
+            <Button type="button" variant="ghost" size="sm" disabled={busy} aria-label="Remove file" onClick={() => pick(null)}><X /> Remove</Button>
+          </div>
+        )}
+        {error?.phase === 'validate' && (
+          <Alert variant="destructive" role="alert"><CircleAlert /><AlertTitle>The file could not be validated</AlertTitle><AlertDescription>{error.message}</AlertDescription></Alert>
+        )}
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3">
+          {missing.length > 0 && <p className="mr-auto text-xs text-muted-foreground">Still needed: {missing.join(', ')}.</p>}
+          <Button type="button" size="lg" disabled={missing.length > 0 || busy}
+            onClick={() => { setTouched({ circle: true, day: true, file: true }); if (!missing.length) onValidate(); }}>
+            {phase === 'validating' ? <><Loader2 className="animate-spin" /> Validating…</> : <><ShieldCheck /> Validate CSV</>}
+          </Button>
+        </div>
       </Card>
     </div>
   );
 }
 
-function UploadForm({ options, busy, onPreview }: {
-  options: RawUploadOptions; busy: boolean; onPreview: (file: File, details: { project: RawProject; circle: string; reporting_date: string; remarks: string }) => void;
-}) {
-  const input = useRef<HTMLInputElement>(null);
-  const [project, setProject] = useState<RawProject>('4G Saturation');
-  const circles = options.projects.find((p) => p.value === project)?.circles ?? [];
-  const fixed = options.assigned_circles?.length === 1 ? options.assigned_circles[0] : null;
-  const [circle, setCircle] = useState(fixed ?? '');
-  const [day, setDay] = useState('');
-  const [remarks, setRemarks] = useState('');
-  const [file, setFile] = useState<File | null>(null);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const configured = options.projects.find((p) => p.value === project)?.configured ?? false;
-  const pick = (f: File | null) => {
-    setFileError(null);
-    setFile(null);
-    if (!f) return;
-    if (!f.name.toLowerCase().endsWith('.csv')) return setFileError(`${f.name}: choose the CSV file exported from CNMC (.csv).`);
-    if (f.size > options.max_bytes) return setFileError(`${f.name} is larger than ${formatBytes(options.max_bytes)}.`);
-    setFile(f);
-  };
-  const ready = file && circle && day && circles.includes(circle);
+function DetailField({ id, label, required = false, error, children }: { id: string; label: string; required?: boolean; error?: string | null; children: ReactNode }) {
   return (
-    <>
-      <FilterCard label="Upload details"
-        footer={<>Availability is read from <strong>{options.projects.find((p) => p.value === project)?.availability_column}</strong>; {options.formula}. A blank availability is never read as 0.
-          {' '}The file must hold one Report Date, equal to the reporting date, and only the selected circle.</>}
-        actions={<Button type="button" className="h-9" disabled={!ready || busy} onClick={() => file && onPreview(file, { project, circle, reporting_date: day, remarks })}>
-          {busy ? 'Validating…' : 'Validate on server'}
-        </Button>}>
-        <Field id="raw-project" label="Project" className="w-40">
-          <SelectField id="raw-project" value={project} placeholder="Project" onChange={(v) => { setProject(v as RawProject); if (!fixed) setCircle(''); }}
-            options={options.projects.map((p) => ({ value: p.value, label: p.configured ? p.value : `${p.value} (mapping pending)` }))} />
-        </Field>
-        <Field id="raw-circle" label={fixed ? 'Circle (assigned)' : 'Circle'} className="w-32">
-          {fixed ? <Input id="raw-circle" className="h-9" value={fixed} readOnly aria-readonly="true" />
-            : <SelectField id="raw-circle" value={circle} placeholder={circles.length ? 'Circle' : 'None available'} disabled={!circles.length}
-              onChange={setCircle} options={circles.map((c) => ({ value: c, label: c }))} />}
-        </Field>
-        <Field id="raw-date" label="Reporting date" className="w-40">
-          <Input id="raw-date" type="date" className="h-9" value={day} onChange={(e) => setDay(e.target.value)} />
-        </Field>
-        <Field id="raw-remarks" label="Remarks (optional)" className="w-56">
-          <Input id="raw-remarks" className="h-9" value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="e.g. resent after correction" />
-        </Field>
-        <Field id="raw-file" label="CSV file" className="min-w-56">
-          <div className="flex h-9 items-center gap-2">
-            <input ref={input} id="raw-file" type="file" accept=".csv,text/csv" className="sr-only" aria-label="Raw daily CSV file"
-              onChange={(e) => pick(e.target.files?.[0] ?? null)} />
-            <Button type="button" variant="outline" className="h-9" onClick={() => input.current?.click()}><Upload /> Choose file</Button>
-            {file ? (
-              <span className="flex items-center gap-1 text-sm" title={file.name}>
-                <FileText className="size-4 text-muted-foreground" aria-hidden="true" />
-                <span className="max-w-40 truncate">{file.name}</span>
-                <span className="text-xs text-muted-foreground">{formatBytes(file.size)}</span>
-                <Button type="button" variant="ghost" size="icon" className="size-7" aria-label="Remove file"
-                  onClick={() => { setFile(null); if (input.current) input.current.value = ''; }}><X /></Button>
-              </span>
-            ) : <span className="text-sm text-muted-foreground">No file chosen</span>}
-          </div>
-        </Field>
-      </FilterCard>
-      {fileError && <Alert variant="destructive"><AlertDescription>{fileError}</AlertDescription></Alert>}
-      {!configured && (
-        <Alert><AlertDescription>
-          LWE files can be validated, but no LWE row can be imported yet: the mapping of raw LWE IDs to master sites (and the 2100 / 700 MHz selection) is not configured.
-        </AlertDescription></Alert>
-      )}
-    </>
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex items-center gap-1">
+        <Label htmlFor={id} className="text-[11px] font-medium text-muted-foreground">{label}</Label>
+        {required && <span className="text-[11px] text-destructive" aria-hidden="true" title="Required">*</span>}
+      </div>
+      {children}
+      {error && <p id={`${id}-error`} className="text-xs text-destructive">{error}</p>}
+    </div>
   );
 }
 
@@ -311,7 +465,7 @@ function PreviewCard({ batch, busy, onCommit, onDiscard }: { batch: RawUpload; b
                 <Button type="button" onClick={onCommit} disabled={busy}>{busy ? 'Importing…' : 'Yes, import'}</Button>
                 <Button type="button" variant="ghost" onClick={() => setConfirming(false)} disabled={busy}>Back</Button>
               </>
-            ) : <Button type="button" onClick={() => setConfirming(true)}>Import {formatNumber(s!.ready_to_import)} records…</Button>}
+            ) : <Button type="button" onClick={() => setConfirming(true)}>Import {formatNumber(s!.ready_to_import)} record{s!.ready_to_import === 1 ? '' : 's'}…</Button>}
           <Button type="button" variant="ghost" onClick={onDiscard} disabled={busy}>Discard</Button>
         </div>
       )}
