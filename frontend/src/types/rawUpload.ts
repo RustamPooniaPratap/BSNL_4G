@@ -83,3 +83,55 @@ export interface RawUploadDetails {
   reporting_date: string;
   remarks: string;
 }
+
+// --- CSV arrival tracking (/daily-ingestion) -------------------------------------------------
+
+/** Stored daily data for a project/circle on a date, against the master's On-Air sites. */
+export type DataState = 'complete' | 'partial' | 'none' | 'no_scope';
+/** The raw CSV upload lifecycle for the date (the most advanced upload when there are several). */
+export type UploadState = 'imported' | 'awaiting_confirmation' | 'nothing_to_import' | 'blocked' | 'failed' | 'discarded' | 'none';
+
+export interface TrackerUpload {
+  id: number;
+  state: Exclude<UploadState, 'none'>;
+  status_label: string;
+  file: string;
+  uploaded_at: string;
+  committed_at: string | null;
+  uploaded_by: string | null;
+  ready_to_import: number | null;
+  rejected_count: number;
+  /** Records written by the import (null until imported). */
+  imported: number | null;
+  error: string | null;
+}
+
+export interface TrackerItem {
+  project: RawProject;
+  circle: string;
+  sites_total: number;
+  sites_expected: number;
+  sites_with_data: number;
+  sites_invalid: number;
+  sites_missing: number;
+  records_observed: number;
+  coverage_pct: number | null;
+  data_state: DataState;
+  data_source: { master_workbook: number; raw_daily_csv: number };
+  latest_data_date: string | null;
+  latest_complete_date: string | null;
+  latest_upload_date: string | null;
+  latest_import_date: string | null;
+  upload_state: UploadState;
+  uploads: TrackerUpload[];
+  range: { date: string; sites_with_data: number; state: DataState }[];
+}
+
+export interface ArrivalTracker {
+  reporting_date: string;
+  range: { start: string; end: string };
+  scope_rule: string;
+  usable_rule: string;
+  notes: string[];
+  items: TrackerItem[];
+}

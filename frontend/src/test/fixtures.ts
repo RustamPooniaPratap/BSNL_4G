@@ -2,6 +2,7 @@ import type {
   ActiveWorkbook, BreakdownResponse, FilterOptions, MonthlyResponse, TeamsResponse, RecordsResponse, SiteRecord, SourceInfo, SourceStatusResponse, ThresholdChange, ThresholdCompared, ThresholdMonthlyColumn, ThresholdResponse, ThresholdRow, ThresholdValue, PeriodSummary,
   SummaryResponse, TrendResponse,
 } from '../types';
+import type { ArrivalTracker, RawProject, TrackerItem, TrackerUpload } from '../types/rawUpload';
 
 export const source: SourceInfo = {
   workbook: 'master.xlsx',
@@ -293,3 +294,25 @@ export const period: PeriodSummary = {
   sites_in_scope: 5, sites_reported: 5, uptime_pct: 94.1, outage_minutes: 2880, sites_below_60: 1, sites_at_or_above_98_5: 3,
   filters: { report_type: null, circle: null, scope: 'on_air' }, source,
 };
+
+// --- CSV arrival tracker (GET /api/arrival-tracker/) ----------------------------------------------
+
+/** One project circle as the server reports it; defaults: 10 On-Air sites, no data, no upload. */
+export const trackerItem = (project: RawProject, circle: string, overrides: Partial<TrackerItem> = {}): TrackerItem => ({
+  project, circle, sites_total: 12, sites_expected: 10, sites_with_data: 0, sites_invalid: 0, sites_missing: 10, records_observed: 0,
+  coverage_pct: 0, data_state: 'none', data_source: { master_workbook: 0, raw_daily_csv: 0 },
+  latest_data_date: null, latest_complete_date: null, latest_upload_date: null, latest_import_date: null,
+  upload_state: 'none', uploads: [], range: [], ...overrides,
+});
+
+export const trackerUpload = (overrides: Partial<TrackerUpload> = {}): TrackerUpload => ({
+  id: 7, state: 'imported', status_label: 'Committed', file: 'nw_aval_day.csv', uploaded_at: '2026-10-17T09:30:00+05:30',
+  committed_at: '2026-10-17T09:31:00+05:30', uploaded_by: 'noc.lead', ready_to_import: 10, rejected_count: 0, imported: 10, error: null, ...overrides,
+});
+
+export const arrivalTracker = (date: string, items: TrackerItem[]): ArrivalTracker => ({
+  reporting_date: date, range: { start: date, end: date },
+  scope_rule: 'On-Air = Yes in the site master (the dashboard default scope)', usable_rule: 'Outage minutes recorded and between 0 and 1,440',
+  notes: ["Completeness compares each date with the site master's current On-Air sites; the master holds no dated On-Air history."],
+  items: items.map((i) => ({ ...i, range: i.range.length ? i.range : [{ date, sites_with_data: i.sites_with_data, state: i.data_state }] })),
+});

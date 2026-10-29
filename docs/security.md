@@ -31,6 +31,7 @@
 | Upload the Master workbook (`POST dashboard/workbook/`) | ✓ | 403 |
 | Team performance (`dashboard/teams/`) | ✓ | 403 |
 | CSV arrival tracking: raw files (`raw-files/`, `upload/`) and email (`email/*`) | ✓ | 403 |
+| CSV arrival tracking: data and upload status (`arrival-tracker/`, also limited to the user's circles) | ✓ | 403 |
 | Deadlines (part of CSV arrival tracking; held in the browser) | ✓ | page refused |
 | Users & roles (`auth/users/*`) | ✓ | 403 |
 
@@ -119,6 +120,6 @@ The request also needs the CSRF token.
 ## Limitations and pending decisions
 
 1. **No circle assignment exists**, so a CI sees every circle. Restricting data by circle needs an assignment model, which was not invented here.
-2. **Server-side data is the same for every role:** CSV arrival tracking, deadlines and the data-entry pages hold their data in the browser only. The pages are restricted by role, but there is no server-side operational data to protect yet.
+2. **Server-side data is the same for every role:** CSV arrival contacts, follow-ups, deadlines and the data-entry pages hold their data in the browser only (the tracker's data and upload status are read from the database, Admins only). The pages are restricted by role, but there is no server-side operational data to protect yet.
 3. **Tests run on SQLite:** the PostgreSQL role `bsnl_portal_app` cannot create the test database (`permission denied to create database`). Running them on PostgreSQL needs `CREATEDB` for a test role, or a separate test database, which is for a DBA to approve.
 4. **Production deployment still needs:** HTTPS termination, real `ALLOWED_HOSTS` and origins, a `SECRET_KEY` from a secret store, a shared cache for throttling, and log rotation and retention for the audit log.

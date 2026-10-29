@@ -81,7 +81,7 @@ export function ArrivalForm({ initial, requirements, arrivals, editingId, fileSu
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field id="arr-file" label="CSV file name" error={show('fileName')} hint="Without it the record is marked Needs review.">
+        <Field id="arr-file" label="CSV file name" error={show('fileName')} hint="Without it the note is flagged for review.">
           <Input {...fieldA11y('arr-file', show('fileName'))} value={draft.fileName} list="arr-file-options" maxLength={200}
             placeholder="e.g. MP_LWE_16-10-2026.csv" onChange={(e) => set({ fileName: e.target.value })} />
           <datalist id="arr-file-options">{fileSuggestions.map((f) => <option key={f} value={f} />)}</datalist>

@@ -36,7 +36,7 @@ import type {
   RcaCauses, RcaCycleDetail, RcaCycleList, RcaImportBatch, RcaOptions, RcaPage, RcaRecordDetail, RcaRecordInput, RcaReportVersion,
   RcaSummary, RcaUploadDetails, RcaWorkflowInput,
 } from '../types/rca';
-import type { RawRowsPage, RawUpload, RawUploadDetails, RawUploadOptions } from '../types/rawUpload';
+import type { ArrivalTracker, RawRowsPage, RawUpload, RawUploadDetails, RawUploadOptions } from '../types/rawUpload';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
@@ -338,3 +338,9 @@ export const discardRawUpload = (id: number) => send<RawUpload>(`/raw-uploads/${
 export const rawUploadIssuesUrl = (id: number) => `${API_BASE_URL}/raw-uploads/${id}/issues.csv`;
 export const rawExportUrl = (params: { project: string; circle: string; date_from: string; date_to: string; output: 'csv' | 'xlsx' }) =>
   `${API_BASE_URL}/raw-uploads/export/?${new URLSearchParams(Object.entries(params).filter(([, v]) => v))}`;
+
+// --- CSV arrival tracking ------------------------------------------------------------------------
+
+/** Stored daily-data coverage and raw CSV uploads per project/circle for a date, plus a daily range (Admins). */
+export const fetchArrivalTracker = (params: { date: string; start: string; end: string }, signal?: AbortSignal) =>
+  request<ArrivalTracker>('/arrival-tracker/', new URLSearchParams(params), { signal });

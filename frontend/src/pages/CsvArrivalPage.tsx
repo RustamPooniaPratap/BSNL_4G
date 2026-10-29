@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  AlarmClock, ArrowDown, ArrowUp, ArrowUpDown, BellRing, RotateCcw, ChevronRight, CircleCheck, ClipboardList, FileCheck2, Hourglass, Inbox, Info,
-  Mail, MessageSquarePlus, PhoneOff, Plus, Search, Settings2, UserPen,
+  AlarmClock, ArrowDown, ArrowUp, ArrowUpDown, BellRing, ChevronRight, CircleCheck, CircleDashed, ClipboardList, Database, FileUp, Info,
+  Inbox, Mail, MessageSquarePlus, PhoneOff, RefreshCw, RotateCcw, Search, Settings2, UserPen,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,7 +13,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { NoWorkbook, SelectField } from '../components/data/DataEntry';
+import { SelectField } from '../components/data/DataEntry';
 import { Field as FilterField, FilterCard } from '../components/dashboard/FilterBar';
 import { PageHeading } from '../context/pageHeader';
 import { ArrivalForm, ComposeEmail, ContactForm, DeadlineForm, FollowUpForm, ReminderSend } from '../components/tracking/TrackingForms';
@@ -21,21 +22,35 @@ import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { formatDate, formatDateTime, formatNumber } from '../lib/format';
 import {
-  DEFAULT_FILTERS, EMPTY_CONTACT, EMPTY_EMAIL, FOLLOW_UP_METHODS, deadlineParam, STATUS_LABELS, applyCard, applyFilters, buildSubmissions, kpis,
-  localDate, newId, requirementKey, requirementsFrom, shortType, submissionKey,
+  DEFAULT_FILTERS, EMPTY_CONTACT, EMPTY_EMAIL, FOLLOW_UP_METHODS, deadlineParam, STATUS_LABELS, UPLOAD_LABELS, applyCard, applyFilters, buildSubmissions,
+  kpis, localDate, newId, requirementKey, requirementsFrom, shortType, submissionKey,
   type ArrivalDraft, type ArrivalStatus, type CardFilter, type Submission, type TrackingFilters,
 } from '../lib/tracking';
-import { fetchEmailStatus, fetchFilterOptions, fetchRawFiles } from '../services/api';
+import { fetchArrivalTracker, fetchEmailStatus, fetchRawFiles } from '../services/api';
 import type { EmailStatus, ReminderRequest } from '../types';
+import type { ArrivalTracker, DataState, TrackerItem, UploadState } from '../types/rawUpload';
 
 const STATUS_STYLE: Record<ArrivalStatus, string> = {
-  received: 'border-emerald-300 bg-emerald-50 text-emerald-800',
-  pending: 'border-slate-300 bg-slate-50 text-slate-700',
+  complete: 'border-emerald-300 bg-emerald-50 text-emerald-800',
+  partial: 'border-amber-300 bg-amber-50 text-amber-800',
+  file_received: 'border-sky-300 bg-sky-50 text-sky-800',
+  no_data: 'border-slate-300 bg-slate-50 text-slate-700',
   late: 'border-red-300 bg-red-50 text-red-800',
-  needs_review: 'border-amber-300 bg-amber-50 text-amber-800',
 };
-const STATUS_ORDER: Record<ArrivalStatus, number> = { late: 0, pending: 1, needs_review: 2, received: 3 };
-type SortKey = 'status' | 'circle' | 'reportType' | 'arrival' | 'followUp';
+const UPLOAD_STYLE: Record<UploadState, string> = {
+  imported: 'border-emerald-300 text-emerald-800',
+  awaiting_confirmation: 'border-sky-300 text-sky-800',
+  nothing_to_import: 'border-slate-300 text-slate-700',
+  blocked: 'border-red-300 text-red-800',
+  failed: 'border-red-300 text-red-800',
+  discarded: 'border-slate-300 text-slate-600',
+  none: 'border-dashed border-slate-300 text-muted-foreground',
+};
+const CELL_STYLE: Record<DataState, string> = {
+  complete: 'bg-emerald-500', partial: 'bg-amber-400', none: 'bg-slate-200', no_scope: 'bg-slate-100',
+};
+const STATUS_ORDER: Record<ArrivalStatus, number> = { late: 0, no_data: 1, file_received: 2, partial: 3, complete: 4 };
+type SortKey = 'status' | 'circle' | 'reportType' | 'coverage' | 'latest' | 'followUp';
 type Panel =
   | { kind: 'details'; key: string }
   | { kind: 'arrival'; draft: ArrivalDraft; editingKey?: string }
@@ -46,11 +61,17 @@ type Panel =
   | { kind: 'reminderPick' }
   | { kind: 'compose'; key?: string };
 const PAGE_SIZE = 20;
-/** Only pending or late submissions get a reminder. */
-const needsReminder = (s: Submission) => s.status === 'pending' || s.status === 'late';
+const RANGE_DAYS = 14;
+/** Reminders are for project/circles with neither stored data nor any upload for the date. */
+const needsReminder = (s: Submission) => s.status === 'no_data' || s.status === 'late';
 const reminderFor = (s: Submission): ReminderRequest => ({
   circle: s.circle, report_type: s.reportType, reporting_date: s.reportingDate, deadline: deadlineParam(s.deadline),
 });
+const shiftDate = (day: string, days: number) => {
+  const d = new Date(`${day}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return localDate(d);
+};
 
 /** Current time, refreshed every minute so Late statuses appear when a deadline passes. Tests pass a fixed time. */
 function useNow(fixed?: Date) {
@@ -63,16 +84,20 @@ function useNow(fixed?: Date) {
   return fixed ?? now;
 }
 
-/** Daily 4G / LWE raw CSV arrivals by circle, with contacts and follow-ups (held in the browser only). */
+/**
+ * Daily 4G / LWE data by circle: stored daily-data coverage and raw CSV uploads come from the server for the selected
+ * date; contacts, follow-ups, deadlines and manual arrival notes are held in this browser only.
+ */
 export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
   const workbook = useWorkbook();
-  const options = useApiQuery(workbook.active ? `${workbook.version}|filters` : null, fetchFilterOptions);
   const rawFiles = useApiQuery('raw-files', () => fetchRawFiles());
   const emailStatus = useApiQuery('email-status', fetchEmailStatus);
   const { state, dispatch } = useTracking();
   const now = useNow(fixedNow);
   const today = localDate(now);
   const [reportingDate, setReportingDate] = useState(today);
+  const [range, setRange] = useState<{ start: string; end: string } | null>(null);  // null: the 14 days up to the reporting date
+  const [reload, setReload] = useState(0);
   const [filters, setFilters] = useState<TrackingFilters>(DEFAULT_FILTERS);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'status', desc: false });
   const [page, setPage] = useState(1);
@@ -80,29 +105,70 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
   const [message, setMessage] = useState<string | null>(null);
   const setFilter = (changes: Partial<TrackingFilters>) => { setFilters((f) => ({ ...f, ...changes })); setPage(1); };
 
-  const requirements = useMemo(() => requirementsFrom(options.data?.circles ?? []), [options.data]);
-  const submissions = useMemo(() => buildSubmissions(requirements, reportingDate, state, now), [requirements, reportingDate, state, now]);
+  const window_ = range ?? { start: shiftDate(reportingDate, -(RANGE_DAYS - 1)), end: reportingDate };
+  // A new date, range, upload (workbook version) or Refresh fetches again; the previous request is aborted.
+  const tracker = useApiQuery(`tracker|${reportingDate}|${window_.start}|${window_.end}|${workbook.version}|${reload}`,
+    (signal) => fetchArrivalTracker({ date: reportingDate, ...window_ }, signal));
+  // Never show another date's figures while the new ones load.
+  const current: ArrivalTracker | null = tracker.data?.reporting_date === reportingDate ? tracker.data : null;
+
+  const items = useMemo(() => current?.items ?? [], [current]);
+  const requirements = useMemo(() => requirementsFrom(items), [items]);
+  const submissions = useMemo(() => buildSubmissions(items, reportingDate, state, now), [items, reportingDate, state, now]);
   const filtered = useMemo(() => applyFilters(submissions, filters), [submissions, filters]);
-  const counts = kpis(filtered, today);
+  const counts = kpis(filtered);
   const rows = useMemo(() => {
     const value = (s: Submission): string | number => {
       switch (sort.key) {
         case 'circle': return s.circle;
         case 'reportType': return s.reportType;
-        case 'arrival': return s.arrival ? `${s.arrival.arrivalDate}T${s.arrival.arrivalTime}` : '';
+        case 'coverage': return s.server.coverage_pct ?? -1;
+        case 'latest': return s.server.latest_data_date ?? '';
         case 'followUp': return s.followUps[0]?.at ?? '';
         default: return STATUS_ORDER[s.status];
       }
     };
-    return [...applyCard(filtered, filters.card, today)].sort((a, b) => {
+    return [...applyCard(filtered, filters.card)].sort((a, b) => {
       const [x, y] = [value(a), value(b)];
       const order = x < y ? -1 : x > y ? 1 : a.reportType.localeCompare(b.reportType) || a.circle.localeCompare(b.circle);
       return sort.desc ? -order : order;
     });
-  }, [filtered, filters.card, today, sort]);
+  }, [filtered, filters.card, sort]);
 
-  if (!workbook.loading && !workbook.active) return <NoWorkbook />;
-  if (!options.data) return <Skeleton className="h-96 w-full" aria-label="Loading CSV arrival tracking" />;
+  const heading = (
+    <PageHeading title="CSV Arrival & Follow-up"
+      subtitle={`${new Date(`${reportingDate}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' })}, ${formatDate(reportingDate)}${reportingDate === today ? ' (today)' : ''} · stored daily 4G and LWE data, CSV uploads and follow-ups`} />
+  );
+  const dateField = (
+    <FilterField id="track-date" label="Reporting date" className="w-40">
+      <Input id="track-date" type="date" className="h-9" value={reportingDate} max={today}
+        onChange={(e) => { if (e.target.value) { setReportingDate(e.target.value); setRange(null); setPage(1); } }} />
+    </FilterField>
+  );
+  if (tracker.error && !current) {
+    return (
+      <div className="space-y-4">
+        {heading}
+        <FilterCard label="Tracking filters">{dateField}</FilterCard>
+        <Alert variant="destructive" role="alert">
+          <AlertTitle>The tracker could not be loaded</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>{tracker.error.message}</p>
+            <Button size="sm" variant="outline" onClick={() => setReload((n) => n + 1)}><RefreshCw /> Try again</Button>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+  if (!current) {
+    return (
+      <div className="space-y-4">
+        {heading}
+        <FilterCard label="Tracking filters">{dateField}</FilterCard>
+        <Skeleton className="h-96 w-full" aria-label="Loading CSV arrival tracking" />
+      </div>
+    );
+  }
 
   const reportTypes = [...new Set(requirements.map((r) => r.reportType))];
   const circles = [...new Set(requirements.map((r) => r.circle))].sort();
@@ -133,25 +199,25 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
   );
 
   const cards: { id: CardFilter; label: string; value: number; icon: ReactNode; tone?: string }[] = [
-    { id: 'all', label: 'Reporting circles', value: counts.total, icon: <ClipboardList /> },
-    { id: 'received', label: 'CSVs received', value: counts.received, icon: <CircleCheck />, tone: 'text-emerald-700' },
-    { id: 'pending', label: 'CSVs pending', value: counts.pending, icon: <Hourglass /> },
-    { id: 'received_today', label: 'Received today', value: counts.receivedToday, icon: <FileCheck2 /> },
-    { id: 'late', label: 'Late submissions', value: counts.late, icon: <AlarmClock />, tone: counts.late ? 'text-destructive' : undefined },
+    { id: 'all', label: 'Project circles', value: counts.total, icon: <ClipboardList /> },
+    { id: 'complete', label: 'Data complete', value: counts.complete, icon: <CircleCheck />, tone: 'text-emerald-700' },
+    { id: 'partial', label: 'Partial data', value: counts.partial, icon: <CircleDashed />, tone: counts.partial ? 'text-amber-700' : undefined },
+    { id: 'no_data', label: 'No usable data', value: counts.noData, icon: <Database /> },
+    { id: 'csv_recorded', label: 'CSV uploads recorded', value: counts.csvRecorded, icon: <FileUp /> },
+    { id: 'late', label: 'Past deadline', value: counts.late, icon: <AlarmClock />, tone: counts.late ? 'text-destructive' : undefined },
     { id: 'missing_contact', label: 'Missing contact details', value: counts.missingContact, icon: <PhoneOff />, tone: counts.missingContact ? 'text-amber-700' : undefined },
   ];
 
   return (
     <div className="space-y-4">
-      <PageHeading title="CSV Arrival & Follow-up"
-        subtitle={`${new Date(`${reportingDate}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' })}, ${formatDate(reportingDate)}${reportingDate === today ? ' (today)' : ''} · daily 4G and LWE submissions, pending reports and follow-ups`} />
+      {heading}
       <FilterCard label="Tracking filters"
         actions={(
           <>
             <EmailModeChip status={emailStatus.data} error={emailStatus.error} />
             <div role="group" aria-label="Email" className="inline-flex">
               <Button variant="outline" className="h-9 rounded-r-none" disabled={pendingCount === 0}
-                title={pendingCount ? 'Send the standard reminder for a pending report' : 'No pending reports for this date'}
+                title={pendingCount ? 'Send the standard reminder for a circle with no data and no upload' : 'Every circle has data or an upload for this date'}
                 onClick={() => setPanel({ kind: 'reminderPick' })}>
                 <BellRing /> Send reminder
               </Button>
@@ -161,18 +227,17 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
               </Button>
             </div>
             <Button variant="outline" className="h-9" onClick={() => setPanel({ kind: 'deadlines' })}><Settings2 /> Deadlines</Button>
-            <Button className="h-9" onClick={() => recordArrival()}><Plus /> Record arrival</Button>
+            <Button className="h-9" disabled={tracker.loading} onClick={() => setReload((n) => n + 1)}>
+              <RefreshCw className={cn(tracker.loading && 'animate-spin')} /> Refresh
+            </Button>
           </>
         )}>
-        <FilterField id="track-date" label="Reporting date" className="w-40">
-          <Input id="track-date" type="date" className="h-9" value={reportingDate}
-            onChange={(e) => { if (e.target.value) { setReportingDate(e.target.value); setPage(1); } }} />
-        </FilterField>
+        {dateField}
         <FilterField id="track-search" label="Search" className="w-56">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <Input id="track-search" type="search" value={filters.search} maxLength={80} className="h-9 pl-8"
-              placeholder="Circle, contact, file, phone, email" onChange={(e) => setFilter({ search: e.target.value })} />
+              placeholder="Circle, contact, file, uploader" onChange={(e) => setFilter({ search: e.target.value })} />
           </div>
         </FilterField>
         <FilterField id="track-circle" label="Circle / State" className="w-36">
@@ -183,7 +248,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
           <SelectField id="track-type" value={filters.reportType || 'all'} placeholder="All" onChange={(v) => setFilter({ reportType: v === 'all' ? '' : v })}
             options={[{ value: 'all', label: 'All' }, ...reportTypes.map((t) => ({ value: t, label: shortType(t) }))]} />
         </FilterField>
-        <FilterField id="track-status" label="Arrival status" className="w-36">
+        <FilterField id="track-status" label="Status" className="w-44">
           <SelectField id="track-status" value={filters.status || 'all'} placeholder="All" onChange={(v) => setFilter({ status: v === 'all' ? '' : (v as ArrivalStatus) })}
             options={[{ value: 'all', label: 'All statuses' }, ...(Object.keys(STATUS_LABELS) as ArrivalStatus[]).map((s) => ({ value: s, label: STATUS_LABELS[s] }))]} />
         </FilterField>
@@ -193,18 +258,21 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
         </FilterField>
         <label className="flex h-9 items-center gap-1.5 text-xs text-muted-foreground">
           <input type="checkbox" className="size-3.5 accent-primary" checked={filters.openOnly} onChange={(e) => setFilter({ openOnly: e.target.checked })} />
-          Late / pending only
+          Incomplete only
         </label>
         <Button variant="ghost" size="icon" className="size-9" aria-label="Clear filters" title="Clear filters" disabled={isDefault} onClick={() => setFilter(DEFAULT_FILTERS)}>
           <RotateCcw />
         </Button>
       </FilterCard>
 
-      <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+      <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
         <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-        Changes are currently held in the frontend; persistent storage is not enabled. They are kept while you move between pages and lost on refresh.
-        Circles come from the Master workbook ({formatNumber(requirements.length)} circle and report type pairs); arrivals, contacts and follow-ups appear only once recorded here.
-      </p>
+        <p>
+          Data status is read from PostgreSQL for the selected date: usable daily records ({current.usable_rule.toLowerCase()}) of the expected sites
+          ({current.scope_rule}), whichever import wrote them. CSV upload status comes separately from the raw upload history.
+          {' '}{current.notes[0]} Contacts, follow-ups, deadlines and manual arrival notes are held in this browser only.
+        </p>
+      </div>
       {message && (
         <Alert className="border-emerald-200 bg-emerald-50/70" role="status">
           <CircleCheck className="text-emerald-700" />
@@ -213,7 +281,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
         </Alert>
       )}
 
-      <section aria-label="Arrival summary" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <section aria-label="Arrival summary" className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
         {cards.map((card) => {
           const active = filters.card === card.id && card.id !== 'all';
           return (
@@ -231,17 +299,17 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-semibold">Circle-wise submissions · {formatDate(reportingDate)}</CardTitle>
+          <CardTitle className="text-sm font-semibold">Circle-wise data and CSV uploads · {formatDate(reportingDate)}</CardTitle>
           <CardDescription className="text-xs">
-            {formatNumber(rows.length)} of {formatNumber(submissions.length)} requirements shown. Select a row for its details, contact and follow-up history.
+            {formatNumber(rows.length)} of {formatNumber(submissions.length)} project circles shown. Select a row for its uploads, contact and follow-up history.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 px-0">
           {rows.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted-foreground">
               <Inbox className="size-6" aria-hidden="true" />
-              <p>No circle matches these filters.</p>
-              <Button variant="outline" size="sm" onClick={() => setFilter(DEFAULT_FILTERS)}>Clear filters</Button>
+              <p>{submissions.length ? 'No circle matches these filters.' : 'No project circles in the site master for your circles.'}</p>
+              {submissions.length > 0 && <Button variant="outline" size="sm" onClick={() => setFilter(DEFAULT_FILTERS)}>Clear filters</Button>}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -249,66 +317,80 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
                     {sortHead('circle', 'Circle / State', 'pl-4')}
-                    {sortHead('reportType', 'Report')}
-                    {sortHead('status', 'Arrival status')}
+                    {sortHead('reportType', 'Project')}
+                    {sortHead('status', 'Data status')}
+                    {sortHead('coverage', 'Coverage')}
+                    <TableHead>CSV upload</TableHead>
+                    {sortHead('latest', 'Latest data')}
                     <TableHead>Expected by</TableHead>
-                    {sortHead('arrival', 'Arrived')}
-                    <TableHead>File name</TableHead>
                     <TableHead>Contact</TableHead>
                     {sortHead('followUp', 'Last follow-up')}
                     <TableHead className="pr-4 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {shown.map((s) => (
-                    <TableRow key={s.key} className="cursor-pointer" tabIndex={0} aria-label={`${s.circle} ${shortType(s.reportType)}: open details`}
-                      onClick={() => setPanel({ kind: 'details', key: s.key })}
-                      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setPanel({ kind: 'details', key: s.key }); } }}>
-                      <TableCell className="pl-4 font-medium">{s.circle}</TableCell>
-                      <TableCell><TypeBadge reportType={s.reportType} /></TableCell>
-                      <TableCell>
-                        <StatusBadge status={s.status} />
-                        {s.arrivedLate && <span className="ml-1 text-[11px] text-amber-700">after deadline</span>}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">{s.deadline ? formatDateTime(s.deadline.toISOString()) : <span className="text-muted-foreground">Not configured</span>}</TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {s.arrival ? <ArrivalWhen record={s.arrival} /> : <span className="text-muted-foreground">—</span>}
-                      </TableCell>
-                      <TableCell className="max-w-44 truncate" title={s.arrival?.fileName}>{s.arrival?.fileName || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="max-w-52">
-                        {s.contact?.name ? (
-                          <span className="block truncate" title={[s.contact.name, s.contact.phone, s.contact.email].filter(Boolean).join(' · ')}>
-                            {s.contact.name}
-                            <span className="block truncate text-[11px] text-muted-foreground">{[s.contact.phone, s.contact.email].filter(Boolean).join(' · ') || 'No phone or email'}</span>
+                  {shown.map((s) => {
+                    const upload = s.server.uploads[0];
+                    const source = sourceLabel(s.server);
+                    return (
+                      <TableRow key={s.key} className="cursor-pointer" tabIndex={0} aria-label={`${s.circle} ${shortType(s.reportType)}: open details`}
+                        onClick={() => setPanel({ kind: 'details', key: s.key })}
+                        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setPanel({ kind: 'details', key: s.key }); } }}>
+                        <TableCell className="pl-4 font-medium">{s.circle}</TableCell>
+                        <TableCell><TypeBadge reportType={s.reportType} /></TableCell>
+                        <TableCell>
+                          <StatusBadge status={s.status} />
+                          {source && <span className="mt-0.5 block text-[11px] text-muted-foreground">From {source}</span>}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap"><Coverage item={s.server} /></TableCell>
+                        <TableCell className="max-w-56">
+                          <UploadBadge state={s.server.upload_state} />
+                          {upload && (
+                            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground" title={upload.file}>
+                              {upload.file} · {formatDateTime(upload.uploaded_at)}{upload.uploaded_by ? ` · ${upload.uploaded_by}` : ''}
+                              {s.server.uploads.length > 1 ? ` · +${s.server.uploads.length - 1} more` : ''}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {s.server.latest_data_date ? formatDate(s.server.latest_data_date) : <span className="text-muted-foreground">None stored</span>}
+                          <span className="block text-[11px] text-muted-foreground">
+                            Complete: {s.server.latest_complete_date ? formatDate(s.server.latest_complete_date) : '—'}
                           </span>
-                        ) : <span className="text-muted-foreground italic">Not added</span>}
-                      </TableCell>
-                      <TableCell className="max-w-44">
-                        {s.followUps[0] ? (
-                          <span className="block truncate" title={s.followUps[0].outcome}>
-                            {formatDateTime(s.followUps[0].at)} · {FOLLOW_UP_METHODS[s.followUps[0].method]}
-                            <span className="block truncate text-[11px] text-muted-foreground">{s.followUps[0].outcome}</span>
-                          </span>
-                        ) : <span className="text-muted-foreground">—</span>}
-                      </TableCell>
-                      <TableCell className="pr-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        {s.arrival
-                          ? <Button size="sm" variant="ghost" onClick={() => editArrival(s)}>Edit arrival</Button>
-                          : <Button size="sm" variant="outline" onClick={() => recordArrival(s)}>Record arrival</Button>}
-                        {needsReminder(s) && (
-                          <Button size="icon" variant="ghost" aria-label={`Send reminder for ${s.circle} ${shortType(s.reportType)}`} onClick={() => setPanel({ kind: 'reminder', key: s.key })}>
-                            <BellRing />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">{s.deadline ? formatDateTime(s.deadline.toISOString()) : <span className="text-muted-foreground">Not configured</span>}</TableCell>
+                        <TableCell className="max-w-52">
+                          {s.contact?.name ? (
+                            <span className="block truncate" title={[s.contact.name, s.contact.phone, s.contact.email].filter(Boolean).join(' · ')}>
+                              {s.contact.name}
+                              <span className="block truncate text-[11px] text-muted-foreground">{[s.contact.phone, s.contact.email].filter(Boolean).join(' · ') || 'No phone or email'}</span>
+                            </span>
+                          ) : <span className="text-muted-foreground italic">Not added</span>}
+                        </TableCell>
+                        <TableCell className="max-w-44">
+                          {s.followUps[0] ? (
+                            <span className="block truncate" title={s.followUps[0].outcome}>
+                              {formatDateTime(s.followUps[0].at)} · {FOLLOW_UP_METHODS[s.followUps[0].method]}
+                              <span className="block truncate text-[11px] text-muted-foreground">{s.followUps[0].outcome}</span>
+                            </span>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="pr-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          {needsReminder(s) && (
+                            <Button size="icon" variant="ghost" aria-label={`Send reminder for ${s.circle} ${shortType(s.reportType)}`} onClick={() => setPanel({ kind: 'reminder', key: s.key })}>
+                              <BellRing />
+                            </Button>
+                          )}
+                          <Button size="icon" variant="ghost" aria-label={`Add follow-up for ${s.circle} ${shortType(s.reportType)}`} onClick={() => setPanel({ kind: 'followup', key: s.key })}>
+                            <MessageSquarePlus />
                           </Button>
-                        )}
-                        <Button size="icon" variant="ghost" aria-label={`Add follow-up for ${s.circle} ${shortType(s.reportType)}`} onClick={() => setPanel({ kind: 'followup', key: s.key })}>
-                          <MessageSquarePlus />
-                        </Button>
-                        <Button size="icon" variant="ghost" aria-label={`Edit contact for ${s.circle} ${shortType(s.reportType)}`} onClick={() => setPanel({ kind: 'contact', circle: s.circle, reportType: s.reportType })}>
-                          <UserPen />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                          <Button size="icon" variant="ghost" aria-label={`Edit contact for ${s.circle} ${shortType(s.reportType)}`} onClick={() => setPanel({ kind: 'contact', circle: s.circle, reportType: s.reportType })}>
+                            <UserPen />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -325,6 +407,9 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
         </CardContent>
       </Card>
 
+      <CoverageRange key={`${current.range.start}|${current.range.end}`} tracker={current} rows={rows.map((s) => s.server)} today={today}
+        onRange={(start, end) => setRange({ start, end })} onPick={(day) => { setReportingDate(day); setRange(range ?? window_); setPage(1); }} />
+
       <ServerFiles files={rawFiles.data?.files ?? []} loading={rawFiles.loading} error={rawFiles.error} />
 
       <Sheet open={panel !== null} onOpenChange={(open) => { if (!open) setPanel(null); }}>
@@ -332,8 +417,10 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
           {panel?.kind === 'arrival' && (
             <>
               <SheetHeader>
-                <SheetTitle>{panel.editingKey ? 'Edit arrival' : 'Record CSV arrival'}</SheetTitle>
-                <SheetDescription>Enter when the CSV actually arrived. One arrival per circle, report type and reporting date.</SheetDescription>
+                <SheetTitle>{panel.editingKey ? 'Edit manual arrival note' : 'Manual arrival note'}</SheetTitle>
+                <SheetDescription>
+                  For a file that arrived outside the portal (for example by email). Held in this browser only; it never changes the data or upload status.
+                </SheetDescription>
               </SheetHeader>
               <div className="px-4 pb-6">
                 <ArrivalForm initial={panel.draft} requirements={requirements} arrivals={state.arrivals} now={now}
@@ -347,7 +434,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
                       type: 'saveArrival', key, replaceKey: panel.editingKey,
                       record: { ...draft, id: previous?.id ?? newId('arrival'), enteredAt: previous?.enteredAt ?? new Date().toISOString() },
                     });
-                    done(`${panel.editingKey ? 'Arrival updated' : 'Arrival recorded'} for ${draft.circle} · ${shortType(draft.reportType)} (${formatDate(draft.reportingDate)}).`);
+                    done(`${panel.editingKey ? 'Note updated' : 'Note recorded'} for ${draft.circle} · ${shortType(draft.reportType)} (${formatDate(draft.reportingDate)}).`);
                   }} />
               </div>
             </>
@@ -393,12 +480,12 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
               <SheetHeader>
                 <SheetTitle>Send reminder · {formatDate(reportingDate)}</SheetTitle>
                 <SheetDescription>
-                  Choose a pending report. You will see the recipient and the standard reminder before anything is sent.
+                  Choose a circle with no stored data and no upload. You will see the recipient and the standard reminder before anything is sent.
                 </SheetDescription>
               </SheetHeader>
               <div className="px-4 pb-6">
-                {pendingReports.length === 0 ? <p className="text-sm text-muted-foreground">No pending reports for this date.</p> : (
-                  <ul className="divide-y rounded-lg border" aria-label="Pending reports">
+                {pendingReports.length === 0 ? <p className="text-sm text-muted-foreground">Every circle has data or an upload for this date.</p> : (
+                  <ul className="divide-y rounded-lg border" aria-label="Circles without data">
                     {pendingReports.map((s) => (
                       <li key={s.key}>
                         <button type="button" onClick={() => setPanel({ kind: 'reminder', key: s.key })}
@@ -471,7 +558,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
           {panel?.kind === 'details' && byKey.get(panel.key) && (
             <Details s={byKey.get(panel.key)!}
               onEditArrival={editArrival} onRecordArrival={recordArrival}
-              onRemoveArrival={(s) => { dispatch({ type: 'removeArrival', key: s.key }); done(`Arrival removed for ${s.circle} · ${shortType(s.reportType)}.`); }}
+              onRemoveArrival={(s) => { dispatch({ type: 'removeArrival', key: s.key }); done(`Note removed for ${s.circle} · ${shortType(s.reportType)}.`); }}
               onContact={(s) => setPanel({ kind: 'contact', circle: s.circle, reportType: s.reportType })}
               onFollowUp={(s) => setPanel({ kind: 'followup', key: s.key })}
               onReminder={(s) => setPanel({ kind: 'reminder', key: s.key })} onCompose={(s) => setPanel({ kind: 'compose', key: s.key })} />
@@ -505,6 +592,35 @@ function StatusBadge({ status }: { status: ArrivalStatus }) {
   return <Badge variant="outline" className={cn('font-medium', STATUS_STYLE[status])}>{STATUS_LABELS[status]}</Badge>;
 }
 
+function UploadBadge({ state }: { state: UploadState }) {
+  return <Badge variant="outline" className={cn('font-medium', UPLOAD_STYLE[state])}>{UPLOAD_LABELS[state]}</Badge>;
+}
+
+/** Which import wrote the usable records of the date (from each record's import batch). */
+function sourceLabel(item: TrackerItem) {
+  const { master_workbook: master, raw_daily_csv: raw } = item.data_source;
+  if (master && raw) return `Master workbook (${formatNumber(master)}) and raw CSV (${formatNumber(raw)})`;
+  if (master) return 'Master workbook';
+  if (raw) return 'Raw CSV upload';
+  return null;
+}
+
+function Coverage({ item }: { item: TrackerItem }) {
+  if (item.data_state === 'no_scope') {
+    return <span className="text-muted-foreground">No On-Air sites in the master · {formatNumber(item.records_observed)} records</span>;
+  }
+  return (
+    <span className="tabular-nums">
+      {formatNumber(item.sites_with_data)} / {formatNumber(item.sites_expected)} sites
+      <span className="block text-[11px] text-muted-foreground">
+        {item.coverage_pct === null ? '—' : `${item.coverage_pct.toLocaleString('en-IN', { maximumFractionDigits: 2 })}%`}
+        {item.sites_missing ? ` · ${formatNumber(item.sites_missing)} missing` : ''}
+        {item.sites_invalid ? ` · ${formatNumber(item.sites_invalid)} invalid` : ''}
+      </span>
+    </span>
+  );
+}
+
 function TypeBadge({ reportType }: { reportType: string }) {
   return (
     <Badge variant="outline" className={cn('font-semibold', reportType === 'LWE' ? 'border-teal-300 text-teal-800' : 'border-blue-300 text-blue-800')}>
@@ -522,6 +638,80 @@ function ArrivalWhen({ record }: { record: Submission['arrival'] & object }) {
   );
 }
 
+/** Daily coverage per project circle across a date range, so gaps between dates are visible. Select a day to open it. */
+function CoverageRange({ tracker, rows, today, onRange, onPick }: {
+  tracker: ArrivalTracker; rows: TrackerItem[]; today: string; onRange: (start: string, end: string) => void; onPick: (day: string) => void;
+}) {
+  const [draft, setDraft] = useState(tracker.range);
+  const days = rows[0]?.range.map((r) => r.date) ?? [];
+  const tooLong = Boolean(draft.start && draft.end) && (new Date(`${draft.end}T00:00:00`).getTime() - new Date(`${draft.start}T00:00:00`).getTime()) / 86_400_000 >= 92;
+  const invalid = !draft.start || !draft.end || draft.start > draft.end || tooLong;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold">Daily coverage · {formatDate(tracker.range.start)} to {formatDate(tracker.range.end)}</CardTitle>
+        <CardDescription className="text-xs">
+          Usable records of the expected sites per day, from PostgreSQL. Grey days have no usable data. Select a day to open it above.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <form className="flex flex-wrap items-end gap-3" aria-label="Coverage range"
+          onSubmit={(e) => { e.preventDefault(); if (!invalid) onRange(draft.start, draft.end); }}>
+          <FilterField id="range-start" label="Range from" className="w-40">
+            <Input id="range-start" type="date" className="h-9" value={draft.start} max={today} onChange={(e) => setDraft((d) => ({ ...d, start: e.target.value }))} />
+          </FilterField>
+          <FilterField id="range-end" label="Range to" className="w-40">
+            <Input id="range-end" type="date" className="h-9" value={draft.end} max={today} onChange={(e) => setDraft((d) => ({ ...d, end: e.target.value }))} />
+          </FilterField>
+          <Button type="submit" variant="outline" className="h-9" disabled={invalid}>Show range</Button>
+          {tooLong && <span className="text-xs text-destructive">Choose at most 92 days.</span>}
+          {!tooLong && draft.start > draft.end && draft.end && <span className="text-xs text-destructive">The start is after the end.</span>}
+          <span className="ml-auto flex items-center gap-3 text-[11px] text-muted-foreground" aria-hidden="true">
+            {(['complete', 'partial', 'none'] as DataState[]).map((st) => (
+              <span key={st} className="flex items-center gap-1"><span className={cn('size-2.5 rounded-sm', CELL_STYLE[st])} />{st === 'none' ? 'No data' : st === 'complete' ? 'Complete' : 'Partial'}</span>
+            ))}
+          </span>
+        </form>
+        {rows.length === 0 ? <p className="text-xs text-muted-foreground">No project circles to show.</p> : (
+          <div className="overflow-x-auto">
+            <table className="text-[11px]" aria-label="Daily coverage by circle">
+              <thead>
+                <tr>
+                  <th className="pr-3 text-left font-medium text-muted-foreground">Circle</th>
+                  {days.map((d) => (
+                    <th key={d} className={cn('px-px font-normal text-muted-foreground', d === tracker.reporting_date && 'font-semibold text-foreground')} title={formatDate(d)}>{d.slice(8)}</th>
+                  ))}
+                  <th className="pl-3 text-left font-medium text-muted-foreground">Days without data</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((item) => {
+                  const gaps = item.range.filter((r) => r.state === 'none').length;
+                  return (
+                    <tr key={`${item.project}|${item.circle}`}>
+                      <td className="pr-3 whitespace-nowrap"><span className="font-medium">{item.circle}</span> {shortType(item.project)}</td>
+                      {item.range.map((r) => (
+                        <td key={r.date} className="px-px py-0.5">
+                          <button type="button" onClick={() => onPick(r.date)}
+                            aria-label={`${item.circle} ${shortType(item.project)} ${formatDate(r.date)}: ${r.state === 'none' ? 'no data' : `${formatNumber(r.sites_with_data)} of ${formatNumber(item.sites_expected)} sites`}`}
+                            title={`${formatDate(r.date)}: ${formatNumber(r.sites_with_data)} of ${formatNumber(item.sites_expected)} sites`}
+                            className={cn('block size-4 rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none', CELL_STYLE[r.state],
+                              r.date === tracker.reporting_date && 'ring-2 ring-primary/60')} />
+                        </td>
+                      ))}
+                      <td className={cn('pl-3 tabular-nums', gaps ? 'text-amber-700' : 'text-muted-foreground')}>{gaps}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Details({ s, onEditArrival, onRecordArrival, onRemoveArrival, onContact, onFollowUp, onReminder, onCompose }: {
   s: Submission; onEditArrival: (s: Submission) => void; onRecordArrival: (s: Submission) => void; onRemoveArrival: (s: Submission) => void;
   onContact: (s: Submission) => void; onFollowUp: (s: Submission) => void; onReminder: (s: Submission) => void; onCompose: (s: Submission) => void;
@@ -529,41 +719,46 @@ function Details({ s, onEditArrival, onRecordArrival, onRemoveArrival, onContact
   const row = (label: string, value: ReactNode) => (
     <div className="grid grid-cols-[9rem_1fr] gap-2 py-1 text-sm"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="min-w-0 break-words">{value || '—'}</dd></div>
   );
+  const item = s.server;
   return (
     <>
       <SheetHeader>
-        <SheetTitle className="flex items-center gap-2">{s.circle} <TypeBadge reportType={s.reportType} /> <StatusBadge status={s.status} /></SheetTitle>
-        <SheetDescription>CSV for {formatDate(s.reportingDate)} · {s.deadline ? `due ${formatDateTime(s.deadline.toISOString())}` : 'no deadline configured'}</SheetDescription>
+        <SheetTitle className="flex flex-wrap items-center gap-2">{s.circle} <TypeBadge reportType={s.reportType} /> <StatusBadge status={s.status} /></SheetTitle>
+        <SheetDescription>{formatDate(s.reportingDate)} · {s.deadline ? `due ${formatDateTime(s.deadline.toISOString())}` : 'no deadline configured'}</SheetDescription>
       </SheetHeader>
       <div className="space-y-5 px-4 pb-6">
-        <section aria-label="Arrival">
-          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Arrival</h3>
-          {s.arrival ? (
-            <>
-              <dl className="divide-y">
-                {row('Arrived', <ArrivalWhen record={s.arrival} />)}
-                {row('File name', s.arrival.fileName)}
-                {row('Received by', s.arrival.receivedBy)}
-                {row('Notes', s.arrival.notes)}
-                {row('Entered', `${formatDateTime(s.arrival.enteredAt)} (in this browser)`)}
-              </dl>
-              {s.problems.length > 0 && (
-                <Alert className="mt-2 border-amber-300 bg-amber-50/70">
-                  <AlertTitle>Needs review</AlertTitle>
-                  <AlertDescription><ul className="list-disc pl-4">{s.problems.map((p) => <li key={p}>{p}</li>)}</ul></AlertDescription>
-                </Alert>
-              )}
-              <div className="mt-2 flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => onEditArrival(s)}>Edit arrival</Button>
-                <Button size="sm" variant="ghost" onClick={() => onRemoveArrival(s)}>Remove arrival</Button>
-              </div>
-            </>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">No arrival recorded for this date.</p>
-              <Button size="sm" onClick={() => onRecordArrival(s)}>Record arrival</Button>
-            </div>
-          )}
+        <section aria-label="Stored daily data">
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Stored daily data (PostgreSQL)</h3>
+          <dl className="divide-y">
+            {row('Expected sites', `${formatNumber(item.sites_expected)} On-Air of ${formatNumber(item.sites_total)} in the master`)}
+            {row('With usable data', <Coverage item={item} />)}
+            {row('Records written by', sourceLabel(item) ?? 'No usable records on this date')}
+            {item.records_observed !== item.sites_with_data && row('All master sites', `${formatNumber(item.records_observed)} usable records, including sites not On-Air`)}
+            {row('Latest data', item.latest_data_date ? formatDate(item.latest_data_date) : 'None stored')}
+            {row('Latest complete date', item.latest_complete_date ? formatDate(item.latest_complete_date) : 'None')}
+          </dl>
+        </section>
+        <section aria-label="CSV uploads">
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Raw CSV uploads for {formatDate(s.reportingDate)}</h3>
+          {item.uploads.length ? (
+            <ol className="space-y-2">
+              {item.uploads.map((u) => (
+                <li key={u.id} className="rounded-md border px-3 py-2 text-sm">
+                  <p className="flex flex-wrap items-center gap-2"><UploadBadge state={u.state} /><span className="truncate font-mono text-xs">{u.file}</span></p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Upload #{u.id} · {formatDateTime(u.uploaded_at)}{u.uploaded_by ? ` · ${u.uploaded_by}` : ''}
+                    {u.imported !== null ? ` · ${formatNumber(u.imported)} records imported` : u.ready_to_import !== null ? ` · ${formatNumber(u.ready_to_import)} ready` : ''}
+                    {u.rejected_count ? ` · ${formatNumber(u.rejected_count)} rows not imported` : ''}
+                  </p>
+                  {u.error && <p className="mt-1 text-xs text-destructive">{u.error}</p>}
+                </li>
+              ))}
+            </ol>
+          ) : <p className="text-sm text-muted-foreground">No CSV upload recorded for this date.</p>}
+          <p className="mt-1 text-xs text-muted-foreground">
+            Latest CSV received: {item.latest_upload_date ? formatDate(item.latest_upload_date) : '—'} · latest imported: {item.latest_import_date ? formatDate(item.latest_import_date) : '—'}
+            {' · '}<Link className="underline underline-offset-2" to="/data/upload-csv">Upload CSV</Link>
+          </p>
         </section>
         <section aria-label="Contact">
           <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Contact</h3>
@@ -600,6 +795,35 @@ function Details({ s, onEditArrival, onRecordArrival, onRemoveArrival, onContact
             </ol>
           ) : <p className="text-sm text-muted-foreground">No follow-ups recorded.</p>}
           <Button size="sm" variant="outline" className="mt-2" onClick={() => onFollowUp(s)}><MessageSquarePlus /> Add follow-up</Button>
+        </section>
+        <section aria-label="Manual arrival note">
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Manual arrival note (this browser)</h3>
+          {s.arrival ? (
+            <>
+              <dl className="divide-y">
+                {row('Arrived', <ArrivalWhen record={s.arrival} />)}
+                {row('File name', s.arrival.fileName)}
+                {row('Received by', s.arrival.receivedBy)}
+                {row('Notes', s.arrival.notes)}
+                {row('Entered', `${formatDateTime(s.arrival.enteredAt)} (in this browser)`)}
+              </dl>
+              {s.problems.length > 0 && (
+                <Alert className="mt-2 border-amber-300 bg-amber-50/70">
+                  <AlertTitle>Check this note</AlertTitle>
+                  <AlertDescription><ul className="list-disc pl-4">{s.problems.map((p) => <li key={p}>{p}</li>)}</ul></AlertDescription>
+                </Alert>
+              )}
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => onEditArrival(s)}>Edit note</Button>
+                <Button size="sm" variant="ghost" onClick={() => onRemoveArrival(s)}>Remove note</Button>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">None. Use it for a file received outside the portal; it does not change the status.</p>
+              <Button size="sm" variant="outline" onClick={() => onRecordArrival(s)}>Add manual note</Button>
+            </div>
+          )}
         </section>
       </div>
     </>

@@ -1,15 +1,16 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TrackingProvider } from '../context/TrackingProvider';
 import * as api from '../services/api';
-import { filterOptions } from '../test/fixtures';
+import { arrivalTracker, trackerItem, trackerUpload } from '../test/fixtures';
 import { renderWithWorkbook } from '../test/renderWithWorkbook';
+import type { ArrivalTracker, TrackerItem } from '../types/rawUpload';
 import { CsvArrivalPage } from './CsvArrivalPage';
 
 vi.mock('../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/api')>()),
-  fetchFilterOptions: vi.fn(),
+  fetchArrivalTracker: vi.fn(),
   fetchRawFiles: vi.fn(),
   uploadDataFile: vi.fn(),
   fetchEmailStatus: vi.fn(),
@@ -25,9 +26,40 @@ const printed = (kind: 'reminder' | 'personal', to: string, subject: string) => 
   status: 'printed' as const, test_mode: true, kind, to: to.split(',').map((a) => a.trim()), cc: [], subject,
   message: 'TEST MODE: the email was printed in the backend terminal. It was not delivered to anyone.',
 });
+
+/** What the server reports per date (synthetic). 17 Oct: every combination of stored data and upload state. */
+const DAYS: Record<string, TrackerItem[]> = {
+  '2026-10-17': [
+    trackerItem('4G Saturation', 'MP', {
+      data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, records_observed: 11,
+      data_source: { master_workbook: 10, raw_daily_csv: 0 }, latest_data_date: '2026-10-17', latest_complete_date: '2026-10-17',
+      range: [{ date: '2026-10-15', sites_with_data: 10, state: 'complete' }, { date: '2026-10-16', sites_with_data: 0, state: 'none' }, { date: '2026-10-17', sites_with_data: 10, state: 'complete' }],
+    }),
+    trackerItem('4G Saturation', 'OD', {
+      data_state: 'partial', sites_with_data: 6, sites_missing: 4, coverage_pct: 60, data_source: { master_workbook: 0, raw_daily_csv: 6 },
+      latest_data_date: '2026-10-17', latest_complete_date: '2026-10-12', latest_upload_date: '2026-10-17', latest_import_date: '2026-10-17',
+      upload_state: 'imported', uploads: [trackerUpload({ file: 'od_day.csv', imported: 6 })],
+    }),
+    trackerItem('4G Saturation', 'RJ', { latest_data_date: '2026-10-12', latest_complete_date: '2026-10-12' }),
+    trackerItem('LWE', 'BH', {
+      upload_state: 'blocked', latest_upload_date: '2026-10-17',
+      uploads: [trackerUpload({ id: 9, state: 'blocked', status_label: 'Rejected', imported: null, ready_to_import: 0, error: 'The file is for circle JH, not BH.', file: 'bh_day.csv' })],
+    }),
+    trackerItem('LWE', 'MP'),
+  ],
+  '2026-10-12': [
+    trackerItem('4G Saturation', 'MP', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
+    trackerItem('4G Saturation', 'OD', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
+    trackerItem('4G Saturation', 'RJ', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
+    trackerItem('LWE', 'BH', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
+    trackerItem('LWE', 'MP', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
+  ],
+};
+const respond = (params: { date: string }) => arrivalTracker(params.date, DAYS[params.date] ?? DAYS['2026-10-17'].map((i) => trackerItem(i.project, i.circle)));
+
 let fetchSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
-  vi.mocked(api.fetchFilterOptions).mockResolvedValue(filterOptions);
+  vi.mocked(api.fetchArrivalTracker).mockReset().mockImplementation(async (params) => respond(params));
   vi.mocked(api.fetchRawFiles).mockResolvedValue({ count: 1, files: [{ name: 'MP_LWE_17-10-2026.csv', size_bytes: 120, modified_at: '2026-10-17T09:00:00', extension: '.csv' }] });
   vi.mocked(api.fetchEmailStatus).mockResolvedValue(TEST_MODE);
   vi.mocked(api.fetchReminderTemplate).mockReset().mockResolvedValue({ ...TEST_MODE, subject: 'Reminder: LWE uptime CSV for MP, 17 Oct 2026', body: 'Standard reminder body' });
@@ -42,106 +74,138 @@ afterEach(() => {
 });
 
 const renderPage = () => renderWithWorkbook(<TrackingProvider><CsvArrivalPage now={NOW} /></TrackingProvider>, { url: '/daily-ingestion' });
+const loaded = () => screen.findByText(/^Circle-wise data and CSV uploads/);
 const card = (label: string) => screen.getByRole('button', { name: new RegExp(`^${label}`) });
 const row = (name: string) => screen.getByRole('row', { name: new RegExp(`^${name}: open details`) });
-const statuses = () => screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[2].textContent);
+const cell = (name: string, column: number) => within(row(name)).getAllByRole('cell')[column];
+const statuses = () => screen.getAllByRole('row', { name: /open details/ }).map((r) => within(r).getAllByRole('cell')[2].firstChild?.textContent);
 
 async function pick(user: ReturnType<typeof userEvent.setup>, label: RegExp, option: string) {
   await user.click(await screen.findByRole('combobox', { name: label }));
   await user.click(await screen.findByRole('option', { name: option }));
 }
 
-async function recordArrival(user: ReturnType<typeof userEvent.setup>, name: string, file = 'MP_LWE_17-10-2026.csv') {
-  await user.click(within(row(name)).getByRole('button', { name: 'Record arrival' }));
-  await user.click(await screen.findByRole('button', { name: /It arrived just now/ }));
-  if (file) fireEvent.change(screen.getByLabelText(/CSV file name/), { target: { value: file } });
-  await user.click(screen.getByRole('button', { name: 'Record arrival' }));
-}
-
 describe('CSV Arrival & Follow-up', () => {
-  it('starts with every circle pending and nothing invented', async () => {
+  it('shows the stored data and the CSV upload state separately, never "Pending"', async () => {
     renderPage();
-    expect(await screen.findByText('CSV Arrival & Follow-up')).toBeInTheDocument();
-    expect(screen.getByText(/Changes are currently held in the frontend; persistent storage is not enabled/)).toBeInTheDocument();
-    expect(within(card('Reporting circles')).getByText('4')).toBeInTheDocument();
-    expect(within(card('CSVs pending')).getByText('4')).toBeInTheDocument();
-    expect(within(card('CSVs received')).getByText('0')).toBeInTheDocument();
-    expect(within(card('Missing contact details')).getByText('4')).toBeInTheDocument();
-    expect(statuses()).toEqual(['Pending', 'Pending', 'Pending', 'Pending']);
-    expect(screen.getAllByText('Not added')).toHaveLength(4);
-    expect(screen.getAllByText('Not configured')).toHaveLength(4);
-    // The highlight cards (pending, late, recently received, missing contacts, timeline) were removed.
-    for (const removed of ['Pending circles', 'Recently received', 'Missing contacts', 'Submission timeline']) {
-      expect(screen.queryByRole('region', { name: removed })).not.toBeInTheDocument();
+    await loaded();
+    expect(api.fetchArrivalTracker).toHaveBeenCalledWith({ date: '2026-10-17', start: '2026-10-04', end: '2026-10-17' }, expect.anything());
+    expect(screen.queryByText('Pending')).not.toBeInTheDocument();
+    // Complete data from the Master workbook with no CSV upload is complete, not pending.
+    expect(cell('MP 4G', 2)).toHaveTextContent('Data complete');
+    expect(cell('MP 4G', 2)).toHaveTextContent('From Master workbook');
+    expect(cell('MP 4G', 3)).toHaveTextContent('10 / 10 sites');
+    expect(cell('MP 4G', 4)).toHaveTextContent('No CSV upload recorded');
+    // Partial data from an imported CSV.
+    expect(cell('OD 4G', 2)).toHaveTextContent('Partial data');
+    expect(cell('OD 4G', 3)).toHaveTextContent('6 / 10 sites60% · 4 missing');
+    expect(cell('OD 4G', 4)).toHaveTextContent('CSV imported');
+    expect(cell('OD 4G', 4)).toHaveTextContent('od_day.csv');
+    expect(cell('OD 4G', 4)).toHaveTextContent('noc.lead');
+    // A blocked file: received, but no usable data.
+    expect(cell('BH LWE', 2)).toHaveTextContent('File received · no usable data');
+    expect(cell('BH LWE', 4)).toHaveTextContent('CSV blocked');
+    // Nothing stored and nothing uploaded.
+    expect(cell('RJ 4G', 2)).toHaveTextContent('No data available');
+    expect(cell('RJ 4G', 5)).toHaveTextContent('12 Oct 2026');  // the latest stored date, not today
+    expect(cell('MP LWE', 5)).toHaveTextContent('None stored');
+    expect(within(card('Project circles')).getByText('5')).toBeInTheDocument();
+    expect(within(card('Data complete')).getByText('1')).toBeInTheDocument();
+    expect(within(card('Partial data')).getByText('1')).toBeInTheDocument();
+    expect(within(card('No usable data')).getByText('3')).toBeInTheDocument();
+    expect(within(card('CSV uploads recorded')).getByText('2')).toBeInTheDocument();
+    expect(within(card('Past deadline')).getByText('0')).toBeInTheDocument();
+    expect(screen.getAllByText('Not configured')).toHaveLength(5);
+    expect(screen.getByText(/Data status is read from PostgreSQL for the selected date/)).toBeInTheDocument();
+  });
+
+  it('loads each selected date from the server and never shows another date while it loads', async () => {
+    renderPage();
+    await loaded();
+    let release: (value: ArrivalTracker) => void = () => {};
+    vi.mocked(api.fetchArrivalTracker).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    fireEvent.change(screen.getByLabelText('Reporting date'), { target: { value: '2026-10-12' } });
+    expect(screen.getByLabelText('Loading CSV arrival tracking')).toBeInTheDocument();
+    expect(screen.queryByRole('row', { name: /open details/ })).not.toBeInTheDocument();  // 17 Oct's rows are gone
+    await act(async () => release(respond({ date: '2026-10-12' })));
+    expect(await screen.findByText('Circle-wise data and CSV uploads · 12 Oct 2026')).toBeInTheDocument();
+    expect(statuses()).toEqual(Array(5).fill('Data complete'));
+    expect(api.fetchArrivalTracker).toHaveBeenLastCalledWith({ date: '2026-10-12', start: '2026-09-29', end: '2026-10-12' }, expect.anything());
+    fireEvent.change(screen.getByLabelText('Reporting date'), { target: { value: '2026-10-17' } });
+    await loaded();
+    expect(cell('RJ 4G', 2)).toHaveTextContent('No data available');
+  });
+
+  it('shows a server failure with a retry, not an empty tracker', async () => {
+    vi.mocked(api.fetchArrivalTracker).mockRejectedValueOnce(new api.ApiError('The reporting API could not be reached.', 0));
+    const user = userEvent.setup();
+    renderPage();
+    expect(await screen.findByText('The tracker could not be loaded')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Try again/ }));
+    await loaded();
+    expect(cell('MP 4G', 2)).toHaveTextContent('Data complete');
+  });
+
+  it('marks a circle past its deadline only with no data and no upload, and only once a deadline is configured', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await loaded();
+    await user.click(screen.getByRole('button', { name: /Deadlines/ }));
+    for (const legend of ['LWE', '4G Saturation']) {
+      const set = (await screen.findByText(legend, { selector: 'legend' })).closest('fieldset') as HTMLElement;
+      await user.click(within(set).getByRole('checkbox', { name: 'Deadline configured' }));  // next day, 10:00
     }
-    // 4G and LWE stay separate rows for MP.
-    expect(row('MP 4G')).toBeInTheDocument();
-    expect(row('MP LWE')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save deadlines' }));
+    // For 17 Oct the CSVs are due 18 Oct 10:00, which has not passed.
+    expect(within(card('Past deadline')).getByText('0')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Reporting date'), { target: { value: '2026-10-15' } });
+    await screen.findByText('Circle-wise data and CSV uploads · 15 Oct 2026');
+    expect(statuses()).toEqual(Array(5).fill('No data · past deadline'));
+    fireEvent.change(screen.getByLabelText('Reporting date'), { target: { value: '2026-10-12' } });
+    await screen.findByText('Circle-wise data and CSV uploads · 12 Oct 2026');
+    expect(within(card('Past deadline')).getByText('0')).toBeInTheDocument();  // stored data is never late
   });
 
-  it('records an arrival with the time of entry labelled as such', async () => {
+  it('opens the details: stored data, every upload with its state, latest dates and contact', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
-    await user.click(within(row('MP LWE')).getByRole('button', { name: 'Record arrival' }));
-    expect(await screen.findByRole('combobox', { name: /Circle \/ State/ })).toHaveTextContent('MP');  // prefilled from the row
-    expect(screen.getByRole('combobox', { name: /Report type/ })).toHaveTextContent('LWE');
-    await user.click(screen.getByRole('button', { name: 'Record arrival' }));
-    expect(screen.getByText('Enter the date the CSV arrived.')).toBeInTheDocument();  // required
-    await user.click(screen.getByRole('button', { name: /It arrived just now/ }));
-    await user.type(screen.getByLabelText(/CSV file name/), 'MP_LWE_17-10-2026.csv');
-    await user.click(screen.getByRole('button', { name: 'Record arrival' }));
-
-    expect(await screen.findByText('Arrival recorded for MP · LWE (17 Oct 2026).')).toBeInTheDocument();
-    expect(within(row('MP LWE')).getByText('Received')).toBeInTheDocument();
-    expect(within(row('MP LWE')).getByText('time of entry')).toBeInTheDocument();
-    expect(within(card('CSVs received')).getByText('1')).toBeInTheDocument();
-    expect(within(card('Received today')).getByText('1')).toBeInTheDocument();
-    expect(within(row('MP 4G')).getByText('Pending')).toBeInTheDocument();  // the 4G CSV is separate
-  });
-
-  it('refuses a second arrival for the same circle, report type and date', async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
-    await recordArrival(user, 'MP LWE');
-    await user.click(screen.getAllByRole('button', { name: /Record arrival/ })[0]);  // header button
-    await pick(user, /Report type/, 'LWE');
-    await pick(user, /Circle \/ State/, 'MP');
-    expect(screen.getByText(/An arrival is already recorded for MP · LWE on this date/)).toBeInTheDocument();
-  });
-
-  it('flags an arrival without a file name as Needs review', async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
-    await recordArrival(user, 'BH LWE', '');
-    expect(await within(row('BH LWE')).findByText('Needs review')).toBeInTheDocument();
+    await loaded();
     await user.click(row('BH LWE'));
+    const uploads = await screen.findByRole('region', { name: 'CSV uploads' });
+    expect(uploads).toHaveTextContent('CSV blocked');
+    expect(uploads).toHaveTextContent('bh_day.csv');
+    expect(uploads).toHaveTextContent('Upload #9');
+    expect(uploads).toHaveTextContent('The file is for circle JH, not BH.');
+    expect(uploads).toHaveTextContent('Latest CSV received: 17 Oct 2026 · latest imported: —');
+    const stored = screen.getByRole('region', { name: 'Stored daily data' });
+    expect(stored).toHaveTextContent('10 On-Air of 12 in the master');
+    expect(stored).toHaveTextContent('No usable records on this date');
+    await user.keyboard('{Escape}');
+    await user.click(row('MP 4G'));
+    const mp = await screen.findByRole('region', { name: 'Stored daily data' });
+    expect(mp).toHaveTextContent('Master workbook');
+    expect(mp).toHaveTextContent('11 usable records, including sites not On-Air');
+    expect(screen.getByRole('region', { name: 'CSV uploads' })).toHaveTextContent('No CSV upload recorded for this date.');
+  });
+
+  it('keeps manual arrival notes as notes: they never change the status', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await loaded();
+    await user.click(row('MP LWE'));
+    await user.click(await screen.findByRole('button', { name: 'Add manual note' }));
+    await user.click(await screen.findByRole('button', { name: /It arrived just now/ }));
+    await user.click(screen.getByRole('button', { name: 'Record arrival' }));
+    expect(await screen.findByText('Note recorded for MP · LWE (17 Oct 2026).')).toBeInTheDocument();
+    expect(cell('MP LWE', 2)).toHaveTextContent('No data available');
+    await user.click(row('MP LWE'));
     expect(await screen.findByText('File name is not recorded.')).toBeInTheDocument();
   });
 
-  it('marks submissions late only after a configured deadline passes', async () => {
+  it('adds contact details and follow-ups without changing the status', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
-    await user.click(screen.getByRole('button', { name: /Deadlines/ }));
-    const lwe = (await screen.findByText('LWE', { selector: 'legend' })).closest('fieldset') as HTMLElement;
-    await user.click(within(lwe).getByRole('checkbox', { name: 'Deadline configured' }));  // next day, 10:00
-    await user.click(screen.getByRole('button', { name: 'Save deadlines' }));
-    // For 17 Oct the LWE CSV is due 18 Oct 10:00, which has not passed.
-    expect(within(card('Late submissions')).getByText('0')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Reporting date'), { target: { value: '2026-10-15' } });
-    // For 15 Oct it was due 16 Oct 10:00: LWE is late, 4G (no deadline) is still pending.
-    expect(within(row('BH LWE')).getByText('Late')).toBeInTheDocument();
-    expect(within(row('MP 4G')).getByText('Pending')).toBeInTheDocument();
-    expect(within(card('Late submissions')).getByText('2')).toBeInTheDocument();
-  });
-
-  it('adds contact details later without changing the arrival status', async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    await loaded();
     await user.click(within(row('RJ 4G')).getByRole('button', { name: 'Edit contact for RJ 4G' }));
     await user.type(await screen.findByLabelText(/Contact person/), 'Asha Rao');
     await user.type(screen.getByLabelText(/Phone number/), '12');
@@ -151,54 +215,72 @@ describe('CSV Arrival & Follow-up', () => {
     await user.type(screen.getByLabelText(/Phone number/), '+91 98765 43210');
     await user.click(screen.getByRole('button', { name: 'Save contact' }));
     expect(within(row('RJ 4G')).getByText('Asha Rao')).toBeInTheDocument();
-    expect(within(row('RJ 4G')).getByText('Pending')).toBeInTheDocument();
-    expect(within(card('Missing contact details')).getByText('3')).toBeInTheDocument();
-  });
-
-  it('records a follow-up without a contact and shows it in the history', async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    expect(cell('RJ 4G', 2)).toHaveTextContent('No data available');
+    expect(within(card('Missing contact details')).getByText('4')).toBeInTheDocument();
     await user.click(within(row('BH LWE')).getByRole('button', { name: 'Add follow-up for BH LWE' }));
     await pick(user, /Method/, 'Message');
-    await user.type(screen.getByLabelText(/Outcome/), 'Asked on the circle group; promised by 2 pm');
+    await user.type(screen.getByLabelText(/Outcome/), 'Asked for the corrected BH file');
     await user.click(screen.getByRole('button', { name: 'Add follow-up' }));
-    expect(within(row('BH LWE')).getByText('Asked on the circle group; promised by 2 pm')).toBeInTheDocument();
+    expect(within(row('BH LWE')).getByText('Asked for the corrected BH file')).toBeInTheDocument();
     await user.click(row('BH LWE'));
-    const history = await screen.findByRole('region', { name: 'Follow-up history' });
-    expect(within(history).getByText(/Message/)).toBeInTheDocument();
+    expect(within(await screen.findByRole('region', { name: 'Follow-up history' })).getByText(/Message/)).toBeInTheDocument();
   });
 
   it('combines cards, filters, search and sorting', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
-    await recordArrival(user, 'MP LWE');
-    await user.click(card('CSVs received'));
-    expect(screen.getAllByRole('row')).toHaveLength(2);
-    await user.click(card('CSVs received'));  // select again to clear
+    await loaded();
+    await user.click(card('CSV uploads recorded'));
+    expect(screen.getAllByRole('row', { name: /open details/ }).map((r) => r.getAttribute('aria-label'))).toEqual(['BH LWE: open details', 'OD 4G: open details']);
+    await user.click(card('CSV uploads recorded'));  // select again to clear
     await pick(user, /^Project/, 'LWE');
-    expect(statuses()).toEqual(['Pending', 'Received']);  // status order: pending before received
+    expect(statuses()).toEqual(['No data available', 'File received · no usable data']);  // most urgent first
     await user.click(screen.getByRole('button', { name: /Circle \/ State/ }));
-    expect(screen.getAllByRole('row').slice(1).map((r) => r.getAttribute('aria-label'))).toEqual(['BH LWE: open details', 'MP LWE: open details']);
-    await user.type(screen.getByLabelText('Search'), 'mp_lwe');
-    expect(screen.getAllByRole('row')).toHaveLength(2);
+    expect(screen.getAllByRole('row', { name: /open details/ }).map((r) => r.getAttribute('aria-label'))).toEqual(['BH LWE: open details', 'MP LWE: open details']);
+    await user.type(screen.getByLabelText('Search'), 'bh_day');
+    expect(screen.getAllByRole('row', { name: /open details/ })).toHaveLength(1);
     await user.type(screen.getByLabelText('Search'), 'zzz');
     expect(screen.getByText('No circle matches these filters.')).toBeInTheDocument();
     await user.click(screen.getAllByRole('button', { name: 'Clear filters' })[0]);
-    expect(screen.getAllByRole('row')).toHaveLength(5);
+    expect(screen.getAllByRole('row', { name: /open details/ })).toHaveLength(5);
+    await user.click(screen.getByLabelText('Incomplete only'));
+    expect(screen.getAllByRole('row', { name: /open details/ })).toHaveLength(4);
   });
 
-  it('starts empty again after a refresh: edits are not stored anywhere', async () => {
+  it('shows daily coverage across a range with its gaps, and opens a day from it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await loaded();
+    const grid = screen.getByRole('table', { name: 'Daily coverage by circle' });
+    const mpRow = within(grid).getByRole('button', { name: 'MP 4G 16 Oct 2026: no data' }).closest('tr')!;
+    expect(mpRow.lastElementChild).toHaveTextContent('1');  // one day without data in the range
+    expect(within(grid).getByRole('button', { name: 'MP 4G 15 Oct 2026: 10 of 10 sites' })).toBeInTheDocument();
+    await user.click(within(grid).getByRole('button', { name: 'MP 4G 15 Oct 2026: 10 of 10 sites' }));
+    expect(await screen.findByText('Circle-wise data and CSV uploads · 15 Oct 2026')).toBeInTheDocument();
+    const form = screen.getByRole('form', { name: 'Coverage range' });
+    fireEvent.change(within(form).getByLabelText('Range from'), { target: { value: '2026-10-01' } });
+    fireEvent.change(within(form).getByLabelText('Range to'), { target: { value: '2026-10-15' } });
+    await user.click(within(form).getByRole('button', { name: 'Show range' }));
+    expect(api.fetchArrivalTracker).toHaveBeenLastCalledWith({ date: '2026-10-15', start: '2026-10-01', end: '2026-10-15' }, expect.anything());
+    fireEvent.change(within(form).getByLabelText('Range from'), { target: { value: '2026-01-01' } });
+    expect(within(form).getByText('Choose at most 92 days.')).toBeInTheDocument();
+    expect(within(form).getByRole('button', { name: 'Show range' })).toBeDisabled();
+  });
+
+  it('reloads the server status after a refresh; only browser-held notes are lost', async () => {
     const user = userEvent.setup();
     const view = renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
-    await recordArrival(user, 'MP LWE');
-    expect(within(card('CSVs received')).getByText('1')).toBeInTheDocument();
-    view.unmount();  // a page refresh discards the in-memory state
+    await loaded();
+    await user.click(within(row('RJ 4G')).getByRole('button', { name: 'Add follow-up for RJ 4G' }));
+    await pick(user, /Method/, 'Call');
+    await user.type(screen.getByLabelText(/Outcome/), 'No answer');
+    await user.click(screen.getByRole('button', { name: 'Add follow-up' }));
+    expect(within(row('RJ 4G')).getByText('No answer')).toBeInTheDocument();
+    view.unmount();  // a page refresh
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
-    expect(within(card('CSVs received')).getByText('0')).toBeInTheDocument();
+    await loaded();
+    expect(cell('MP 4G', 2)).toHaveTextContent('Data complete');  // from the server again
+    expect(screen.queryByText('No answer')).not.toBeInTheDocument();
     expect(window.localStorage.length).toBe(0);
   });
 });
@@ -324,16 +406,16 @@ describe('Email actions', () => {
     expect(screen.getByLabelText(/^To/)).toBeInTheDocument();  // back on the edit step
   });
 
-  it('sends a reminder from the toolbar by choosing a pending report, through the same confirmation', async () => {
+  it('sends a reminder from the toolbar by choosing a circle without data, through the same confirmation', async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText('CSV Arrival & Follow-up');
     await addContactEmail(user, 'MP LWE', 'circle.mp@example.com');
     const toolbar = screen.getByRole('search', { name: 'Tracking filters' });
     await user.click(within(toolbar).getByRole('button', { name: /Send reminder/ }));
-    const list = await screen.findByRole('list', { name: 'Pending reports' });
-    expect(within(list).getAllByRole('listitem')).toHaveLength(4);
-    expect(within(list).getAllByText('No contact email')).toHaveLength(3);
+    const list = await screen.findByRole('list', { name: 'Circles without data' });
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2);  // RJ 4G and MP LWE: no stored data and no upload
+    expect(within(list).getAllByText('No contact email')).toHaveLength(1);
     await user.click(within(list).getByRole('button', { name: /MP.*LWE.*circle\.mp@example\.com/ }));
     expect(await screen.findByRole('region', { name: 'Email preview' })).toHaveTextContent('circle.mp@example.com');
     expect(api.sendReminder).not.toHaveBeenCalled();  // still needs the explicit Send reminder now
@@ -341,7 +423,7 @@ describe('Email actions', () => {
     expect(api.sendReminder).toHaveBeenCalledTimes(1);
   });
 
-  it('groups the filter card: date and filters on the left, email actions together, Record arrival as the primary action', async () => {
+  it('groups the filter card: date and filters on the left, email actions together, Refresh as the primary action', async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText('CSV Arrival & Follow-up');
@@ -351,9 +433,9 @@ describe('Email actions', () => {
     expect(screen.getByText(/^Sat, 17 Oct 2026 \(today\) · /)).toBeInTheDocument();  // the page context, in the top bar
     fireEvent.change(within(toolbar).getByLabelText('Reporting date'), { target: { value: '2026-10-16' } });
     expect(screen.getByText(/^Fri, 16 Oct 2026 · /)).toBeInTheDocument();
-    expect(screen.getByText('Circle-wise submissions · 16 Oct 2026')).toBeInTheDocument();
-    await user.click(within(toolbar).getByRole('button', { name: /Record arrival/ }));
-    expect(await screen.findByText('Record CSV arrival')).toBeInTheDocument();
+    expect(await screen.findByText('Circle-wise data and CSV uploads · 16 Oct 2026')).toBeInTheDocument();
+    await user.click(within(toolbar).getByRole('button', { name: /Refresh/ }));
+    expect(api.fetchArrivalTracker).toHaveBeenLastCalledWith({ date: '2026-10-16', start: '2026-10-03', end: '2026-10-16' }, expect.anything());
   });
 
   it('shows the email mode as a chip: live mode is labelled with its transport, failures as unavailable', async () => {

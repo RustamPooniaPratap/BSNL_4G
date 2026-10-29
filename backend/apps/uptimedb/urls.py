@@ -20,4 +20,6 @@ urlpatterns = [
     path('raw-uploads/<int:batch_id>/issues.csv', raw_views.raw_issues_csv, name='raw-upload-issues'),
     path('raw-uploads/<int:batch_id>/commit/', raw_views.raw_commit, name='raw-upload-commit'),
     path('raw-uploads/<int:batch_id>/discard/', raw_views.raw_discard, name='raw-upload-discard'),
+    # CSV arrival tracking: stored daily-data coverage and raw uploads per circle and date.
+    path('arrival-tracker/', raw_views.arrival_tracker, name='arrival-tracker'),
 ]

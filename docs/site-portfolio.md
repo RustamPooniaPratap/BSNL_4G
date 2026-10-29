@@ -68,7 +68,7 @@ One card holds the title ("Site Portfolio · Summary (KPIs)" with the filters an
 | Sites below 60% | On-Air sites whose own MTD uptime < 60% | count and % | Overview site table, below 60% |
 | Sites down all day | ≥ 1,440 outage minutes on the date | count and % | Overview, below 60% on the date |
 | Reporting completeness | On-Air sites with a value on the date ÷ On-Air sites | pts | Data source & quality |
-| CSV submissions pending / late | From CSV arrival tracking (this browser session); "late" only with a configured deadline | — | CSV arrival tracking |
+| CSV submissions pending / late | From CSV arrival tracking; "late" only with a configured deadline and no stored data or upload | — | CSV arrival tracking |
 
 ## Removed sections
 

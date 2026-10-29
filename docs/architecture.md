@@ -63,6 +63,7 @@ All endpoints are `GET` under `/api/dashboard/` unless noted. Common parameters:
 | `/api/health/` | — | service status |
 | `/api/auth/csrf/`, `login/` (POST), `logout/` (POST), `me/`, `password/` (POST), `users/…` (Admin) | see [security.md](security.md) | sign-in, password change, user management. Every other endpoint needs a signed-in portal user |
 | `/api/upload/` (POST), `/api/raw-files/` | — | raw file storage and preview (inspection only) |
+| `/api/arrival-tracker/?date=&start=&end=` (GET, Admin) | see [csv-arrival-tracking.md](csv-arrival-tracking.md#data) | Stored daily-data coverage and raw CSV uploads per project/circle and date; read only |
 | `/api/email/status/`, `reminder-template/`, `reminder/` (POST), `send/` (POST) | see [csv-arrival-tracking.md](csv-arrival-tracking.md#email) | CSV reminders and personal emails; console backend (test mode) by default |
 
 Status codes: 200 OK; 400 invalid parameters (with field `details`); 404 unknown site; 413 upload too large; 422 workbook rejected; 503 no or unreadable workbook (`details.code` = `no_workbook` / `invalid_workbook`); 500 unexpected (generic message).

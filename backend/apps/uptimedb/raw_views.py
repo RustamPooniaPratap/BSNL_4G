@@ -23,10 +23,11 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.accounts.audit import audit
-from apps.accounts.permissions import IsPortalUser
+from apps.accounts.permissions import IsAdminRole, IsPortalUser
 from apps.accounts.roles import ADMIN, role_of
 from apps.accounts.scope import KNOWN_CIRCLES, allowed_circles, may_use_circle
 
+from . import arrivals
 from .models import DataImportBatch, UptimeSite
 from .raw import parser
 from .raw.rules import PROJECT_RULES
@@ -243,3 +244,31 @@ def raw_export(request):
     response = HttpResponse('﻿' + out.getvalue(), content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = f'attachment; filename="{stem}.csv"'
     return response
+
+
+def _query_date(request, name: str):
+    text = request.query_params.get(name, '').strip()
+    if not text:
+        return None
+    day = parser.parse_date(text)
+    if day is None:
+        raise ValidationError({name: 'Give the date as YYYY-MM-DD.'})
+    return day
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminRole])  # CSV arrival tracking is an Admin page; circles are still limited by accounts.scope
+def arrival_tracker(request):
+    """Per project/circle for ?date=YYYY-MM-DD: stored daily-data coverage and raw CSV uploads, plus a daily range
+    (?start=&end=, at most 92 days) for gaps. Read only; computed from PostgreSQL on every request."""
+    day = _query_date(request, 'date')
+    if day is None:
+        raise ValidationError({'date': 'Give the reporting date as YYYY-MM-DD.'})
+    start, end = _query_date(request, 'start'), _query_date(request, 'end')
+    if bool(start) != bool(end):
+        raise ValidationError({'range': 'Give both start and end, or neither.'})
+    if start and end and start > end:
+        raise ValidationError({'range': 'The range start is after its end.'})
+    if start and end and (end - start).days >= arrivals.MAX_RANGE_DAYS:
+        raise ValidationError({'range': f'Choose at most {arrivals.MAX_RANGE_DAYS} days.'})
+    return Response(arrivals.tracker(day, allowed_circles(request.user), start, end))

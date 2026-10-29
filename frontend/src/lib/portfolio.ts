@@ -176,7 +176,7 @@ const RANK: Record<Severity, number> = { critical: 0, warning: 1, info: 2 };
 
 /**
  * Actionable exceptions: circles with sites below 60% MTD (workbook threshold), sites not
- * reported on the date, CSV arrivals late against a configured deadline or still pending,
+ * reported on the date, circles with no daily data or CSV past a configured deadline,
  * and the data-quality alerts. Nothing is "late" without a configured deadline.
  */
 export function buildExceptions(b: BreakdownResponse | null, alerts: DashboardAlert[], arrivals: Submission[], f: PortfolioFilters): PortfolioException[] {
@@ -200,9 +200,7 @@ export function buildExceptions(b: BreakdownResponse | null, alerts: DashboardAl
   }
   for (const s of arrivals) {
     if (s.status === 'late') {
-      out.push({ id: `late-${s.key}`, circle: label(s.circle, s.reportType), type: 'CSV late (past the configured deadline)', count: null, reportingDate: s.reportingDate, severity: 'critical', link: '/daily-ingestion' });
-    } else if (s.status === 'needs_review') {
-      out.push({ id: `review-${s.key}`, circle: label(s.circle, s.reportType), type: 'CSV arrival needs review', count: null, reportingDate: s.reportingDate, severity: 'warning', link: '/daily-ingestion' });
+      out.push({ id: `late-${s.key}`, circle: label(s.circle, s.reportType), type: 'No daily data or CSV past the configured deadline', count: null, reportingDate: s.reportingDate, severity: 'critical', link: '/daily-ingestion' });
     }
   }
   for (const a of alerts) {

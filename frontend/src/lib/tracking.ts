@@ -1,19 +1,41 @@
 /**
- * CSV arrival tracking: which circles have sent their daily 4G / LWE raw CSV for a reporting date.
+ * CSV arrival tracking: per project and circle, whether the stored daily data for a reporting date is complete, and
+ * separately whether a raw CSV upload was recorded for it.
  *
- * Everything here is held in the browser for now (no backend, no database). Nothing is invented:
- * requirements come from the circles in the master data, and arrivals, contacts, follow-ups and
- * deadlines exist only once a user records them.
+ * Both facts come from the server (GET /api/arrival-tracker/, computed from PostgreSQL on every request). Contacts,
+ * follow-ups, deadlines and manual arrival notes are still held in this browser only and never change the data status.
  */
+import type { TrackerItem, UploadState } from '../types/rawUpload';
 
-export type ArrivalStatus = 'received' | 'pending' | 'late' | 'needs_review';
+/**
+ * Status of a project/circle on the reporting date:
+ * - complete / partial: stored daily data covers all / some of the master's On-Air sites (whatever imported it).
+ * - file_received: no usable data, but a raw CSV upload is recorded for the date (validated, blocked, failed or imported).
+ * - late: no usable data and no upload, and a configured deadline has passed.
+ * - no_data: no usable data and no upload, and no deadline has passed (or none is configured).
+ */
+export type ArrivalStatus = 'complete' | 'partial' | 'file_received' | 'no_data' | 'late';
 
 export const STATUS_LABELS: Record<ArrivalStatus, string> = {
-  received: 'Received',
-  pending: 'Pending',
-  late: 'Late',
-  needs_review: 'Needs review',
+  complete: 'Data complete',
+  partial: 'Partial data',
+  file_received: 'File received · no usable data',
+  no_data: 'No data available',
+  late: 'No data · past deadline',
 };
+
+export const UPLOAD_LABELS: Record<UploadState, string> = {
+  imported: 'CSV imported',
+  awaiting_confirmation: 'Validated · awaiting confirmation',
+  nothing_to_import: 'Validated · nothing new to import',
+  blocked: 'CSV blocked',
+  failed: 'CSV could not be read',
+  discarded: 'CSV discarded',
+  none: 'No CSV upload recorded',
+};
+
+/** Upload states that show a file was received (a discarded upload was withdrawn by the user). */
+const RECEIVED_UPLOADS = new Set<UploadState>(['imported', 'awaiting_confirmation', 'nothing_to_import', 'blocked', 'failed']);
 
 /** One circle that must send one report type's CSV (taken from the master data). */
 export interface Requirement {
@@ -78,10 +100,10 @@ export const requirementKey = (r: Requirement) => `${r.reportType}|${r.circle}`;
 export const submissionKey = (r: Requirement, reportingDate: string) => `${r.reportType}|${r.circle}|${reportingDate}`;
 export const shortType = (reportType: string) => (reportType === '4G Saturation' ? '4G' : reportType);
 
-/** The requirements implied by the master data: each circle with each report type it has sites for. */
-export function requirementsFrom(circles: { value: string; report_types: string[] }[]): Requirement[] {
-  return circles
-    .flatMap((c) => c.report_types.map((reportType) => ({ circle: c.value, reportType })))
+/** The requirements: each project and circle of the site master that the server returned (within the user's circles). */
+export function requirementsFrom(items: { project: string; circle: string }[]): Requirement[] {
+  return items
+    .map((i) => ({ circle: i.circle, reportType: i.project }))
     .sort((a, b) => a.reportType.localeCompare(b.reportType) || a.circle.localeCompare(b.circle));
 }
 
@@ -99,7 +121,7 @@ export function deadlineFor(reportType: string, reportingDate: string, config: D
   return at(localDate(due), rule.time);
 }
 
-/** Problems that make a recorded arrival "Needs review" (incomplete or inconsistent details). */
+/** Problems shown with a manual arrival note (incomplete or inconsistent details). */
 export function arrivalProblems(record: ArrivalRecord, now: Date): string[] {
   const problems: string[] = [];
   if (!record.arrivalDate || !record.arrivalTime) problems.push('Arrival date or time is missing.');
@@ -117,9 +139,12 @@ export interface Submission extends Requirement {
   key: string;
   reportingDate: string;
   status: ArrivalStatus;
+  /** What the server found for this project, circle and date. */
+  server: TrackerItem;
   deadline: Date | null;
+  /** A manual arrival note entered in this browser (does not change the status). */
   arrival: ArrivalRecord | null;
-  /** Arrival recorded after the configured deadline (still "Received"). */
+  /** The manual note says the file arrived after the configured deadline. */
   arrivedLate: boolean;
   problems: string[];
   contact: Contact | null;
@@ -130,38 +155,37 @@ export interface Submission extends Requirement {
 /** A contact is complete with a name and at least one way to reach them. */
 export const isContactComplete = (c: Contact | null | undefined) => Boolean(c && c.name.trim() && (c.phone.trim() || c.email.trim()));
 
-/**
- * Status rules:
- * - Received: an arrival record exists and its details are complete and consistent.
- * - Needs review: an arrival record exists but details are incomplete or inconsistent.
- * - Late: no arrival record and a configured deadline has passed.
- * - Pending: no arrival record, and the deadline has not passed or none is configured.
- * Contact details never change the status.
- */
-export function buildSubmissions(requirements: Requirement[], reportingDate: string, state: {
+/** The status from the server's data and upload facts; a deadline only matters when there is neither. */
+export function trackStatus(item: TrackerItem, deadline: Date | null, now: Date): ArrivalStatus {
+  if (item.data_state === 'complete') return 'complete';
+  if (item.data_state === 'partial') return 'partial';
+  if (RECEIVED_UPLOADS.has(item.upload_state)) return 'file_received';
+  return deadline && now > deadline ? 'late' : 'no_data';
+}
+
+/** One row per server item. Contacts, follow-ups and manual notes come from the browser state; they never change the status. */
+export function buildSubmissions(items: TrackerItem[], reportingDate: string, state: {
   arrivals: Record<string, ArrivalRecord>; contacts: Record<string, Contact>; followUps: FollowUp[]; deadlines: DeadlineConfig;
 }, now: Date): Submission[] {
-  return requirements.map((requirement) => {
+  return items.map((server) => {
+    const requirement = { circle: server.circle, reportType: server.project };
     const key = submissionKey(requirement, reportingDate);
     const arrival = state.arrivals[key] ?? null;
     const deadline = deadlineFor(requirement.reportType, reportingDate, state.deadlines);
     const problems = arrival ? arrivalProblems(arrival, now) : [];
-    let status: ArrivalStatus;
-    if (arrival) status = problems.length ? 'needs_review' : 'received';
-    else status = deadline && now > deadline ? 'late' : 'pending';
     const arrivedLate = Boolean(arrival && deadline && arrival.arrivalDate && arrival.arrivalTime && at(arrival.arrivalDate, arrival.arrivalTime) > deadline);
     const contact = state.contacts[requirementKey(requirement)] ?? null;
     const followUps = state.followUps
       .filter((f) => f.circle === requirement.circle && f.reportType === requirement.reportType && f.reportingDate === reportingDate)
       .sort((a, b) => b.at.localeCompare(a.at));
     return {
-      ...requirement, key, reportingDate, status, deadline, arrival, arrivedLate, problems,
+      ...requirement, key, reportingDate, status: trackStatus(server, deadline, now), server, deadline, arrival, arrivedLate, problems,
       contact, contactComplete: isContactComplete(contact), followUps,
     };
   });
 }
 
-export type CardFilter = 'all' | 'received' | 'pending' | 'received_today' | 'late' | 'missing_contact';
+export type CardFilter = 'all' | 'complete' | 'partial' | 'no_data' | 'csv_recorded' | 'late' | 'missing_contact';
 
 export interface TrackingFilters {
   circle: string;
@@ -174,11 +198,17 @@ export interface TrackingFilters {
 }
 export const DEFAULT_FILTERS: TrackingFilters = { circle: '', reportType: '', status: '', contact: 'all', openOnly: false, search: '', card: 'all' };
 
-const matchesCard = (s: Submission, card: CardFilter, today: string) => {
+/** No usable stored data for the date, whatever the upload state. */
+export const lacksData = (s: Submission) => s.status === 'no_data' || s.status === 'late' || s.status === 'file_received';
+/** A raw CSV upload is recorded for the date (any state, including blocked or discarded). */
+export const hasUpload = (s: Submission) => s.server.upload_state !== 'none';
+
+const matchesCard = (s: Submission, card: CardFilter) => {
   switch (card) {
-    case 'received': return s.status === 'received';
-    case 'pending': return s.status === 'pending' || s.status === 'late';
-    case 'received_today': return Boolean(s.arrival && s.arrival.arrivalDate === today);
+    case 'complete': return s.status === 'complete';
+    case 'partial': return s.status === 'partial';
+    case 'no_data': return lacksData(s);
+    case 'csv_recorded': return hasUpload(s);
     case 'late': return s.status === 'late';
     case 'missing_contact': return !s.contactComplete;
     default: return true;
@@ -194,9 +224,10 @@ export function applyFilters(rows: Submission[], f: TrackingFilters): Submission
     if (f.status && s.status !== f.status) return false;
     if (f.contact === 'complete' && !s.contactComplete) return false;
     if (f.contact === 'missing' && s.contactComplete) return false;
-    if (f.openOnly && !(s.status === 'pending' || s.status === 'late')) return false;
+    if (f.openOnly && s.status === 'complete') return false;
     if (needle) {
-      const hay = [s.circle, s.reportType, shortType(s.reportType), s.contact?.name, s.contact?.phone, s.contact?.email, s.contact?.backup, s.arrival?.fileName]
+      const hay = [s.circle, s.reportType, shortType(s.reportType), s.contact?.name, s.contact?.phone, s.contact?.email, s.contact?.backup, s.arrival?.fileName,
+        ...s.server.uploads.flatMap((u) => [u.file, u.uploaded_by])]
         .filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(needle)) return false;
     }
@@ -204,16 +235,16 @@ export function applyFilters(rows: Submission[], f: TrackingFilters): Submission
   });
 }
 
-export const applyCard = (rows: Submission[], card: CardFilter, today: string) => rows.filter((s) => matchesCard(s, card, today));
+export const applyCard = (rows: Submission[], card: CardFilter) => rows.filter((s) => matchesCard(s, card));
 
-export function kpis(rows: Submission[], today: string) {
+export function kpis(rows: Submission[]) {
   return {
     total: rows.length,
-    received: rows.filter((s) => s.status === 'received').length,
-    pending: rows.filter((s) => s.status === 'pending' || s.status === 'late').length,
-    receivedToday: rows.filter((s) => s.arrival?.arrivalDate === today).length,
+    complete: rows.filter((s) => s.status === 'complete').length,
+    partial: rows.filter((s) => s.status === 'partial').length,
+    noData: rows.filter(lacksData).length,
+    csvRecorded: rows.filter(hasUpload).length,
     late: rows.filter((s) => s.status === 'late').length,
-    needsReview: rows.filter((s) => s.status === 'needs_review').length,
     missingContact: rows.filter((s) => !s.contactComplete).length,
   };
 }
@@ -253,12 +284,12 @@ export function arrivalErrors(draft: ArrivalDraft, arrivals: Record<string, Arri
   return e;
 }
 
-/** Non-blocking notes: these make the record "Needs review" once saved. */
+/** Non-blocking notes shown with the saved note (they never change the data status). */
 export function arrivalWarnings(draft: ArrivalDraft) {
   const w: string[] = [];
-  if (!draft.fileName.trim()) w.push('No file name: the record will be marked Needs review until it is added.');
+  if (!draft.fileName.trim()) w.push('No file name: the note will be flagged for review until it is added.');
   if (draft.arrivalDate && draft.reportingDate && draft.arrivalDate < draft.reportingDate) {
-    w.push('The arrival date is before the reporting date it covers: the record will be marked Needs review.');
+    w.push('The arrival date is before the reporting date it covers: the note will be flagged for review.');
   }
   return w;
 }

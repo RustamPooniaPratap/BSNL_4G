@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY_TRACKING, trackingReducer, type TrackingState } from '../context/tracking';
-import { filterOptions } from '../test/fixtures';
+import { trackerItem, trackerUpload } from '../test/fixtures';
 import {
   DEFAULT_FILTERS, EMPTY_CONTACT, applyCard, applyFilters, arrivalErrors, buildSubmissions, contactErrors, deadlineFor,
   followUpErrors, kpis, requirementKey, requirementsFrom, submissionKey, type ArrivalRecord,
 } from './tracking';
 
-const REQUIREMENTS = requirementsFrom(filterOptions.circles);
 const DATE = '2026-10-16';
 const NOW = new Date('2026-10-17T12:00:00');
 const MP_LWE = { circle: 'MP', reportType: 'LWE' };
+// As the server reports them: MP 4G complete from the workbook, RJ 4G partial from a CSV, BH LWE nothing, MP LWE a blocked file.
+const ITEMS = [
+  trackerItem('4G Saturation', 'MP', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
+  trackerItem('4G Saturation', 'RJ', { data_state: 'partial', sites_with_data: 6, sites_missing: 4, coverage_pct: 60, upload_state: 'imported', uploads: [trackerUpload({ file: 'rj_day.csv' })] }),
+  trackerItem('LWE', 'BH'),
+  trackerItem('LWE', 'MP', { upload_state: 'blocked', uploads: [trackerUpload({ state: 'blocked', imported: null, error: 'Wrong circle.' })] }),
+];
 
 const arrival = (overrides: Partial<ArrivalRecord> = {}): ArrivalRecord => ({
   id: 'a1', circle: 'MP', reportType: 'LWE', reportingDate: DATE, arrivalDate: '2026-10-17', arrivalTime: '09:30',
@@ -17,87 +23,88 @@ const arrival = (overrides: Partial<ArrivalRecord> = {}): ArrivalRecord => ({
 });
 const withArrival = (record: ArrivalRecord, extra: Partial<TrackingState> = {}): TrackingState =>
   ({ ...EMPTY_TRACKING, arrivals: { [submissionKey(record, record.reportingDate)]: record }, ...extra });
-const statusOf = (state: TrackingState, now = NOW) =>
-  Object.fromEntries(buildSubmissions(REQUIREMENTS, DATE, state, now).map((s) => [`${s.circle} ${s.reportType}`, s.status]));
+const statusOf = (state: TrackingState, now = NOW, items = ITEMS) =>
+  Object.fromEntries(buildSubmissions(items, DATE, state, now).map((s) => [`${s.circle} ${s.reportType}`, s.status]));
 
 describe('requirements', () => {
-  it('come from the circles and report types in the master data, not every combination', () => {
-    expect(REQUIREMENTS.map((r) => `${r.reportType} ${r.circle}`)).toEqual(['4G Saturation MP', '4G Saturation RJ', 'LWE BH', 'LWE MP']);
+  it('are the project circles the server returned, 4G before LWE', () => {
+    expect(requirementsFrom([...ITEMS].reverse()).map((r) => `${r.reportType} ${r.circle}`)).toEqual(['4G Saturation MP', '4G Saturation RJ', 'LWE BH', 'LWE MP']);
   });
 });
 
-describe('arrival status', () => {
-  it('starts with every requirement pending and nothing invented', () => {
-    const rows = buildSubmissions(REQUIREMENTS, DATE, EMPTY_TRACKING, NOW);
-    expect(rows.every((s) => s.status === 'pending' && s.arrival === null && s.contact === null && s.deadline === null)).toBe(true);
-    expect(rows.every((s) => s.followUps.length === 0)).toBe(true);
+describe('data status', () => {
+  it('comes from the stored data first, then from the upload history, never "pending"', () => {
+    expect(statusOf(EMPTY_TRACKING)).toEqual({
+      'MP 4G Saturation': 'complete', 'RJ 4G Saturation': 'partial', 'BH LWE': 'no_data', 'MP LWE': 'file_received',
+    });
+  });
+
+  it('is complete without any CSV upload when the stored data covers every expected site', () => {
+    const mp = buildSubmissions(ITEMS, DATE, EMPTY_TRACKING, NOW)[0];
+    expect(mp.server.upload_state).toBe('none');
+    expect(mp.status).toBe('complete');
   });
 
   it('is never late without a configured deadline, however much time has passed', () => {
-    expect(statusOf(EMPTY_TRACKING, new Date('2027-01-01T00:00:00'))['MP LWE']).toBe('pending');
+    expect(statusOf(EMPTY_TRACKING, new Date('2027-01-01T00:00:00'))['BH LWE']).toBe('no_data');
   });
 
-  it('becomes late only after the configured deadline passes', () => {
-    const state = { ...EMPTY_TRACKING, deadlines: { LWE: { dayOffset: 1, time: '10:00' } } };
+  it('is late only with no data and no upload, after the configured deadline', () => {
+    const state = { ...EMPTY_TRACKING, deadlines: { LWE: { dayOffset: 1, time: '10:00' }, '4G Saturation': { dayOffset: 1, time: '10:00' } } };
     expect(deadlineFor('LWE', DATE, state.deadlines)?.toString()).toBe(new Date('2026-10-17T10:00:00').toString());
-    expect(statusOf(state, new Date('2026-10-17T09:59:00'))['MP LWE']).toBe('pending');
-    expect(statusOf(state, new Date('2026-10-17T10:01:00'))['MP LWE']).toBe('late');
-    expect(statusOf(state, new Date('2026-10-17T10:01:00'))['MP 4G Saturation']).toBe('pending');  // no 4G deadline
+    expect(statusOf(state, new Date('2026-10-17T09:59:00'))['BH LWE']).toBe('no_data');
+    const after = statusOf(state, new Date('2026-10-17T10:01:00'));
+    expect(after).toEqual({ 'MP 4G Saturation': 'complete', 'RJ 4G Saturation': 'partial', 'BH LWE': 'late', 'MP LWE': 'file_received' });
   });
 
-  it('is received when an arrival with complete details exists, and flags arrival after the deadline', () => {
-    const state = withArrival(arrival({ arrivalTime: '11:15' }), { deadlines: { LWE: { dayOffset: 1, time: '10:00' } } });
-    const mp = buildSubmissions(REQUIREMENTS, DATE, state, NOW).find((s) => s.circle === 'MP' && s.reportType === 'LWE')!;
-    expect(mp.status).toBe('received');
-    expect(mp.arrivedLate).toBe(true);
-    // 4G and LWE are tracked separately: the LWE deadline does not make MP's 4G CSV late.
-    expect(statusOf(state)['MP 4G Saturation']).toBe('pending');
-    expect(statusOf(state)['BH LWE']).toBe('late');
+  it('a discarded upload is not a received file', () => {
+    const items = [trackerItem('LWE', 'BH', { upload_state: 'discarded', uploads: [trackerUpload({ state: 'discarded', imported: null })] })];
+    expect(statusOf(EMPTY_TRACKING, NOW, items)).toEqual({ 'BH LWE': 'no_data' });
   });
 
-  it('needs review when arrival details are incomplete or inconsistent', () => {
-    const problems = (record: ArrivalRecord) => buildSubmissions(REQUIREMENTS, DATE, withArrival(record), NOW)
-      .find((s) => s.circle === 'MP' && s.reportType === 'LWE')!;
-    expect(problems(arrival({ fileName: '' })).problems).toEqual(['File name is not recorded.']);
-    expect(problems(arrival({ fileName: 'report.xlsx' })).problems).toEqual(['The file name does not end in .csv.']);
-    expect(problems(arrival({ arrivalDate: '2026-10-18' })).problems).toEqual(['The arrival time is in the future.']);
-    expect(problems(arrival({ arrivalDate: '2026-10-15' })).problems).toEqual(['It arrived before the reporting date it covers.']);
-    expect(problems(arrival({ fileName: '' })).status).toBe('needs_review');
-  });
-
-  it('does not let contact details change the arrival status', () => {
-    const noContact = statusOf(EMPTY_TRACKING);
+  it('manual arrival notes and contacts never change the status', () => {
+    const noted = buildSubmissions(ITEMS, DATE, withArrival(arrival({ circle: 'BH', fileName: '' })), NOW).find((s) => s.circle === 'BH')!;
+    expect(noted.status).toBe('no_data');
+    expect(noted.problems).toEqual(['File name is not recorded.']);
     const withContact = statusOf({ ...EMPTY_TRACKING, contacts: { [requirementKey(MP_LWE)]: { ...EMPTY_CONTACT, name: 'Asha', phone: '9876543210' } } });
-    expect(withContact).toEqual(noContact);
+    expect(withContact).toEqual(statusOf(EMPTY_TRACKING));
+  });
+
+  it('checks manual notes for incomplete or inconsistent details', () => {
+    const problems = (record: ArrivalRecord) => buildSubmissions(ITEMS, DATE, withArrival(record), NOW).find((s) => s.circle === 'MP' && s.reportType === 'LWE')!.problems;
+    expect(problems(arrival({ fileName: 'report.xlsx' }))).toEqual(['The file name does not end in .csv.']);
+    expect(problems(arrival({ arrivalDate: '2026-10-18' }))).toEqual(['The arrival time is in the future.']);
+    expect(problems(arrival({ arrivalDate: '2026-10-15' }))).toEqual(['It arrived before the reporting date it covers.']);
   });
 });
 
 describe('KPIs, filters and search', () => {
   const state = withArrival(arrival(), { contacts: { [requirementKey(MP_LWE)]: { ...EMPTY_CONTACT, name: 'Asha Rao', email: 'asha@example.com' } } });
-  const rows = buildSubmissions(REQUIREMENTS, DATE, state, NOW);
+  const rows = buildSubmissions(ITEMS, DATE, state, NOW);
 
-  it('counts from the records', () => {
-    expect(kpis(rows, '2026-10-17')).toEqual({ total: 4, received: 1, pending: 3, receivedToday: 1, late: 0, needsReview: 0, missingContact: 3 });
-    expect(kpis(rows, '2026-10-18').receivedToday).toBe(0);
+  it('counts from the server facts', () => {
+    expect(kpis(rows)).toEqual({ total: 4, complete: 1, partial: 1, noData: 2, csvRecorded: 2, late: 0, missingContact: 3 });
   });
 
-  it('filters by circle, report type, status, contact and late/pending, and searches', () => {
+  it('filters by circle, project, status, contact and incomplete, and searches uploads too', () => {
     const f = (changes: object) => applyFilters(rows, { ...DEFAULT_FILTERS, ...changes }).map((s) => `${s.circle} ${s.reportType}`);
     expect(f({ circle: 'MP' })).toEqual(['MP 4G Saturation', 'MP LWE']);
     expect(f({ reportType: 'LWE' })).toEqual(['BH LWE', 'MP LWE']);
-    expect(f({ status: 'received' })).toEqual(['MP LWE']);
+    expect(f({ status: 'partial' })).toEqual(['RJ 4G Saturation']);
     expect(f({ contact: 'complete' })).toEqual(['MP LWE']);
     expect(f({ contact: 'missing' })).toHaveLength(3);
-    expect(f({ openOnly: true })).toHaveLength(3);
+    expect(f({ openOnly: true })).toEqual(['RJ 4G Saturation', 'BH LWE', 'MP LWE']);
     expect(f({ search: 'asha@' })).toEqual(['MP LWE']);
-    expect(f({ search: '16-10-2026.csv' })).toEqual(['MP LWE']);
-    expect(f({ search: 'rj' })).toEqual(['RJ 4G Saturation']);
+    expect(f({ search: 'rj_day' })).toEqual(['RJ 4G Saturation']);
+    expect(f({ search: 'noc.lead' })).toEqual(['RJ 4G Saturation', 'MP LWE']);
   });
 
   it('applies KPI cards on top of the filters', () => {
     const lwe = applyFilters(rows, { ...DEFAULT_FILTERS, reportType: 'LWE' });
-    expect(applyCard(lwe, 'pending', '2026-10-17').map((s) => s.circle)).toEqual(['BH']);
-    expect(applyCard(lwe, 'missing_contact', '2026-10-17').map((s) => s.circle)).toEqual(['BH']);
+    expect(applyCard(lwe, 'no_data').map((s) => s.circle)).toEqual(['BH', 'MP']);
+    expect(applyCard(lwe, 'csv_recorded').map((s) => s.circle)).toEqual(['MP']);
+    expect(applyCard(rows, 'complete').map((s) => s.circle)).toEqual(['MP']);
+    expect(applyCard(lwe, 'missing_contact').map((s) => s.circle)).toEqual(['BH']);
   });
 });
 
