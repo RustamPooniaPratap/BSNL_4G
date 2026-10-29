@@ -8,12 +8,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ChartCard } from '../../components/dashboard/ChartCard';
 import { DataTable } from '../../components/dashboard/DataTable';
 import { reportTypeColor } from '../../components/dashboard/constants';
-import { CycleBadge, RankedBars, RcaFilterBar, Segmented, SourceValue, type BarRow } from '../../components/rca/RcaShared';
+import { RootCauseBreakdown } from '../../components/rca/RcaBreakdown';
+import { RankedBars, RcaFilterBar, Segmented, SourceValue, type BarRow } from '../../components/rca/RcaShared';
 import { FILTER_KEYS, formatMin, rcaCoverageText, shortProject, type FilterKey } from '../../lib/rca';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDate, formatNumber } from '../../lib/format';
-import { fetchRcaOptions, fetchRcaSummary, rcaCycleWorkbookUrl } from '../../services/api';
-import type { RcaCircle, RcaCycle, RcaOptions, RcaRanked, RcaSummary } from '../../types/rca';
+import { fetchRcaOptions, fetchRcaSummary } from '../../services/api';
+import type { RcaCircle, RcaOptions, RcaRanked, RcaSummary } from '../../types/rca';
 import { SelectField } from '../../components/data/DataEntry';
 import { Field } from '../../components/dashboard/FilterBar';
 import { PageHeading } from '../../context/pageHeader';
@@ -71,9 +72,8 @@ export function RcaSummaryPage() {
               {s.dates.length ? `Single-date snapshot: ${formatDate(s.dates[0].date)}. Trends over time appear once RCA data for more reporting dates is imported.` : 'No RCA records match these filters.'}
             </p>
           )}
-          {s.cycle && <CyclePanel cycle={s.cycle} />}
           <Kpis s={s} />
-          {s.projects.length > 1 && <ProjectTable s={s} />}
+          <RootCauseBreakdown data={s.breakdown} />
           <div className="grid gap-5 xl:grid-cols-2">
             <ClassificationCard title="RCA classification: Final Bucket" items={s.final_buckets} field="final_bucket" onSelect={openRegister} />
             <ClassificationCard title="Secondary classification: Bucket - 2" items={s.bucket_2} field="bucket_2" onSelect={openRegister}
@@ -135,55 +135,6 @@ function showingText(options: RcaOptions, params: URLSearchParams) {
 }
 
 /** The reporting period of the filtered dates (or the latest one): expected data received, pending, and its consolidated report. */
-function CyclePanel({ cycle }: { cycle: RcaCycle & { matches_filter: boolean } }) {
-  const st = cycle.status;
-  const report = st.code === 'final' ? `Final report v${st.final_version}` : st.complete ? 'Draft report' : 'Partial report';
-  return (
-    <Card className="gap-1 rounded-xl px-4 py-3" aria-label="Reporting period">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
-          {cycle.matches_filter ? 'Reporting period' : 'Latest reporting period'} {cycle.period_label}{cycle.name ? ` · ${cycle.name}` : ''}
-          <CycleBadge code={st.code} label={st.label} />
-          {st.required > 0 && <span className="font-normal tabular-nums">{st.received} of {st.required} expected projects / circles have accepted data</span>}
-        </p>
-        <span className="flex gap-3 text-xs">
-          <Link to={`/rca/submissions?cycle=${cycle.id}`} className="font-medium underline-offset-2 hover:underline">Open submissions →</Link>
-          <a href={rcaCycleWorkbookUrl(cycle.id)} className="font-medium underline-offset-2 hover:underline">{report} (Excel)</a>
-        </span>
-      </div>
-      {st.outstanding.length > 0 && (
-        <p className="text-xs text-amber-800">Pending: {st.outstanding.map((o) => `${o.circle} ${shortProject(o.project)}`).join(', ')}. The figures cover the accepted records only.</p>
-      )}
-      {!cycle.matches_filter && <p className="text-xs text-muted-foreground">The figures below follow the filters above, not only this period.</p>}
-    </Card>
-  );
-}
-
-function ProjectTable({ s }: { s: RcaSummary }) {
-  return (
-    <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Project-wise summary">
-      <p className="text-sm font-medium">Project-wise</p>
-      <Table>
-        <TableHeader>
-          <TableRow>{['Project', 'Records', 'Outage minutes', 'Affected sites', 'Other Media (RCA not applicable)', 'RCA required — missing information'].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow>
-        </TableHeader>
-        <TableBody>
-          {s.projects.map((p) => (
-            <TableRow key={p.project}>
-              <TableCell className="font-medium">{p.project}</TableCell>
-              <TableCell className="tabular-nums">{formatNumber(p.records)}</TableCell>
-              <TableCell className="tabular-nums">{formatMin(p.outage_minutes)}</TableCell>
-              <TableCell className="tabular-nums">{formatNumber(p.affected_sites)}</TableCell>
-              <TableCell className="tabular-nums">{formatNumber(p.rca_not_applicable)}</TableCell>
-              <TableCell className="tabular-nums">{formatNumber(p.incomplete_records)}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </Card>
-  );
-}
-
 function Kpis({ s }: { s: RcaSummary }) {
   const k = s.kpis;
   const card = (label: string, value: string, note: string, tone?: string, link?: string) => (
@@ -194,24 +145,12 @@ function Kpis({ s }: { s: RcaSummary }) {
       {link && <Link to={link} className="mt-auto pt-1 text-xs font-medium underline-offset-2 hover:underline">View records →</Link>}
     </Card>
   );
-  const na = k.rca_not_applicable;
-  const incompleteParts = [
-    k.incomplete_by_field.final_bucket && `Final Bucket ${formatNumber(k.incomplete_by_field.final_bucket)}`,
-    k.incomplete_by_field.bucket_2 && `Bucket - 2 ${formatNumber(k.incomplete_by_field.bucket_2)}`,
-    k.incomplete_by_field.rca && `RCA ${formatNumber(k.incomplete_by_field.rca)}`,
-  ].filter(Boolean).join(' · ');
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5" aria-label="RCA summary KPIs">
+    <section className="grid gap-3 sm:grid-cols-3" aria-label="RCA summary KPIs">
       {card('Total RCA records', formatNumber(k.records), 'Incidents with an RCA in the filter')}
       {card('Distinct affected sites', formatNumber(k.affected_sites), 'Sites with at least one RCA record')}
       {card('Total recorded outage', k.outage_minutes == null ? 'Not recorded' : `${formatNumber(Math.round(k.outage_minutes))} min`,
         k.records_with_minutes === k.records ? 'Outage Min. of every record' : `From ${formatNumber(k.records_with_minutes)} records with a value`)}
-      {card(k.missing_label, formatNumber(k.incomplete_records),
-        `Of ${formatNumber(k.rca_applicable_records)} RCA-applicable records${k.completeness_pct == null ? '' : ` · ${k.completeness_pct.toFixed(1)}% complete`}${incompleteParts ? ` · blank or "-": ${incompleteParts}` : ''}`,
-        k.incomplete_records ? 'text-amber-700' : undefined, k.incomplete_records ? '/rca?rca=missing' : undefined)}
-      {card(na.label, formatNumber(na.records),
-        `Final Bucket "${na.final_buckets.join('", "')}": kept separate, not counted as missing${na.blank_bucket_2 ? ` (${formatNumber(na.blank_bucket_2)} have Bucket - 2 "-")` : ''}`,
-        'text-muted-foreground', na.records ? '/rca?rca=not_applicable' : undefined)}
     </section>
   );
 }

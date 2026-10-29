@@ -111,7 +111,22 @@ export interface RcaCircle {
   minutes_per_portfolio_site: number | null;
 }
 
+/** Circle-wise Root Cause Breakdown: RCA records per circle and Final Bucket reporting column (null = empty cell). */
+export interface RcaBreakdown {
+  /** Last reporting date included (the selected end date, or the latest record date). */
+  through: string | null;
+  columns: { label: string; pending: boolean; final_buckets: string[] }[];
+  rows: { circle: string; has_records: boolean; counts: Record<string, number | null>; grand_total: number | null; not_mapped: number | null }[];
+  totals: Record<string, number | null>;
+  grand_total: number;
+  percent_of_total: Record<string, number | null>;
+  not_mapped: { records: number; values: { final_bucket: string; records: number }[] };
+  records: number;
+  empty: boolean;
+}
+
 export interface RcaSummary {
+  breakdown: RcaBreakdown;
   kpis: {
     records: number;
     affected_sites: number;

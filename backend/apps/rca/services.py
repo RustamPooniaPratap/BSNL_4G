@@ -16,9 +16,10 @@ import logging
 from collections import Counter, defaultdict
 from datetime import date
 
-from django.db.models import Count, OuterRef, Q, QuerySet, Subquery, Sum
+from django.db.models import Count, Max, OuterRef, Q, QuerySet, Subquery, Sum
 from rest_framework.exceptions import ValidationError
 
+from .breakdown import breakdown
 from .models import RcaCauseCategory, RcaCauseMapping, RcaRecord, RcaWorkflow
 
 logger = logging.getLogger(__name__)
@@ -258,7 +259,16 @@ def summary(params) -> dict:
     no_text = qs.filter(rca_key='').aggregate(records=Count('id'), minutes=Sum('outage_minutes'))
 
     top = qs.select_related('workflow').filter(outage_minutes__isnull=False).order_by('-outage_minutes', 'id')[:15]
+    # Circle-wise Root Cause Breakdown: every circle of the selected project (site master), or the selected circle.
+    if params.get('circle'):
+        breakdown_circles = [params['circle']]
+    else:
+        breakdown_circles = sorted({c for (t, c) in (population or {}) if not params.get('project') or t == params['project']})
+    end = _date(params.get('date'), 'date') or _date(params.get('date_to'), 'date_to')
+    latest = qs.aggregate(latest=Max('reporting_date'))['latest']
+    through = (end or latest).isoformat() if (end or latest) else None
     return {
+        'breakdown': breakdown(qs, circles=breakdown_circles, through=through),
         'kpis': {
             'records': totals['records'], 'affected_sites': sites, 'outage_minutes': _round(totals['minutes']),
             'records_with_minutes': totals['with_minutes'],

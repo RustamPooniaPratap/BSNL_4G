@@ -7,7 +7,7 @@ import { Sidebar } from '../../components/Sidebar';
 import * as api from '../../services/api';
 import { CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
 import type { AuthUser } from '../../types';
-import type { RcaCauses, RcaOptions, RcaPage, RcaRecord, RcaRecordDetail, RcaSummary } from '../../types/rca';
+import type { RcaBreakdown, RcaCauses, RcaOptions, RcaPage, RcaRecord, RcaRecordDetail, RcaSummary } from '../../types/rca';
 import { RcaMappingPage } from './RcaMappingPage';
 import { RcaRegisterPage } from './RcaRegisterPage';
 import { RcaSummaryPage } from './RcaSummaryPage';
@@ -34,7 +34,27 @@ const REC: RcaRecord = {
 };
 const PAGE: RcaPage = { count: 2, page: 1, page_size: 25, pages: 1, results: [REC, { ...REC, id: 2, site_id: 'LWEBH0063', project: 'LWE', project_raw: 'LWE', circle: 'BH', outage_minutes: 20.6, bucket_2: 'BSNL Media', bucket_2_unclassified: false, rca_text: 'Media Flacuatation' }] };
 const DETAIL: RcaRecordDetail = { ...REC, source_file: 'Book1_RCA_Rustam.xlsx', source_row: 7, batch: 1, created_by: null, created_at: '2026-10-26T09:05:00', workflow: null, comments: [], history: [], other_records: [] };
+const BREAKDOWN_LABELS = ['PTPL-Battery', 'PTPL-OFC', 'PTPL-Techn', 'PTPL-Others', 'BSNL-OFC', 'BSNL-Media', 'BSNL-Link', 'BSNL-Others', 'BBNL-OFC',
+  'DMW', 'HFCL', 'Iaasp Link', 'Iaasp OFC', 'Iaasp Others', 'Iaasp Power', 'TCS', 'Tech Delay', 'Theft', 'Vsat', 'Others'];
+const counts = (values: Record<string, number>, empty = false) =>
+  Object.fromEntries(BREAKDOWN_LABELS.map((l) => [l, empty || l === 'BSNL-Link' ? null : (values[l] ?? 0)]));
+const BREAKDOWN: RcaBreakdown = {
+  through: '2026-10-26',
+  columns: BREAKDOWN_LABELS.map((label) => ({ label, pending: label === 'BSNL-Link', final_buckets: label === 'BSNL-Link' ? [] : [label] })),
+  rows: [
+    { circle: 'AP', has_records: false, counts: counts({}, true), grand_total: null, not_mapped: null },
+    { circle: 'MP', has_records: true, counts: counts({ 'BSNL-OFC': 30, Others: 10 }), grand_total: 40, not_mapped: 5 },
+    { circle: 'OD', has_records: true, counts: counts({ 'BSNL-OFC': 20, TCS: 40 }), grand_total: 60, not_mapped: 0 },
+  ],
+  totals: counts({ 'BSNL-OFC': 50, TCS: 40, Others: 10 }),
+  grand_total: 100,
+  percent_of_total: Object.fromEntries(BREAKDOWN_LABELS.map((l) => [l, l === 'BSNL-Link' ? null : ({ 'BSNL-OFC': 50, TCS: 40, Others: 10 } as Record<string, number>)[l] ?? 0])),
+  not_mapped: { records: 5, values: [{ final_bucket: 'BB', records: 5 }] },
+  records: 105,
+  empty: false,
+};
 const SUMMARY: RcaSummary = {
+  breakdown: BREAKDOWN,
   kpis: { records: 1819, affected_sites: 1819, outage_minutes: 632278.77, records_with_minutes: 1819, incomplete_records: 223, incomplete_by_field: { final_bucket: 0, bucket_2: 223, rca: 0 },
     missing_label: 'RCA Required — Missing Information', rca_applicable_records: 743, completeness_pct: 70,
     rca_not_applicable: { label: 'Other Media — RCA Not Applicable', final_buckets: ['Other Media'], records: 1076, outage_minutes: 155583.67, blank_bucket_2: 120 } },
@@ -129,24 +149,13 @@ describe('RCA Summary', () => {
     renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary' });
     expect(await screen.findByText(/Single-date snapshot: 21 Oct 2026/)).toBeInTheDocument();
     expect(within(screen.getByRole('group', { name: 'Total RCA records' })).getByText('1,819')).toBeInTheDocument();
-    // Missing information counts RCA-applicable records only; Other Media is its own group, not missing.
-    const missing = screen.getByRole('group', { name: 'RCA Required — Missing Information' });
-    expect(within(missing).getByText('223')).toBeInTheDocument();
-    expect(within(missing).getByText(/Of 743 RCA-applicable records · 70.0% complete · blank or "-": Bucket - 2 223/)).toBeInTheDocument();
-    expect(within(missing).getByRole('link', { name: 'View records →' })).toHaveAttribute('href', '/rca?rca=missing');
-    const na = screen.getByRole('group', { name: 'Other Media — RCA Not Applicable' });
-    expect(within(na).getByText('1,076')).toBeInTheDocument();
-    expect(within(na).getByText(/not counted as missing \(120 have Bucket - 2 "-"\)/)).toBeInTheDocument();
-    expect(screen.queryByText('Unclassified or incomplete')).not.toBeInTheDocument();
-    // The reporting cycle of the date: received versus required, the pending circles and the partial report.
-    const cycle = screen.getByLabelText('Reporting period');
-    expect(within(cycle).getByText(/Latest reporting period 21 Oct 2026 · October 2026 RCA Report/)).toBeInTheDocument();
-    expect(within(cycle).getByText('1 of 3 expected projects / circles have accepted data')).toBeInTheDocument();
-    expect(within(cycle).getByText(/Pending: RJ 4G, BH LWE\./)).toBeInTheDocument();
-    expect(within(cycle).getByText('The figures below follow the filters above, not only this period.')).toBeInTheDocument();
-    expect(within(cycle).getByRole('link', { name: 'Partial report (Excel)' })).toHaveAttribute('href', expect.stringContaining('/rca/cycles/4/report.xlsx'));
-    const projects = within(screen.getByLabelText('Project-wise summary')).getAllByRole('row');
-    expect(within(projects[2]).getAllByRole('cell').map((c) => c.textContent)).toEqual(['LWE', '473', '1,22,820 min', '473', '376', '73']);
+    // Only the three totals remain: the reporting-period panel and the missing-information / Other Media cards were removed.
+    expect(within(screen.getByRole('region', { name: 'RCA summary KPIs' })).getAllByRole('group').map((g) => g.getAttribute('aria-label')))
+      .toEqual(['Total RCA records', 'Distinct affected sites', 'Total recorded outage']);
+    expect(screen.queryByRole('group', { name: 'RCA Required — Missing Information' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Other Media — RCA Not Applicable' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Reporting period')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Project-wise summary')).not.toBeInTheDocument();  // removed from the summary
     const title = 'RCA classification: Final Bucket';
     // Technical causes are ranked; Other Media follows, labelled as not applicable, even though it has the most records.
     expect(bars(title).map((t) => t!.split(/\d/)[0])).toEqual(['BSNL OFC', 'BBNL OFC', 'Other Media — RCA not applicable']);
@@ -174,6 +183,32 @@ describe('RCA Summary', () => {
     renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary' });
     expect(await screen.findByText(/394 distinct RCA texts/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'OD0001' })).toHaveAttribute('href', '/rca?record=1');
+  });
+
+  it('shows the circle-wise root cause breakdown below the KPIs, reconciled and refreshed with the period', async () => {
+    const user = userEvent.setup();
+    m.fetchRcaOptions.mockResolvedValue({ ...OPTIONS, dates: ['2026-10-21', '2026-10-22'], months: [] });
+    renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary' });
+    const table = await screen.findByRole('region', { name: 'Circle-wise Root Cause Breakdown' });
+    expect(table.previousElementSibling!.querySelectorAll('[role=group]').length).toBeGreaterThan(0);  // directly after the KPI cards
+    expect(within(table).getByText('Through 26 Oct 2026 · Final Bucket, filtered as above')).toBeInTheDocument();
+    const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toEqual(['Circle', ...BREAKDOWN_LABELS.map((l) => (l === 'BSNL-Link' ? 'BSNL-Linkpending' : l)), 'Grand Total', 'Not mapped']);
+    const row = (name: string) => within(table).getByRole('row', { name }).querySelectorAll('th, td');
+    const at = (name: string, label: string) => row(name)[headers.indexOf(label)].textContent;
+    expect([at('RCA % of Total', 'BSNL-OFC'), at('RCA % of Total', 'TCS'), at('RCA % of Total', 'Grand Total')]).toEqual(['50%', '40%', '100%']);
+    expect([at('Total', 'BSNL-OFC'), at('Total', 'Grand Total'), at('Total', 'Not mapped')]).toEqual(['50', '100', '5']);
+    expect([at('Circle MP', 'BSNL-OFC'), at('Circle MP', 'Grand Total'), at('Circle MP', 'BSNL-Linkpending')]).toEqual(['30', '40', '']);  // pending: empty
+    expect([at('Circle AP', 'BSNL-OFC'), at('Circle AP', 'Grand Total')]).toEqual(['', '']);  // no records: empty, not 0
+    expect(within(table).getByText(/Not mapped \(outside the Grand Total\): BB 5\./)).toBeInTheDocument();
+    m.fetchRcaSummary.mockResolvedValue({ ...SUMMARY, breakdown: { ...BREAKDOWN, through: '2026-10-22', rows: [], totals: counts({}), grand_total: 0, records: 0, empty: true,
+      percent_of_total: counts({}, true), not_mapped: { records: 0, values: [] } } });
+    await user.click(screen.getByRole('combobox', { name: 'Reporting date' }));
+    await user.click(await screen.findByRole('option', { name: '22 Oct 2026' }));
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-22', date_to: '2026-10-22' }), expect.anything());
+    const updated = await screen.findByRole('region', { name: 'Circle-wise Root Cause Breakdown' });
+    expect(await within(updated).findByText('No RCA records match these filters.')).toBeInTheDocument();
+    expect(within(updated).getByText(/^Through 22 Oct 2026/)).toBeInTheDocument();
   });
 
   it('selects one reporting date or a month aggregated from the dates with records', async () => {
