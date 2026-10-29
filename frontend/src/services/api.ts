@@ -336,11 +336,29 @@ export async function previewRawUpload(file: File, details: RawUploadDetails) {
 export const commitRawUpload = (id: number) => send<RawUpload>(`/raw-uploads/${id}/commit/`, { confirm: true });
 export const discardRawUpload = (id: number) => send<RawUpload>(`/raw-uploads/${id}/discard/`);
 export const rawUploadIssuesUrl = (id: number) => `${API_BASE_URL}/raw-uploads/${id}/issues.csv`;
-export const rawExportUrl = (params: { project: string; circle: string; date_from: string; date_to: string; output: 'csv' | 'xlsx' }) =>
-  `${API_BASE_URL}/raw-uploads/export/?${new URLSearchParams(Object.entries(params).filter(([, v]) => v))}`;
 
 // --- CSV arrival tracking ------------------------------------------------------------------------
 
 /** Stored daily-data coverage and raw CSV uploads per project/circle for a date, plus a daily range (Admins). */
 export const fetchArrivalTracker = (params: { date: string; start: string; end: string }, signal?: AbortSignal) =>
   request<ArrivalTracker>('/arrival-tracker/', new URLSearchParams(params), { signal });
+
+// --- Excel report downloads (Daily Uptime Report, Full Consolidated Report) -------------------------------------
+
+export type ReportKind = 'daily' | 'consolidated';
+
+/** Fetch a report from the active data source; the server's message is thrown as an ApiError, never a broken file. */
+export async function downloadReport(kind: ReportKind, params: Record<string, string>, signal?: AbortSignal) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/dashboard/export/${kind}/?${query}`, { credentials: 'include', signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw unreachable();
+  }
+  if (!response.ok) throw await parseError(response);
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `${kind}_report.xlsx`;
+  return { blob: await response.blob(), filename };
+}

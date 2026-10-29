@@ -180,3 +180,8 @@ class TeamSerializer(SnapshotSerializer):
 class TeamMonthlySerializer(TeamSerializer):
     # 'YYYY-MM'; empty means the latest month with data.
     month = serializers.RegexField(r'^\d{4}-\d{2}$', required=False, allow_blank=True, default='')
+
+
+class DailyExportSerializer(SelectionSerializer):
+    """Daily Uptime Report: exactly one reporting date (current or an earlier month with daily values)."""
+    date = serializers.DateField()

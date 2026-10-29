@@ -11,9 +11,10 @@ from rest_framework.response import Response
 from apps.accounts.permissions import AdminForWrites, IsAdminRole
 from apps.common.exceptions import ServiceUnavailable
 
-from . import metrics, store
+from . import metrics, report_export, store
 from .crosscheck import calculation_check
-from .serializers import MonthlySerializer, PeriodSerializer, RecordsSerializer, SnapshotSerializer, TeamMonthlySerializer, TeamSerializer, TrendSerializer
+from .serializers import (DailyExportSerializer, MonthlySerializer, PeriodSerializer, RecordsSerializer, SnapshotSerializer,
+                          TeamMonthlySerializer, TeamSerializer, TrendSerializer)
 from .upload import UploadRejected, accept_upload
 from .workbook import SHEET_NAME, SHEET_ROLES, WorkbookError, get_dataset
 
@@ -338,3 +339,59 @@ def om_heads_view(request):
     """O&M Head per circle from the reference sheet in Data/reference (not part of the Master workbook)."""
     from .reference import om_heads
     return Response(om_heads())
+
+
+# --- Excel downloads (Daily Uptime Report, Full Consolidated Report) ---------------------------------------------
+
+def _export_scope(request, dataset, selection):
+    """The selected project/circle, limited on the server to the circles the user may use (accounts.scope)."""
+    from apps.accounts.scope import allowed_circles
+    return report_export.resolve_scope(dataset, selection.report_type, selection.circle, allowed_circles(request.user))
+
+
+def _source_label(dataset) -> str:
+    from apps.uptimedb.datasource import SOURCES, active_source
+    return f'{SOURCES[active_source()]} ({dataset.workbook_name})'
+
+
+def _xlsx(name: str, data: bytes):
+    from django.http import HttpResponse
+    response = HttpResponse(data, content_type=report_export.XLSX)
+    response['Content-Disposition'] = f'attachment; filename="{name}"'
+    response['Access-Control-Expose-Headers'] = 'Content-Disposition'
+    return response
+
+
+def _export_error(exc: report_export.ExportError):
+    return Response({'error': str(exc), 'details': {}}, status=exc.status)
+
+
+@api_view(['GET'])
+def export_daily_view(request):
+    """Daily Uptime Report (.xlsx) for one date, project and circle, from the active source."""
+    from apps.accounts.audit import audit
+    dataset = _dataset()
+    params = _validated(DailyExportSerializer, request, dataset)
+    try:
+        scope = _export_scope(request, dataset, params['selection'])
+        name, data = report_export.daily_report(dataset, scope, params['date'], _source_label(dataset))
+    except report_export.ExportError as exc:
+        return _export_error(exc)
+    audit('report_exported', request, report='daily', project=scope.project_label, circle=scope.circle_label, date=params['date'].isoformat())
+    return _xlsx(name, data)
+
+
+@api_view(['GET'])
+def export_consolidated_view(request):
+    """Full Consolidated Report (.xlsx, 13 sheets): the month to the reporting date, for the project and circle."""
+    from apps.accounts.audit import audit
+    dataset = _dataset()
+    params = _validated(SnapshotSerializer, request, dataset)
+    try:
+        scope = _export_scope(request, dataset, params['selection'])
+        name, data = report_export.consolidated_report(dataset, scope, params['reporting_date'], _source_label(dataset))
+    except report_export.ExportError as exc:
+        return _export_error(exc)
+    audit('report_exported', request, report='consolidated', project=scope.project_label, circle=scope.circle_label,
+          date=params['reporting_date'].isoformat())
+    return _xlsx(name, data)

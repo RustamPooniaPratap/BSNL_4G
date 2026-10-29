@@ -110,11 +110,12 @@ export function FilterBar({ options, filters, onChange, onReset, canReset, showT
  * The filter card of the dashboard pages, for any page: one compact row of labelled controls that wraps on narrow
  * screens, with page actions at the right. Use <Field> for each control so the labels match.
  */
-export function FilterCard({ label = 'Filters', children, actions, footer }: {
-  label?: string; children: React.ReactNode; actions?: React.ReactNode; footer?: React.ReactNode;
+export function FilterCard({ label = 'Filters', title, children, actions, footer }: {
+  label?: string; title?: React.ReactNode; children: React.ReactNode; actions?: React.ReactNode; footer?: React.ReactNode;
 }) {
   return (
     <Card className="gap-0 rounded-xl px-4 py-2.5 shadow-xs">
+      {title && <h2 className="mb-2 text-sm font-semibold">{title}</h2>}
       {/* Every control is 36 px high, as in the dashboard FilterBar, so labels and controls line up across the row. */}
       <div role="search" aria-label={label}
         className="flex flex-wrap items-end gap-x-3 gap-y-2 [&_[data-slot=select-trigger]]:h-9 [&_input:not([type=checkbox])]:h-9">

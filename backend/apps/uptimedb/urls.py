@@ -14,7 +14,6 @@ urlpatterns = [
     path('raw-uploads/', raw_views.raw_list, name='raw-uploads'),
     path('raw-uploads/options/', raw_views.raw_options, name='raw-upload-options'),
     path('raw-uploads/preview/', raw_views.raw_preview, name='raw-upload-preview'),
-    path('raw-uploads/export/', raw_views.raw_export, name='raw-upload-export'),
     path('raw-uploads/<int:batch_id>/', raw_views.raw_detail, name='raw-upload'),
     path('raw-uploads/<int:batch_id>/rows/', raw_views.raw_rows, name='raw-upload-rows'),
     path('raw-uploads/<int:batch_id>/issues.csv', raw_views.raw_issues_csv, name='raw-upload-issues'),

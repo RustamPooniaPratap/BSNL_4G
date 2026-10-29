@@ -170,15 +170,4 @@ describe('Upload CSV', () => {
     expect(within(screen.getByLabelText('Selected file')).getByText('Validation failed')).toBeInTheDocument();
     expect(steps()).toEqual(['Upload: current', 'Validate & Preview: failed', 'Confirm Import: todo', 'Results: todo']);
   });
-
-  it('links the consolidated export to the chosen filters', async () => {
-    const user = userEvent.setup();
-    renderWithWorkbook(<UploadCsvPage />, { url: '/data/upload-csv', auth: authValue({ user: CI_OD }) });
-    await screen.findByLabelText('Export: project');
-    expect(screen.getByText('Choose the dates to export.')).toBeInTheDocument();
-    await user.type(screen.getByLabelText('From'), '2026-10-01');
-    await user.type(screen.getByLabelText('To'), '2026-10-31');
-    expect(screen.getByRole('link', { name: /Excel/ })).toHaveAttribute('href',
-      expect.stringContaining('/raw-uploads/export/?project=4G+Saturation&date_from=2026-10-01&date_to=2026-10-31&output=xlsx'));
-  });
 });

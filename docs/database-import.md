@@ -63,7 +63,7 @@ manage.py import_uptime --commit <batch> [--conflicts primary|reconciliation]
 | Re-import of the same file | 0 inserted, 0 updated |
 | Reconciliation | Identical results to the Excel source on 42 calculation checks. 66 of 66 sampled cells match. KPIs: 6,726 sites, On-Air 6,418, O&M Start 6,280, MTD 93.30% |
 | Differences, second file | All 4,544 overlapping 4G sites differ somewhere. That file has 21 Oct, so its October totals, buckets and FF counts differ. It also differs in IE/CI names and contacts, EB values, May-26 FF counts (1,941 sites) and 4 daily values |
-| Missing | September daily history: no site-level September workbook was found. September monthly totals are imported. Until a September workbook is imported, database mode cannot compare with the same days of September |
+| Missing | September daily history (added later: 4G on 26 Oct, LWE on 29 Oct, below) |
 
 ## Import of 26 Oct 2026: September daily values (4G)
 
@@ -82,3 +82,24 @@ manage.py import_uptime "<file>.xlsx" --project "4G Saturation" --daily-only
 manage.py import_uptime --commit <batch>
 ```
 The import page offers the same two options.
+
+## Import of 29 Oct 2026: September daily values (LWE)
+
+| | |
+|---|---|
+| Before | September daily data existed for **4G only**: batch #3, 136,290 records, all 4,543 sites in the 4G September file, identical to that file on every site/day. **LWE had none** (0 of 2,182 sites); only its September monthly totals were stored. The dashboard therefore showed no same-days September comparison for any LWE circle. Nothing in the code limits comparisons to 4G: `datasource._build()` loads every earlier month's daily rows into `daily_history`, for every project |
+| File | `Data/reference/LWE Uptime Report day wise - Sept'26.xlsx`, sheet **Day Wise Outage** (header on row 2): one row per site. **Site ID as per Nirikshan** is the master's LWE ID (e.g. `LWEBH0303`); **Circle** is the state name. 1–30 Sep outage minutes, then the same dates again as the uptime fraction |
+| How | `manage.py import_daywise` (`apps/uptimedb/daywise.py`), daily values only. The Master-workbook parser reads only the Up-Time Report layout, and the raw CSV upload takes one date per file, so neither could read this sheet |
+| Matching | ID within the LWE master, and the row's circle must be that site's circle. State names are mapped with the existing aliases (`apps.dashboard.activity.CIRCLES`). No site is created; sites and monthly figures are not changed |
+| Checked first (read only) | 2,182 rows, all matched, 0 rejected. 65,460 site/days, 0 blank, 0 invalid, 0 already stored, 0 conflicts. The uptime run agrees with `1 − outage/1440` on every value. Every site's 30-day sum equals both the file's own Sept total and the stored Sep-26 monthly total (12,272,922.47 minutes overall). 1 value over 1,440 minutes (LWEMH1696, 26 Sep: 1,471.1), stored as in the source and flagged, as for the workbook import |
+| Imported | **65,460** daily records (2,182 sites × 30 days), batch #16, in one transaction. Re-running the same file: 0 inserted, 65,460 identical skipped |
+| Database now | 345,008 daily records. Sep 1–30 for all 4G (4,543) and LWE (2,182) sites. Sites (6,726) and monthly records (87,438) unchanged. Source setting unchanged (PostgreSQL) |
+| Dashboard effect | October figures unchanged for every circle. LWE same-days September comparisons now exist for all 10 circles. LWE September from daily values: 86.902% (On-Air), equal to the monthly total. Per circle, the database reproduces the workbook's Circle Wise Summary "Sept'26 MTD" exactly over **all sites**. With the dashboard's default On-Air scope, CG, MP, MH and WB differ by excluding their non-On-Air sites |
+| Still missing | One RJ 4G site has no September daily values (it is not in the 4G September file) |
+
+**Command line** (the path is always explicit; nothing reads the file at runtime, and a staged copy is kept with the batch):
+```
+manage.py import_daywise "<file>.xlsx" --project LWE            # read-only reconciliation
+manage.py import_daywise "<file>.xlsx" --project LWE --commit   # write; refuses rejected rows unless --allow-rejected
+```
+Stored values that differ from the file are never changed; they are listed as conflicts. Rows that cannot be matched are never written.

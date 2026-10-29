@@ -7,15 +7,12 @@
 """
 from __future__ import annotations
 
-import csv
-import io
 import tempfile
 from pathlib import Path
 
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils import timezone
-from openpyxl import Workbook
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -32,9 +29,8 @@ from .models import DataImportBatch, UptimeSite
 from .raw import parser
 from .raw.rules import PROJECT_RULES
 from .raw.resolvers import RESOLVERS
-from .raw.service import EXPORT_HEADER, PROJECTS, Details, RawUploadRejected, commit, discard, export_rows, preview, rows_page, validation_csv
+from .raw.service import PROJECTS, Details, RawUploadRejected, commit, discard, preview, rows_page, validation_csv
 
-MAX_EXPORT_DAYS = 92
 
 
 def _is_admin(request) -> bool:
@@ -195,55 +191,6 @@ def raw_discard(request, batch_id: int):
         return _error(exc)
     audit('raw_upload_discarded', request, batch=batch.pk)
     return Response(_batch_json(batch))
-
-
-@api_view(['GET'])
-@permission_classes([IsPortalUser])
-def raw_export(request):
-    """Consolidated daily records (PostgreSQL) of approved master sites, limited to the user's circles."""
-    params = request.query_params
-    project = params.get('project') or ''
-    if project not in PROJECTS:
-        raise ValidationError({'project': 'Choose 4G Saturation or LWE.'})
-    start, end = parser.parse_date(params.get('date_from') or ''), parser.parse_date(params.get('date_to') or '')
-    if start is None or end is None or end < start:
-        raise ValidationError({'date_from': 'Enter the first and last reporting dates.'})
-    if (end - start).days >= MAX_EXPORT_DAYS:
-        raise ValidationError({'date_to': f'Export at most {MAX_EXPORT_DAYS} days at a time.'})
-    allowed = allowed_circles(request.user)
-    circle = (params.get('circle') or '').upper()
-    if circle:
-        if not may_use_circle(request.user, circle):
-            raise PermissionDenied(f'You are not assigned to circle {circle}.')
-        circles = [circle]
-    else:
-        circles = None if allowed is None else sorted(allowed)
-        if circles == []:
-            raise PermissionDenied('No circle is assigned to your account.')
-    rows = export_rows(project=project, circles=circles, date_from=start, date_to=end)
-    audit('raw_data_exported', request, project=project, circle=circle or 'all permitted', rows=len(rows))
-    stem = f'daily_{project.replace(" ", "_")}_{circle or "circles"}_{start.isoformat()}_{end.isoformat()}'
-    if params.get('output') == 'xlsx':  # not "format": DRF reserves that parameter for its renderers
-        book = Workbook()
-        ws = book.active
-        ws.title = 'Daily records'
-        ws.append(EXPORT_HEADER)
-        for row in rows:
-            ws.append(row)
-        if not rows:
-            ws.append(['No daily records for these filters.'])
-        out = io.BytesIO()
-        book.save(out)
-        response = HttpResponse(out.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        response['Content-Disposition'] = f'attachment; filename="{stem}.xlsx"'
-        return response
-    out = io.StringIO()
-    writer = csv.writer(out)
-    writer.writerow(EXPORT_HEADER)
-    writer.writerows(rows)
-    response = HttpResponse('﻿' + out.getvalue(), content_type='text/csv; charset=utf-8')
-    response['Content-Disposition'] = f'attachment; filename="{stem}.csv"'
-    return response
 
 
 def _query_date(request, name: str):

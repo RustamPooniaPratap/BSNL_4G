@@ -332,17 +332,3 @@ def validation_csv(batch: DataImportBatch) -> str:
                          r['raw_availability'], '' if r['outage_minutes'] is None else r['outage_minutes'], r['status'], r['code'],
                          r['message'] or r['label']])
     return out.getvalue()
-
-
-EXPORT_HEADER = ['master_site_id', 'site_name', 'project', 'circle', 'reporting_date', 'availability_pct', 'outage_minutes',
-                 'source', 'source_file', 'import_batch']
-
-
-def export_rows(*, project: str, circles: list[str] | None, date_from: date, date_to: date) -> list[list]:
-    """Daily records of approved master sites (the daily table only references master sites), one per site and day."""
-    qs = SiteDailyPerformance.objects.filter(site__project=project, date__range=(date_from, date_to), outage_minutes__isnull=False)
-    if circles is not None:
-        qs = qs.filter(site__circle__in=circles)
-    qs = qs.select_related('site', 'batch').order_by('date', 'site__circle', 'site__site_key')
-    return [[r.site.site_id, r.site.site_name, r.site.project, r.site.circle, r.date.isoformat(), r.uptime_pct,
-             round(r.outage_minutes, 4), r.batch.get_kind_display(), r.batch.original_filename, r.batch_id] for r in qs]

@@ -9,8 +9,8 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { Field, FilterCard } from '../../components/dashboard/FilterBar';
 import { SelectField } from '../../components/data/DataEntry';
+import { ReportDownloadCard } from '../../components/data/ReportDownload';
 import { PageHeading } from '../../context/pageHeader';
 import { useAuth } from '../../context/auth';
 import { useWorkbook } from '../../context/workbook';
@@ -19,7 +19,7 @@ import { formatBytes } from '../../lib/dataEntry';
 import { formatDate, formatDateTime, formatNumber } from '../../lib/format';
 import {
   commitRawUpload, discardRawUpload, fetchRawUploadOptions, fetchRawUploadRows, fetchRawUploads, fetchRawUpload, previewRawUpload,
-  rawExportUrl, rawUploadIssuesUrl,
+  rawUploadIssuesUrl,
 } from '../../services/api';
 import type { RawProject, RawRowStatus, RawUpload, RawUploadOptions } from '../../types/rawUpload';
 
@@ -106,7 +106,7 @@ export function UploadCsvPage() {
         <Alert variant="destructive" role="alert"><CircleAlert /><AlertTitle>The import did not complete</AlertTitle><AlertDescription>{error.message} Nothing was saved.</AlertDescription></Alert>
       )}
       <div className="grid items-start gap-4 xl:grid-cols-5">
-        {o && <div className="xl:col-span-2"><ExportCard options={o} /></div>}
+        {o && <div className="xl:col-span-2"><ReportDownloadCard options={o} /></div>}
         <Card className="gap-2 rounded-xl px-4 py-3 xl:col-span-3" aria-label="My uploads">
           <div className="flex items-center gap-2">
             <History className="size-4 text-muted-foreground" aria-hidden="true" />
@@ -483,35 +483,4 @@ function statusOf(code: string): RawRowStatus {
     date_mismatch: 'date', invalid_date: 'date',
   };
   return groups[code] ?? 'other';
-}
-
-function ExportCard({ options }: { options: RawUploadOptions }) {
-  const [project, setProject] = useState<RawProject>('4G Saturation');
-  const circles = options.projects.find((p) => p.value === project)?.circles ?? [];
-  const [circle, setCircle] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const ready = from && to && (options.assigned_circles == null || options.assigned_circles.length > 0);
-  const url = (output: 'csv' | 'xlsx') => rawExportUrl({ project, circle, date_from: from, date_to: to, output });
-  return (
-    <FilterCard label="Export consolidated daily data"
-      footer="Daily records stored in the database for approved master sites of the chosen project, limited to your circles; one row per site and day."
-      actions={ready ? (
-        <>
-          <Button asChild variant="outline" className="h-9"><a href={url('csv')}><Download /> CSV</a></Button>
-          <Button asChild variant="outline" className="h-9"><a href={url('xlsx')}><Download /> Excel</a></Button>
-        </>
-      ) : <span className="pb-2 text-xs text-muted-foreground">Choose the dates to export.</span>}>
-      <Field id="export-project" label="Export: project" className="w-40">
-        <SelectField id="export-project" value={project} placeholder="Project" onChange={(v) => { setProject(v as RawProject); setCircle(''); }}
-          options={options.projects.map((p) => ({ value: p.value, label: p.value }))} />
-      </Field>
-      <Field id="export-circle" label="Circle" className="w-36">
-        <SelectField id="export-circle" value={circle || 'all'} placeholder="Circle" onChange={(v) => setCircle(v === 'all' ? '' : v)}
-          options={[{ value: 'all', label: options.assigned_circles == null ? 'All circles' : 'All my circles' }, ...circles.map((c) => ({ value: c, label: c }))]} />
-      </Field>
-      <Field id="export-from" label="From" className="w-40"><Input id="export-from" type="date" className="h-9" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-      <Field id="export-to" label="To" className="w-40"><Input id="export-to" type="date" className="h-9" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></Field>
-    </FilterCard>
-  );
 }

@@ -16,7 +16,6 @@ from unittest import mock
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
-from openpyxl import load_workbook
 
 from apps.accounts.scope import set_circles
 from apps.uptimedb import datasource
@@ -377,22 +376,6 @@ class ExportAndDashboardTests(RawUploadTestCase):
         self.commit(mp['id'])
         self.client.force_login(self.ci_od)
         return self.commit(body['id']).json()
-
-    def test_the_export_is_limited_to_the_users_circles(self):
-        self.import_od()
-        params = {'project': '4G Saturation', 'date_from': '2026-10-01', 'date_to': '2026-10-31'}
-        lines = list(csv.reader(io.StringIO(self.client.get(reverse('raw-upload-export'), params).content.decode('utf-8-sig'))))
-        self.assertEqual(lines[0][:7], ['master_site_id', 'site_name', 'project', 'circle', 'reporting_date', 'availability_pct', 'outage_minutes'])
-        self.assertEqual([(l[0], l[3], l[6]) for l in lines[1:]], [('UVOR001', 'OD', '64.8'), ('UVOR002', 'OD', '0.0')])  # no MP row
-        self.assertEqual(self.client.get(reverse('raw-upload-export'), {**params, 'circle': 'MP'}).status_code, 403)
-        self.client.force_login(self.admin)
-        book = load_workbook(io.BytesIO(self.client.get(reverse('raw-upload-export'), {**params, 'output': 'xlsx'}).content))
-        self.assertEqual(sorted(r[3] for r in book.active.iter_rows(min_row=2, values_only=True)), ['MP', 'OD', 'OD'])
-        empty = list(csv.reader(io.StringIO(self.client.get(reverse('raw-upload-export'), {**params, 'date_from': '2026-09-01', 'date_to': '2026-09-30'})
-                                              .content.decode('utf-8-sig'))))
-        self.assertEqual(len(empty), 1)
-        self.client.force_login(self.ci_none)
-        self.assertEqual(self.client.get(reverse('raw-upload-export'), params).status_code, 403)
 
     def test_the_database_dashboard_shows_the_import_and_the_source_setting_is_unchanged(self):
         AppSetting.objects.create(key=datasource.SOURCE_KEY, value=datasource.EXCEL)
