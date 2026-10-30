@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   BriefcaseBusiness, ChevronRight, ClipboardPen, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
-  LayoutDashboard, MapPinPlus, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy,
+  LayoutDashboard, MapPinPlus, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy, Table2, ListTree, MapPinned, ChartLine, Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { canOpen, useAuth } from '../context/auth';
@@ -15,6 +15,8 @@ interface NavItem {
   label: string;
   icon: Icon;
   isActive: IsActive;
+  /** While the current page is under this path, the link keeps the current query (e.g. the RCA Summary filters). */
+  keepQueryWithin?: string;
 }
 
 /**
@@ -56,7 +58,18 @@ const entries: NavEntry[] = [
   },
   { kind: 'heading', heading: 'RCA' },
   { kind: 'link', item: page('/rca', 'RCA Register', ClipboardList) },
-  { kind: 'link', item: page('/rca/summary', 'RCA Summary', ChartBar) },
+  {
+    kind: 'group', id: 'rca-summary', label: 'RCA Summary', icon: ChartBar,
+    // The label opens the Overview (highlighted as the Overview child); links inside the section keep its filters.
+    link: { ...page('/rca/summary', 'RCA Summary', ChartBar), isActive: () => false, keepQueryWithin: '/rca/summary' },
+    items: [
+      { ...page('/rca/summary', 'Overview', LayoutDashboard), keepQueryWithin: '/rca/summary' },
+      { ...page('/rca/summary/breakdown', 'Circle-wise RCA Breakdown', Table2), keepQueryWithin: '/rca/summary' },
+      { ...page('/rca/summary/root-causes', 'Root Cause Analysis', ListTree), keepQueryWithin: '/rca/summary' },
+      { ...page('/rca/summary/circles', 'Project & Circle Analysis', MapPinned), keepQueryWithin: '/rca/summary' },
+      { ...page('/rca/summary/trends', 'Daily & Monthly Trends', ChartLine), keepQueryWithin: '/rca/summary' },
+    ],
+  },
   { kind: 'link', item: page('/rca/submissions', 'RCA Submissions', ClipboardCheck) },
   { kind: 'link', item: page('/rca/import', 'Upload RCA Data', FileUp) },
   { kind: 'heading', heading: 'Data' },
@@ -69,7 +82,8 @@ const entries: NavEntry[] = [
     items: [page('/data/add-row', 'Add Row', ClipboardPen), page('/data/upload-csv', 'Upload CSV', Sheet), page('/data/new-site', 'Add Site', MapPinPlus)],
   },
   { kind: 'group', id: 'csv-arrival', label: 'CSV Arrival & Follow-up', icon: Inbox, items: [page('/daily-ingestion', 'CSV Arrival Tracking', Inbox)] },
-  { kind: 'section', heading: 'Administration', items: [page('/admin/users', 'Users & Roles', UserCog)] },
+  { kind: 'section', heading: 'Administration', items: [page('/admin/users', 'Users & Roles', UserCog),
+    { ...page('/admin/organization', 'Organization', Building2), isActive: (p) => p === '/admin/organization' || p.startsWith('/admin/organization/') }] },
 ];
 
 const groupIsActive = (entry: Extract<NavEntry, { kind: 'group' }>, pathname: string, params: URLSearchParams) =>
@@ -116,7 +130,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     const ItemIcon = item.icon;
     return (
       <Link
-        to={item.to}
+        to={item.keepQueryWithin && location.pathname.startsWith(item.keepQueryWithin) ? `${item.to}${location.search}` : item.to}
         onClick={onNavigate}
         aria-current={active ? 'page' : undefined}
         className={cn(

@@ -37,7 +37,6 @@ from .importer import SOURCE_FIELDS
 from .models import RcaImportBatch, RcaRecord, RcaReport, RcaReportingCycle, RcaRequiredSubmission
 
 logger = logging.getLogger(__name__)
-PROJECTS = ('4G Saturation', 'LWE')
 STATUS_LABELS = {
     'unconfigured': 'Expected scope not configured', 'awaiting': 'Awaiting data', 'review': 'Upload awaiting confirmation',
     'partial': 'Partially received', 'ready': 'Ready for final report', 'final': 'Final report generated',
@@ -99,14 +98,16 @@ def default_units(before: date | None = None) -> list[tuple[str, str]]:
 
 
 def validate_units(raw) -> list[tuple[str, str]]:
-    from . import parser
+    """Expected units must be active project/circle associations of the Organization."""
+    from apps.organization.services import associations
+    known = set(associations(active_only=True))
     units = []
     for item in raw or []:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             raise CycleError('Each expected unit is a [project, circle] pair.')
         project, circle = str(item[0]), str(item[1]).upper()
-        if project not in PROJECTS or circle not in parser.CIRCLE_CODES:
-            raise CycleError(f'"{project} / {circle}" is not a known project and circle.')
+        if (project, circle) not in known:
+            raise CycleError(f'"{project} / {circle}" is not an active project and circle of the Organization.')
         units.append((project, circle))
     return sorted(set(units))
 

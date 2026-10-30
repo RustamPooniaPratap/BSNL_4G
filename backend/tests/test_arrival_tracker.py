@@ -7,6 +7,7 @@ from datetime import date
 
 from django.urls import reverse
 
+from apps.organization.services import associations
 from apps.uptimedb import arrivals
 from apps.uptimedb.models import DataImportBatch, SiteDailyPerformance, UptimeSite
 from tests.auth_helpers import portal_user
@@ -81,7 +82,23 @@ class CoverageTests(ArrivalTrackerTestCase):
         lwe = self.item(body, project='LWE')
         self.assertEqual((lwe['data_state'], lwe['sites_with_data'], lwe['sites_expected'], lwe['upload_state']), ('complete', 1, 1, 'none'))
         self.assertEqual(self.item(self.get('2026-10-13'), project='LWE')['data_state'], 'none')
-        self.assertEqual([(i['project'], i['circle']) for i in body['items']], [('4G Saturation', 'MP'), ('4G Saturation', 'OD'), ('LWE', 'OD')])
+        with_sites = [(i['project'], i['circle']) for i in body['items'] if i['sites_total']]
+        self.assertEqual(with_sites, [('4G Saturation', 'MP'), ('4G Saturation', 'OD'), ('LWE', 'OD')])
+
+    def test_associations_without_master_sites_are_listed_without_any_obligation(self):
+        body = self.get('2026-10-12')
+        rj = self.item(body, circle='RJ')  # 4G Saturation RJ is an Organization association; this test has no RJ sites
+        self.assertEqual((rj['data_state'], rj['sites_total'], rj['sites_expected'], rj['coverage_pct'], rj['upload_state']),
+                         ('no_scope', 0, 0, None, 'none'))
+        self.assertEqual({(i['project'], i['circle']) for i in body['items']}, set(associations()) | {('4G Saturation', 'MP'), ('4G Saturation', 'OD'), ('LWE', 'OD')})
+
+    def test_a_project_s_upload_never_counts_for_the_other_project_of_the_same_circle(self):
+        DataImportBatch.objects.create(kind='raw_daily_csv', project='4G Saturation', circle='OD', reporting_date=date(2026, 10, 12),
+                                       original_filename='od-4g.csv', checksum_sha256='z', sheet_name='', stored_path='-',
+                                       status=DataImportBatch.Status.COMMITTED)
+        body = self.get('2026-10-12')
+        self.assertEqual(self.item(body, project='4G Saturation', circle='OD')['upload_state'], 'imported')
+        self.assertEqual(self.item(body, project='LWE', circle='OD')['upload_state'], 'none')
 
     def test_each_date_returns_its_own_results(self):
         self.store(OD_4G, date(2026, 10, 12))
@@ -169,6 +186,7 @@ class PermissionTests(ArrivalTrackerTestCase):
 
     def test_circle_scope_limits_every_figure(self):
         self.store(OD_4G, date(2026, 10, 12))
-        body = arrivals.tracker(date(2026, 10, 12), {'MP'})
+        body = arrivals.tracker(date(2026, 10, 12), {('4G Saturation', 'MP')})
         self.assertEqual([(i['project'], i['circle']) for i in body['items']], [('4G Saturation', 'MP')])
+        self.assertEqual([(i['project'], i['circle']) for i in arrivals.tracker(date(2026, 10, 12), {('LWE', 'OD')})['items']], [('LWE', 'OD')])
         self.assertEqual(arrivals.tracker(date(2026, 10, 12), set())['items'], [])

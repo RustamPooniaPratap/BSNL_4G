@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'apps.accounts',
     'apps.uptimedb',
     'apps.rca',
+    'apps.organization',
 ]
 
 MIDDLEWARE = [

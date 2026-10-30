@@ -14,6 +14,7 @@ import { useTracking } from '../context/tracking';
 import { PageHeading } from '../context/pageHeader';
 import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { useOrganization } from '../hooks/useOrganization';
 import { useDashboardFilters } from '../hooks/useDashboardFilters';
 import { formatDate, formatNumber, formatPct, formatShortDate } from '../lib/format';
 import {
@@ -79,6 +80,7 @@ export function PortfolioPage() {
   const breakdownAll = useApiQuery(k('breakdownAll', q.all), (s) => fetchBreakdowns(q.all, s));
   const breakdownOm = useApiQuery(omAvailable ? k('breakdownOm', q.omStart) : null, (s) => fetchBreakdowns(q.omStart, s));
   const omHeadSheet = useApiQuery(workbook.active ? 'om-heads' : null, fetchOmHeads);
+  const organization = useOrganization();
   const omHeads = Object.fromEntries((omHeadSheet.data?.heads ?? []).map((h) => [`${h.report_type}|${h.circle}`, h.om_head]));
   // On-Air / O&M Start this month vs last month (dated escalation matrix); the month is the selected date's.
   const activityParams = new URLSearchParams();
@@ -141,7 +143,6 @@ export function PortfolioPage() {
   const omSites = omStart.data?.metrics.sites_in_scope ?? null;
   // Per project: the circle-wise breakdowns of the same scopes and filters, summed by report type. A split is
   // shown only when it adds up to its KPI's total, so the lines under a KPI always reconcile with it.
-  const PROJECTS = ['4G Saturation', 'LWE'];
   const byProject = (b: typeof breakdownAll.data | null | undefined) => {
     if (!b) return null;
     const totals = new Map<string, number>();
@@ -149,7 +150,9 @@ export function PortfolioPage() {
     return totals;
   };
   const [scopeBy, onAirBy, omBy] = [byProject(breakdownAll.data), byProject(breakdown.data), omAvailable ? byProject(breakdownOm.data) : null];
-  const projects = PROJECTS.filter((type) => scopeBy?.has(type));
+  // Organization order first; a project in the data but not (yet) in the Organization is still shown, after them.
+  const order = (organization.data?.projects ?? []).map((p) => p.key);
+  const projects = [...order.filter((type) => scopeBy?.has(type)), ...[...(scopeBy?.keys() ?? [])].filter((type) => !order.includes(type)).sort()];
   const split = (counts: Map<string, number> | null, kpiTotal: number | null) => {
     if (!counts || kpiTotal == null) return null;
     const rows = projects.map((project) => ({ project, value: counts.get(project) ?? 0 }));

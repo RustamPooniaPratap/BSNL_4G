@@ -35,7 +35,6 @@ from .models import (RcaCauseCategory, RcaCauseMapping, RcaComment, RcaEvent, Rc
                      RcaReport, RcaReportingCycle, RcaWorkflow)
 
 ALLOWED = ('.xlsx', '.xlsm')
-PROJECTS = ('4G Saturation', 'LWE')
 ADMIN_STATUSES = {RcaWorkflow.Status.CLOSED}
 WORKFLOW_FIELDS = ('status', 'review_status', 'corrective_action', 'owner', 'target_date', 'completed_date', 'verification')
 
@@ -107,12 +106,15 @@ def _manual_fields(data) -> dict:
         errors['reporting_date'] = 'Enter the reporting date.'
     elif day > timezone.localdate():
         errors['reporting_date'] = 'The reporting date cannot be in the future.'
+    from apps.organization import services as organization
     project = data.get('project')
-    if project not in PROJECTS:
-        errors['project'] = 'Choose 4G Saturation or LWE.'
+    if project not in organization.project_keys(active_only=True):
+        errors['project'] = 'Choose an active project.'
     circle = str(data.get('circle') or '').strip().upper()
-    if circle not in parser.CIRCLE_CODES:
+    if not circle:
         errors['circle'] = 'Choose a circle.'
+    elif project and 'project' not in errors and not organization.is_associated(project, circle):
+        errors['circle'] = f'{circle} is not an active circle of {project} (Administration > Organization).'
     site_id = str(data.get('site_id') or '').strip()
     if not site_id:
         errors['site_id'] = 'Enter the Site ID.'
@@ -258,7 +260,8 @@ def import_list(request):
     everyone = _is_admin(request) and request.query_params.get('all') == '1'
     if not everyone:
         qs = qs.filter(imported_by=request.user)
-    return Response({'imports': [_batch_json(b) for b in qs[:100]], 'records': RcaRecord.objects.count(), 'all': everyone})
+    return Response({'imports': [_batch_json(b) for b in qs[:100]], 'records': RcaRecord.objects.count(), 'all': everyone,
+                     'max_bytes': settings.MAX_WORKBOOK_BYTES})  # shown on the upload page; the upload itself checks it
 
 
 def _details(data) -> dict:

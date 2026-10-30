@@ -13,6 +13,10 @@ Two independent facts per project/circle and date, never derived from each other
 2. **Raw CSV upload history** (``DataImportBatch`` of kind ``raw_daily_csv``) for the date, with its real lifecycle:
    validated and awaiting confirmation, imported, blocked, failed or discarded.
 
+Rows: every project/circle of the site master, plus each active Organization association without master sites, shown
+as "no scope" (membership alone sets no reporting obligation, and nothing is counted for it). A project's uploads and
+records only ever count for that project: MP 4G data never satisfies MP LWE.
+
 Nothing here writes to the database. Deadlines are not known to the server, so nothing is marked late here.
 """
 from __future__ import annotations
@@ -54,19 +58,32 @@ def data_state(usable: int, expected: int) -> str:
     return 'partial' if usable else 'none'
 
 
-def _pairs(allowed: set[str] | None) -> list[dict]:
-    qs = UptimeSite.objects.order_by()
-    if allowed is not None:
-        qs = qs.filter(circle__in=allowed)
-    rows = qs.values('project', 'circle').annotate(total=Count('id'), on_air=Count('id', filter=Q(on_air=True)))
+Pairs = set[tuple[str, str]]
+
+
+def _in_scope(allowed: Pairs | None, project: str = 'project', circle: str = 'circle') -> Q:
+    """Q limiting rows to the allowed (project, circle) pairs; an empty Q when not limited."""
+    if allowed is None:
+        return Q()
+    q = Q(pk__in=[])
+    for p, c in allowed:
+        q |= Q(**{project: p, circle: c})
+    return q
+
+
+def _pairs(allowed: Pairs | None) -> list[dict]:
+    from apps.organization.services import associations
+    rows = list(UptimeSite.objects.order_by().filter(_in_scope(allowed)).values('project', 'circle')
+                .annotate(total=Count('id'), on_air=Count('id', filter=Q(on_air=True))))
+    have = {(r['project'], r['circle']) for r in rows}
+    rows += [{'project': p, 'circle': c, 'total': 0, 'on_air': 0} for p, c in associations(active_only=True)
+             if (p, c) not in have and (allowed is None or (p, c) in allowed)]
     return sorted(rows, key=lambda r: (r['project'], r['circle']))
 
 
-def _daily_counts(allowed: set[str] | None) -> dict[tuple[str, str], dict[date, dict]]:
+def _daily_counts(allowed: Pairs | None) -> dict[tuple[str, str], dict[date, dict]]:
     """Per project/circle and date: usable and invalid records of On-Air sites, and usable records of any master site."""
-    qs = SiteDailyPerformance.objects.order_by()
-    if allowed is not None:
-        qs = qs.filter(site__circle__in=allowed)
+    qs = SiteDailyPerformance.objects.order_by().filter(_in_scope(allowed, 'site__project', 'site__circle'))
     rows = qs.values('site__project', 'site__circle', 'date').annotate(
         usable=Count('id', filter=_USABLE & Q(site__on_air=True)),
         invalid=Count('id', filter=_INVALID & Q(site__on_air=True)),
@@ -78,10 +95,8 @@ def _daily_counts(allowed: set[str] | None) -> dict[tuple[str, str], dict[date, 
     return out
 
 
-def _provenance(day: date, allowed: set[str] | None) -> dict[tuple[str, str], dict[str, int]]:
-    qs = SiteDailyPerformance.objects.order_by().filter(_USABLE, date=day, site__on_air=True)
-    if allowed is not None:
-        qs = qs.filter(site__circle__in=allowed)
+def _provenance(day: date, allowed: Pairs | None) -> dict[tuple[str, str], dict[str, int]]:
+    qs = SiteDailyPerformance.objects.order_by().filter(_USABLE, _in_scope(allowed, 'site__project', 'site__circle'), date=day, site__on_air=True)
     out: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
     for r in qs.values('site__project', 'site__circle', 'batch__kind').annotate(n=Count('id')):
         out[(r['site__project'], r['site__circle'])][r['batch__kind']] = r['n']
@@ -113,7 +128,7 @@ def _upload_state(uploads: list[dict]) -> str:
     return 'none'
 
 
-def tracker(day: date, allowed: set[str] | None, start: date | None = None, end: date | None = None) -> dict:
+def tracker(day: date, allowed: Pairs | None, start: date | None = None, end: date | None = None) -> dict:
     """Coverage and upload status for ``day``, latest dates per project/circle, and a daily range for gaps."""
     end = end or day
     start = start or end - timedelta(days=DEFAULT_RANGE_DAYS - 1)
@@ -121,8 +136,7 @@ def tracker(day: date, allowed: set[str] | None, start: date | None = None, end:
     provenance = _provenance(day, allowed)
 
     batches = DataImportBatch.objects.select_related('imported_by').filter(kind=DataImportBatch.Kind.RAW_DAILY_CSV).order_by('-uploaded_at')
-    if allowed is not None:
-        batches = batches.filter(circle__in=allowed)
+    batches = batches.filter(_in_scope(allowed))
     uploads_on_day: dict[tuple[str, str], list[dict]] = defaultdict(list)
     latest_upload: dict[tuple[str, str], date] = {}
     latest_import: dict[tuple[str, str], date] = {}

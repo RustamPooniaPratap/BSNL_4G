@@ -15,6 +15,7 @@ import { RcaFilterBar, SourceValue, StatusBadge } from '../../components/rca/Rca
 import { PageHeading } from '../../context/pageHeader';
 import { FILTER_KEYS, formatMin, rcaCoverageText, shortProject, type FilterKey } from '../../lib/rca';
 import { useApiQuery } from '../../hooks/useApiQuery';
+import { activeCirclesOf, useOrganization } from '../../hooks/useOrganization';
 import { formatDate, formatNumber } from '../../lib/format';
 import { createRcaRecord, fetchRcaOptions, fetchRcaRecords } from '../../services/api';
 import type { RcaOptions, RcaRecordInput } from '../../types/rca';
@@ -137,9 +138,6 @@ function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (
   );
 }
 
-const PROJECTS = ['4G Saturation', 'LWE'];
-const CIRCLES = ['AP', 'BH', 'CG', 'JH', 'MH', 'MP', 'OD', 'RJ', 'TL', 'UP', 'WB'];
-
 /** Record a new RCA incident (a site may have several over time). Validated by the server like an import. */
 function NewRecordSheet({ open, options, onClose, onCreated }: { open: boolean; options: RcaOptions; onClose: () => void; onCreated: (id: number) => void }) {
   const empty: RcaRecordInput = { reporting_date: '', project: '', circle: '', site_id: '', site_name: '', oa: '', ba: '', om_start_raw: '', outage_minutes: '', final_bucket: '', bucket_2: '', rca_text: '' };
@@ -148,6 +146,10 @@ function NewRecordSheet({ open, options, onClose, onCreated }: { open: boolean; 
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const set = (key: keyof RcaRecordInput, value: string) => setForm((f) => ({ ...f, [key]: value }));
+  // Active projects, and the active circles of the chosen project (Administration > Organization).
+  const catalog = useOrganization();
+  const projects = (catalog.data?.projects ?? []).filter((p) => p.is_active);
+  const circles = activeCirclesOf(catalog.data, form.project);
   const known = (list: { value: string; label: string; unclassified?: boolean }[]) => list.filter((o) => !o.unclassified).map((o) => o.label);
 
   async function submit() {
@@ -183,10 +185,10 @@ function NewRecordSheet({ open, options, onClose, onCreated }: { open: boolean; 
             <Input id="new-reporting_date" type="date" value={form.reporting_date} onChange={(e) => set('reporting_date', e.target.value)} />
           </Field>
           <Field id="new-project" label="Project" required error={errors.project}>
-            <SelectField id="new-project" value={form.project} placeholder="Choose" onChange={(v) => set('project', v)} options={PROJECTS.map((p) => ({ value: p, label: p }))} />
+            <SelectField id="new-project" value={form.project} placeholder="Choose" onChange={(v) => setForm((f) => ({ ...f, project: v, circle: '' }))} options={projects.map((p) => ({ value: p.key, label: p.name }))} />
           </Field>
           <Field id="new-circle" label="Circle" required error={errors.circle}>
-            <SelectField id="new-circle" value={form.circle} placeholder="Choose" onChange={(v) => set('circle', v)} options={CIRCLES.map((c) => ({ value: c, label: c }))} />
+            <SelectField id="new-circle" value={form.circle} placeholder={form.project ? 'Choose' : 'Choose the project first'} disabled={!circles.length} onChange={(v) => set('circle', v)} options={circles.map((c) => ({ value: c, label: c }))} />
           </Field>
           {text('site_id', 'Site ID', true)}
           {text('site_name', 'Site name')}

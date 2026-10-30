@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from openpyxl.utils import get_column_letter
 
-from apps.dashboard.workbook import CIRCLE_ALIASES, HEADER_ROW, REPORT_TYPES, SHEET_NAME
+from apps.dashboard.workbook import HEADER_ROW, REPORT_TYPES, SHEET_NAME
 
 PLACEHOLDERS = {'', '-', '--', 'na', 'n/a', '#n/a', 'nil', 'null', 'none'}
 MONTH_NUMBERS = {name.lower(): i for i, name in enumerate(calendar.month_abbr) if name}
@@ -134,7 +134,10 @@ class ParsedWorkbook:
 
 
 def parse_workbook(path: Path, *, filename: str | None = None, default_project: str | None = None) -> ParsedWorkbook:
-    """Parse the Up-Time Report sheet. ``default_project`` is used only when the sheet has no Project column."""
+    """Parse the Up-Time Report sheet. ``default_project`` is used only when the sheet has no Project column. Circle
+    names resolve through Organization > Code Mapping, source "Master workbook"."""
+    from apps.organization.services import AliasResolver
+    circles = AliasResolver('master_workbook')
     try:
         raw = pd.read_excel(path, sheet_name=SHEET_NAME, header=None, engine='openpyxl', keep_default_na=False)
     except ValueError as exc:
@@ -246,7 +249,7 @@ def parse_workbook(path: Path, *, filename: str | None = None, default_project: 
         if not circle_raw:
             result.issue('missing_circle', 'rejected', excel_row, site_id, 'No Circle on the row.')
             continue
-        circle = CIRCLE_ALIASES.get(circle_raw, circle_raw)
+        circle = circles.resolve(circle_raw, project) or circle_raw  # unknown: kept as written and reported by the importer
         key = (project, circle, site_key(site_id))
         if key in seen:
             result.issue('duplicate_key', 'rejected', excel_row, site_id, f'Same project, circle and site ID as row {seen[key]}; the first row is kept.')

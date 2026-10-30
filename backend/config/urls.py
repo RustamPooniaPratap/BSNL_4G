@@ -22,4 +22,5 @@ urlpatterns = [
     path('api/dashboard/', include('apps.dashboard.urls')),
     path('api/', include('apps.uptimedb.urls')),
     path('api/rca/', include('apps.rca.urls')),
+    path('api/organization/', include('apps.organization.urls')),
 ]

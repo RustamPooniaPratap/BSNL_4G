@@ -10,7 +10,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Field, SelectField } from '../components/data/DataEntry';
 import { useAuth } from '../context/auth';
+import { AccessEditor } from '../components/organization/AccessEditor';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { projectCode, useOrganization } from '../hooks/useOrganization';
 import { formatDateTime } from '../lib/format';
 import { fieldA11y } from '../lib/dataEntry';
 import { ApiError, createUser, fetchUsers, resetUserPassword, revokeUserSessions, updateUser } from '../services/api';
@@ -104,7 +106,7 @@ export function UsersPage() {
               <Table className="text-xs">
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    <TableHead className="pl-4">Login ID</TableHead><TableHead>Name</TableHead><TableHead className="w-36">Role</TableHead><TableHead>Circles (raw uploads)</TableHead>
+                    <TableHead className="pl-4">Login ID</TableHead><TableHead>Name</TableHead><TableHead className="w-36">Role</TableHead><TableHead>Projects &amp; circles (uploads, exports)</TableHead>
                     <TableHead>Status</TableHead><TableHead>Last sign-in</TableHead><TableHead className="pr-4 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -124,7 +126,7 @@ export function UsersPage() {
                         <TableCell>
                           {u.role === 'ci' && !locked
                             ? <CirclesEditor user={u} onSaved={(text) => { setMessage({ kind: 'ok', text }); reload(); }} onError={(text) => setMessage({ kind: 'error', text })} />
-                            : <span className="text-muted-foreground">All circles</span>}
+                            : <span className="text-muted-foreground">All projects and circles</span>}
                         </TableCell>
                         <TableCell>
                           {u.is_active ? <Badge variant="outline" className="border-emerald-300 text-emerald-800">Active</Badge> : <Badge variant="outline">Deactivated</Badge>}
@@ -218,44 +220,22 @@ function NewUserForm({ onCreated }: { onCreated: (user: PortalUser, password: st
   );
 }
 
-const CIRCLES = ['AP', 'BH', 'CG', 'JH', 'MH', 'MP', 'OD', 'RJ', 'TL', 'UP', 'WB'];
-
-/** The circles a CI user may upload raw daily data for and export (checked again by the server). */
+/** Project/circle access of a CI user (the same editor and grants as Organization > User Access; checked again by the server). */
 function CirclesEditor({ user, onSaved, onError }: { user: PortalUser; onSaved: (message: string) => void; onError: (message: string) => void }) {
   const [open, setOpen] = useState(false);
-  const assigned = user.circles ?? [];
-  const [value, setValue] = useState<string[]>(assigned);
-  const [busy, setBusy] = useState(false);
-  const save = async () => {
-    setBusy(true);
-    try {
-      await updateUser(user.id, { circles: value });
-      setOpen(false);
-      onSaved(value.length ? `${user.username} can upload for ${value.join(', ')}.` : `${user.username} has no circle and cannot upload raw data.`);
-    } catch (e) {
-      onError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  if (!open) {
-    return (
-      <span className="inline-flex items-center gap-1.5">
-        {assigned.length ? assigned.join(', ') : <span className="text-amber-700">None assigned</span>}
-        <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" aria-label={`Edit circles of ${user.username}`} onClick={() => { setValue(assigned); setOpen(true); }}>Edit</Button>
-      </span>
-    );
+  const pairs = user.access ?? [];
+  const legacy = user.legacy_circles ?? [];
+  const catalog = useOrganization();
+  if (open) {
+    return <AccessEditor username={user.username} userId={user.id} pairs={pairs} legacy={legacy} onCancel={() => setOpen(false)}
+      onSaved={(text) => { setOpen(false); onSaved(text); }} onError={onError} />;
   }
   return (
-    <fieldset className="flex max-w-72 flex-wrap items-center gap-x-2 gap-y-1" aria-label={`Circles of ${user.username}`}>
-      {CIRCLES.map((c) => (
-        <label key={c} className="flex items-center gap-1">
-          <input type="checkbox" checked={value.includes(c)} onChange={() => setValue((v) => (v.includes(c) ? v.filter((x) => x !== c) : [...v, c].sort()))} />
-          {c}
-        </label>
-      ))}
-      <Button size="sm" className="h-6 px-2 text-xs" disabled={busy} onClick={() => { void save(); }}>Save</Button>
-      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setOpen(false)}>Cancel</Button>
-    </fieldset>
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      {pairs.map((p) => `${p.circle} · ${projectCode(catalog.data, p.project)}`).join(', ')}
+      {legacy.length > 0 && <span className="text-amber-700" title="Legacy circle-only assignment: applies to every project until reviewed">{legacy.join(', ')} (every project, review)</span>}
+      {!pairs.length && !legacy.length && <span className="text-amber-700">None assigned</span>}
+      <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" aria-label={`Edit circles of ${user.username}`} onClick={() => setOpen(true)}>Edit</Button>
+    </span>
   );
 }

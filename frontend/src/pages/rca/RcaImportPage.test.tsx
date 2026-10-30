@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +14,9 @@ vi.mock('../../services/api', async (importOriginal) => ({
   fetchRcaImports: vi.fn(), fetchRcaImport: vi.fn(), previewRcaImport: vi.fn(), commitRcaImport: vi.fn(), discardRcaImport: vi.fn(),
 }));
 const m = vi.mocked(api);
+/** Each workflow step as "label: state" (from the indicator's data-state). */
+const steps = () => within(screen.getByRole('list', { name: 'Upload progress' })).getAllByRole('listitem')
+  .map((li) => `${li.textContent!.replace(/\s*\(.*\)$/, '').replace(/^\d/, '')}: ${li.getAttribute('data-state')}`);
 const NOC: AuthUser = { username: 'noc.lead', name: 'NOC Lead', role: 'noc_lead', role_label: 'NOC Lead', must_change_password: false };
 
 const REPORT: RcaImportReport = {
@@ -101,6 +104,64 @@ describe('Upload RCA Data', () => {
     expect(m.fetchRcaImport).toHaveBeenCalledWith(20);
     expect(await screen.findByLabelText('Upload summary')).toBeInTheDocument();
     expect(m.fetchRcaImports).toHaveBeenCalledWith(expect.anything());  // own uploads only, never ?all
+  });
+
+  it('matches the Upload CSV layout: steps, details, drop zone, file checks, Replace / Remove and stale previews', async () => {
+    const user = userEvent.setup();
+    m.fetchRcaImports.mockResolvedValue({ imports: [], records: 1819, all: false, max_bytes: 50 * 1024 * 1024 });
+    m.previewRcaImport.mockResolvedValue(PREVIEW);
+    renderWithWorkbook(<RcaImportPage />, { url: '/rca/import', auth: authValue({ user: NOC }) });
+    expect(await screen.findByText(/as \.xlsx or \.xlsm, up to 50\.0 MB/)).toBeInTheDocument();  // the server's configured limit
+    expect(steps()).toEqual(['Upload: current', 'Validate & Preview: todo', 'Confirm Import: todo', 'Results: todo']);
+    expect(screen.getByText('Still needed: report name, reporting date, RCA workbook.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Validate workbook' })).toBeDisabled();
+    const zone = screen.getByText('Upload your RCA workbook').closest('div')!;
+    fireEvent.drop(zone, { dataTransfer: { files: [new File(['x'], 'rca.csv')] } });  // wrong type: refused, never selected
+    expect(screen.getByText('rca.csv: choose the RCA workbook (.xlsx or .xlsm).')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Selected file')).not.toBeInTheDocument();
+    const workbook = new File(['x'], 'Oct_RCA.xlsx');
+    fireEvent.dragOver(zone, { dataTransfer: { files: [workbook] } });
+    expect(screen.getByText('Drop the workbook to select it')).toBeInTheDocument();
+    fireEvent.drop(zone, { dataTransfer: { files: [workbook] } });
+    expect(screen.getByLabelText('Selected file')).toHaveTextContent('Oct_RCA.xlsxExcel workbook');
+    expect(screen.getByLabelText('Selected file')).toHaveTextContent('Ready to validate');
+    await user.type(screen.getByLabelText(/Report name/), 'October 2026 RCA Report');
+    await user.type(screen.getByLabelText(/Reporting date/), '2026-10-21');
+    await user.click(screen.getByRole('button', { name: 'Validate workbook' }));
+    expect(await screen.findByLabelText('Import preview')).toBeInTheDocument();
+    expect(steps()).toEqual(['Upload: done', 'Validate & Preview: done', 'Confirm Import: current', 'Results: todo']);
+    expect(screen.getByLabelText('Selected file')).toHaveTextContent('Validation passed');
+    await user.type(screen.getByLabelText(/Remarks/), ' x');  // a changed detail makes the validation stale
+    expect(screen.queryByLabelText('Import preview')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Remove file' }));
+    expect(screen.queryByLabelText('Selected file')).not.toBeInTheDocument();
+    expect(screen.getByText('Still needed: RCA workbook.')).toBeInTheDocument();
+  });
+
+  it('shows a rejected workbook and a failed import as failures, and success only after the server commits', async () => {
+    const user = userEvent.setup();
+    m.previewRcaImport.mockRejectedValueOnce(new api.ApiError('Oct_RCA.xlsx: no sheet has the RCA columns.', 400));
+    renderWithWorkbook(<RcaImportPage />, { url: '/rca/import', auth: authValue({ user: NOC }) });
+    await user.type(await screen.findByLabelText(/Report name/), 'October 2026 RCA Report');
+    await user.type(screen.getByLabelText(/Reporting date/), '2026-10-21');
+    await user.upload(screen.getByLabelText('RCA workbook'), new File(['x'], 'Oct_RCA.xlsx'));
+    await user.click(screen.getByRole('button', { name: 'Validate workbook' }));
+    expect(await screen.findByText('The workbook could not be validated')).toBeInTheDocument();
+    expect(steps()).toEqual(['Upload: current', 'Validate & Preview: failed', 'Confirm Import: todo', 'Results: todo']);
+    m.previewRcaImport.mockResolvedValue(PREVIEW);
+    m.commitRcaImport.mockRejectedValueOnce(new api.ApiError('The database is unavailable.', 503));
+    await user.click(screen.getByRole('button', { name: 'Validate workbook' }));
+    const preview = await screen.findByLabelText('Import preview');
+    await user.click(within(preview).getByRole('checkbox', { name: /Import the 5 valid rows/ }));
+    await user.click(within(preview).getByRole('button', { name: 'Update with this workbook' }));
+    await user.click(within(preview).getByRole('button', { name: 'Confirm import of 5 valid rows' }));
+    expect(await screen.findByText('The import did not complete')).toBeInTheDocument();
+    expect(screen.queryByText('Import complete')).not.toBeInTheDocument();
+    expect(steps()).toEqual(['Upload: done', 'Validate & Preview: done', 'Confirm Import: failed', 'Results: todo']);
+    m.commitRcaImport.mockResolvedValue(DONE);
+    await user.click(within(screen.getByLabelText('Import preview')).getByRole('button', { name: 'Confirm import of 5 valid rows' }));
+    expect(await screen.findByText('Import complete')).toBeInTheDocument();
+    expect(steps()).toEqual(['Upload: done', 'Validate & Preview: done', 'Confirm Import: done', 'Results: done']);
   });
 
   it('is open to Admins and NOC Leads, not to CI users', () => {

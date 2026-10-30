@@ -34,7 +34,7 @@ from .. import datasource
 from ..models import DataImportBatch, SiteDailyPerformance, UptimeSite
 from . import parser
 from .resolvers import resolver_for
-from .rules import PROJECT_RULES, canonical_circle, outage_minutes, resolve_availability
+from .rules import ALIAS_SOURCE, PROJECT_RULES, canonical_circle, outage_minutes, resolve_availability
 
 PROJECTS = tuple(PROJECT_RULES)
 ROW_PAGE = 100
@@ -96,10 +96,13 @@ def analyse(path: Path, details: Details) -> dict:
         raise RawUploadRejected(f'The site master has no {details.project} sites for circle {details.circle}, so nothing can be '
                                 'validated. Import the Master workbook into the database first.', 409)
 
+    from apps.organization.services import AliasResolver
+    aliases = AliasResolver(ALIAS_SOURCE)
+    circle_of = lambda raw: canonical_circle(raw, details.project, aliases)  # noqa: E731
     file_issues: list[dict] = []
     dates = Counter(parser.parse_date(r.values['report_date']) for r in parsed.rows)
     valid_dates = {d for d in dates if d}
-    circles = Counter(canonical_circle(r.values['circle']) for r in parsed.rows)
+    circles = Counter(circle_of(r.values['circle']) for r in parsed.rows)
     if len(valid_dates) > 1:
         file_issues.append({'code': 'mixed_dates', 'message': 'The file has more than one Report Date ('
                             + ', '.join(f'{d:%d-%m-%Y}: {dates[d]} rows' for d in sorted(valid_dates)) + '). A file must hold one day.'})
@@ -108,7 +111,7 @@ def analyse(path: Path, details: Details) -> dict:
         file_issues.append({'code': 'date_mismatch', 'message': f'The file is for {only:%d-%m-%Y}, not the entered reporting date '
                                                                 f'{details.reporting_date:%d-%m-%Y}.'})
     if set(circles) - {details.circle}:
-        written = sorted({r.values['circle'] for r in parsed.rows if canonical_circle(r.values['circle']) != details.circle})
+        written = sorted({r.values['circle'] for r in parsed.rows if circle_of(r.values['circle']) != details.circle})
         file_issues.append({'code': 'circle_mismatch', 'message': f'The file has rows of circle {", ".join(written)}, not the selected '
                                                                   f'circle {details.circle}.'})
 
@@ -126,7 +129,7 @@ def analyse(path: Path, details: Details) -> dict:
             item.update(code='invalid_date', message=f'Report Date "{v["report_date"]}" is missing or not a date.')
         elif day != details.reporting_date:
             item.update(code='date_mismatch', message=f'Report Date {v["report_date"]} is not {details.reporting_date:%d-%m-%Y}.')
-        elif canonical_circle(v['circle']) != details.circle:
+        elif circle_of(v['circle']) != details.circle:
             item.update(code='circle_mismatch', message=f'Circle "{v["circle"]}" is not {details.circle}.')
         else:
             found = resolver.resolve(v['site_id'])
@@ -244,7 +247,9 @@ def preview(path: Path, filename: str, details: Details, *, user) -> DataImportB
         raise RawUploadRejected(str(exc)) from exc
     rows = result.pop('rows')
     report = {**result, 'rows': [_row_json(i) for i in rows]}
-    previous = DataImportBatch.objects.filter(kind=DataImportBatch.Kind.RAW_DAILY_CSV, checksum_sha256=checksum,
+    # The same file already imported for the same project, circle and date (another project's upload never counts).
+    previous = DataImportBatch.objects.filter(kind=DataImportBatch.Kind.RAW_DAILY_CSV, checksum_sha256=checksum, project=details.project,
+                                              circle=details.circle, reporting_date=details.reporting_date,
                                               status=DataImportBatch.Status.COMMITTED).first()
     report['already_imported'] = {'batch': previous.pk, 'committed_at': previous.committed_at.isoformat()} if previous else None
     nothing = not result['blocked'] and result['summary']['ready_to_import'] == 0

@@ -29,6 +29,7 @@ const RcaMappingPage = lazy(() => import('./pages/rca/RcaMappingPage').then((m) 
 const RcaImportPage = lazy(() => import('./pages/rca/RcaImportPage').then((m) => ({ default: m.RcaImportPage })));
 const RcaSubmissionsPage = lazy(() => import('./pages/rca/RcaSubmissionsPage').then((m) => ({ default: m.RcaSubmissionsPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage').then((m) => ({ default: m.UsersPage })));
+const OrganizationPage = lazy(() => import('./pages/OrganizationPage').then((m) => ({ default: m.OrganizationPage })));
 
 /** The signed-in application: every page here needs a session; Admin-only pages check the role too. */
 function PortalRoutes() {
@@ -54,9 +55,10 @@ function PortalRoutes() {
               {/* The former Raw CSV files page: now CSV arrival tracking (uploads moved to /data/upload-csv). */}
               <Route path="/daily-ingestion" element={<RequireAdmin><CsvArrivalPage /></RequireAdmin>} />
               <Route path="/admin/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
+              <Route path="/admin/organization/*" element={<RequireAdmin><OrganizationPage /></RequireAdmin>} />
               {/* RCA: the register for every role; upload for Admins and NOC Leads; summary, submissions and cause mapping for Admins (the API checks too). */}
               <Route path="/rca" element={<RcaRegisterPage />} />
-              <Route path="/rca/summary" element={<RequireAdmin><RcaSummaryPage /></RequireAdmin>} />
+              <Route path="/rca/summary/*" element={<RequireAdmin><RcaSummaryPage /></RequireAdmin>} />
               <Route path="/rca/mappings" element={<RequireAdmin><RcaMappingPage /></RequireAdmin>} />
               <Route path="/rca/import" element={<RequirePage><RcaImportPage /></RequirePage>} />
               <Route path="/rca/submissions" element={<RequireAdmin><RcaSubmissionsPage /></RequireAdmin>} />

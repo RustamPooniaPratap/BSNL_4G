@@ -1,15 +1,15 @@
-import { useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { Check, CircleAlert, CircleCheck, CloudUpload, Download, FileSpreadsheet, FolderOpen, History, Info, Loader2, MapPin, RefreshCw, ShieldCheck, X } from 'lucide-react';
+import { useState } from 'react';
+import { CircleAlert, CircleCheck, Download, History, Info, Loader2, MapPin, ShieldCheck } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { SelectField } from '../../components/data/DataEntry';
+import { DetailField, FileDropZone, UploadSteps } from '../../components/data/UploadParts';
 import { ReportDownloadCard } from '../../components/data/ReportDownload';
 import { PageHeading } from '../../context/pageHeader';
 import { useAuth } from '../../context/auth';
@@ -21,7 +21,7 @@ import {
   commitRawUpload, discardRawUpload, fetchRawUploadOptions, fetchRawUploadRows, fetchRawUploads, fetchRawUpload, previewRawUpload,
   rawUploadIssuesUrl,
 } from '../../services/api';
-import type { RawProject, RawRowStatus, RawUpload, RawUploadOptions } from '../../types/rawUpload';
+import type { RawRowStatus, RawUpload, RawUploadOptions } from '../../types/rawUpload';
 
 const STATUS: Record<RawRowStatus, { label: string; tone: string }> = {
   ready: { label: 'Ready', tone: 'border-emerald-300 bg-emerald-50 text-emerald-800' },
@@ -49,9 +49,11 @@ export function UploadCsvPage() {
   const [batch, setBatch] = useState<RawUpload | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<{ phase: 'validate' | 'import' | 'other'; message: string } | null>(null);
-  const [form, setForm] = useState<FormState>({ project: '4G Saturation', circle: '', day: '', remarks: '' });
+  const [form, setForm] = useState<FormState>({ project: '', circle: '', day: '', remarks: '' });
   const [file, setFile] = useState<File | null>(null);
   const o = options.data;
+  // Projects come from the Organization (server); the first one is preselected.
+  const project = form.project || o?.projects[0]?.value || '';
   const fixed = o?.assigned_circles?.length === 1 ? o.assigned_circles[0] : null;
   const circle = fixed ?? form.circle;
 
@@ -70,7 +72,7 @@ export function UploadCsvPage() {
   const changeFile = (next: File | null) => { setFile(next); setBatch(null); setError(null); };
   const changeForm = (patch: Partial<FormState>) => { setForm((f) => ({ ...f, ...patch })); setBatch(null); setError(null); };
   const validate = () => file && run('validating', async () => {
-    setBatch(await previewRawUpload(file, { project: form.project, circle, reporting_date: form.day, remarks: form.remarks }));
+    setBatch(await previewRawUpload(file, { project, circle, reporting_date: form.day, remarks: form.remarks }));
     setVersion((v) => v + 1);
   });
 
@@ -89,7 +91,7 @@ export function UploadCsvPage() {
         </Alert>
       )}
       {o && (
-        <UploadPanel options={o} username={user?.username ?? ''} form={form} circle={circle} fixed={fixed} file={file} batch={batch} phase={phase}
+        <UploadPanel options={o} username={user?.username ?? ''} form={{ ...form, project }} circle={circle} fixed={fixed} file={file} batch={batch} phase={phase}
           error={error} onForm={changeForm} onFile={changeFile} onValidate={validate} />
       )}
       {error?.phase === 'other' && <Alert variant="destructive" role="alert"><AlertDescription>{error.message}</AlertDescription></Alert>}
@@ -142,8 +144,7 @@ export function UploadCsvPage() {
 }
 
 type Phase = 'idle' | 'validating' | 'importing' | 'discarding' | 'loading';
-interface FormState { project: RawProject; circle: string; day: string; remarks: string }
-type StepState = 'todo' | 'current' | 'active' | 'done' | 'failed';
+interface FormState { project: string; circle: string; day: string; remarks: string }
 
 /** Upload -> Validate & Preview -> Confirm Import -> Results, from what the server actually reported (never ahead of it). */
 function WorkflowSteps({ batch, phase, error }: { batch: RawUpload | null; phase: Phase; error: 'validate' | 'import' | 'other' | null }) {
@@ -151,46 +152,21 @@ function WorkflowSteps({ batch, phase, error }: { batch: RawUpload | null; phase
   const ready = batch?.status === 'previewed' && !!batch.summary?.ready_to_import;
   const committed = batch?.status === 'committed';
   const validateFailed = (!!batch && !committed && !ready && batch.status !== 'discarded') || error === 'validate';
-  const steps: [string, StepState][] = [
-    ['Upload', accepted ? 'done' : phase === 'validating' ? 'active' : 'current'],
-    ['Validate & Preview', committed || ready ? 'done' : validateFailed ? 'failed' : phase === 'validating' ? 'active' : 'todo'],
-    ['Confirm Import', committed ? 'done' : error === 'import' ? 'failed' : phase === 'importing' ? 'active' : ready ? 'current' : 'todo'],
-    ['Results', committed ? 'done' : 'todo'],
-  ];
   return (
-    <Card className="rounded-xl px-4 py-2.5 shadow-xs">
-      <ol className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs" aria-label="Upload progress">
-        {steps.map(([label, state], i) => (
-          <li key={label} className="flex items-center gap-2" aria-current={state === 'current' || state === 'active' ? 'step' : undefined}
-            data-state={state}>
-            <span className={cn('flex size-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold',
-              state === 'done' && 'border-emerald-600 bg-emerald-600 text-white',
-              state === 'failed' && 'border-destructive bg-destructive text-white',
-              (state === 'current' || state === 'active') && 'border-primary text-primary',
-              state === 'todo' && 'text-muted-foreground')}>
-              {state === 'done' ? <Check className="size-3.5" aria-hidden="true" /> : state === 'failed' ? <X className="size-3.5" aria-hidden="true" />
-                : state === 'active' ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : i + 1}
-            </span>
-            <span className={cn('font-medium', state === 'todo' && 'text-muted-foreground', state === 'failed' && 'text-destructive')}>
-              {label}<span className="sr-only"> ({STEP_TEXT[state]})</span>
-            </span>
-            {i < steps.length - 1 && <span className="mx-1 h-px w-6 bg-border sm:w-10" aria-hidden="true" />}
-          </li>
-        ))}
-      </ol>
-    </Card>
+    <UploadSteps steps={[
+      ['Upload', accepted ? 'done' : phase === 'validating' ? 'active' : 'current'],
+      ['Validate & Preview', committed || ready ? 'done' : validateFailed ? 'failed' : phase === 'validating' ? 'active' : 'todo'],
+      ['Confirm Import', committed ? 'done' : error === 'import' ? 'failed' : phase === 'importing' ? 'active' : ready ? 'current' : 'todo'],
+      ['Results', committed ? 'done' : 'todo'],
+    ]} />
   );
 }
-const STEP_TEXT: Record<StepState, string> = { todo: 'not started', current: 'next', active: 'in progress', done: 'completed', failed: 'did not pass' };
 
 function UploadPanel({ options, username, form, circle, fixed, file, batch, phase, error, onForm, onFile, onValidate }: {
   options: RawUploadOptions; username: string; form: FormState; circle: string; fixed: string | null; file: File | null; batch: RawUpload | null;
   phase: Phase; error: { phase: string; message: string } | null; onForm: (patch: Partial<FormState>) => void; onFile: (file: File | null) => void;
   onValidate: () => void;
 }) {
-  const input = useRef<HTMLInputElement>(null);
-  const [dragging, setDragging] = useState(false);
-  const [fileError, setFileError] = useState<string | null>(null);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const project = options.projects.find((p) => p.value === form.project);
   const circles = project?.circles ?? [];
@@ -203,30 +179,8 @@ function UploadPanel({ options, username, form, circle, fixed, file, batch, phas
   const missing = [errors.circle && 'circle', errors.day && 'reporting date', errors.file && 'CSV file'].filter(Boolean) as string[];
   const busy = phase !== 'idle';
   const show = (field: keyof typeof errors) => (touched[field] ? errors[field] : null);
-  const pick = (picked: File | null) => {
-    setFileError(null);
-    setTouched((t) => ({ ...t, file: true }));
-    if (input.current) input.current.value = '';  // the same file can be chosen again after Remove
-    if (!picked) return onFile(null);
-    const problem = !picked.name.toLowerCase().endsWith('.csv') ? `${picked.name}: choose the CSV file exported from CNMC (.csv).`
-      : picked.size === 0 ? `${picked.name} is empty.` : picked.size > options.max_bytes ? `${picked.name} is larger than ${formatBytes(options.max_bytes)}.` : null;
-    if (problem) {
-      setFileError(problem);
-      return onFile(null);
-    }
-    onFile(picked);
-  };
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setDragging(false);
-    if (busy) return;
-    const files = event.dataTransfer.files;
-    if (files.length > 1) {
-      setFileError('Drop one CSV file at a time.');
-      return onFile(null);
-    }
-    pick(files[0] ?? null);
-  };
+  const checkFile = (picked: File) => (!picked.name.toLowerCase().endsWith('.csv') ? `${picked.name}: choose the CSV file exported from CNMC (.csv).`
+    : picked.size === 0 ? `${picked.name} is empty.` : picked.size > options.max_bytes ? `${picked.name} is larger than ${formatBytes(options.max_bytes)}.` : null);
   const fileState: { label: string; tone: string } | null = !file ? null
     : phase === 'validating' ? { label: 'Validating on the server…', tone: 'border-sky-300 bg-sky-50 text-sky-800' }
       : phase === 'importing' ? { label: 'Import in progress…', tone: 'border-sky-300 bg-sky-50 text-sky-800' }
@@ -250,14 +204,14 @@ function UploadPanel({ options, username, form, circle, fixed, file, batch, phas
         <div className="grid gap-3 sm:grid-cols-2">
           <DetailField id="raw-project" label="Project" required>
             <SelectField id="raw-project" value={form.project} placeholder="Project" disabled={busy}
-              onChange={(v) => onForm({ project: v as RawProject, ...(fixed ? {} : { circle: '' }) })}
+              onChange={(v) => onForm({ project: v, ...(fixed ? {} : { circle: '' }) })}
               options={options.projects.map((p) => ({ value: p.value, label: p.configured ? p.value : `${p.value} (mapping pending)` }))} />
           </DetailField>
           <DetailField id="raw-circle" label={fixed ? 'Circle (assigned)' : 'Circle'} required error={show('circle')}>
             {fixed ? <Input id="raw-circle" className="h-9 bg-muted/40" value={fixed} readOnly aria-readonly="true" />
               : <SelectField id="raw-circle" value={form.circle} placeholder={circles.length ? 'Choose circle' : 'None available'} disabled={!circles.length || busy}
                 error={show('circle')} onChange={(v) => { setTouched((t) => ({ ...t, circle: true })); onForm({ circle: v }); }}
-                options={circles.map((c) => ({ value: c, label: c }))} />}
+                options={circles.map((c) => ({ value: c, label: project?.site_counts?.[c] === 0 ? `${c} (no master sites yet)` : c }))} />}
           </DetailField>
           <DetailField id="raw-date" label="Reporting date" required error={show('day')}>
             <Input id="raw-date" type="date" className="h-9" value={form.day} max={today} disabled={busy} aria-invalid={show('day') ? true : undefined}
@@ -280,41 +234,13 @@ function UploadPanel({ options, username, form, circle, fixed, file, batch, phas
       </Card>
 
       <Card className="gap-3 rounded-xl px-4 py-3 lg:col-span-3" aria-label="CSV file">
-        <div
-          onDragOver={(e) => { e.preventDefault(); if (!busy) setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-          data-dragging={dragging || undefined}
-          className={cn('relative flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors',
-            dragging ? 'border-primary bg-primary/5' : fileError ? 'border-destructive/50 bg-destructive/5' : 'border-border bg-muted/20',
-            busy && 'opacity-70')}>
-          <input ref={input} id="raw-file" type="file" accept=".csv,text/csv" className="sr-only" aria-label="Raw daily CSV file" disabled={busy}
-            onChange={(e) => pick(e.target.files?.[0] ?? null)} />
-          <span className={cn('grid size-12 place-items-center rounded-full', dragging ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-primary')}>
-            <CloudUpload className="size-6" aria-hidden="true" />
-          </span>
-          <h2 className="text-base font-semibold">{dragging ? 'Drop the CSV to select it' : 'Upload your daily CSV file'}</h2>
-          <p className="text-sm text-muted-foreground">Drag and drop your CSV here, or browse files from your computer.</p>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => input.current?.click()}><FolderOpen /> Browse Files</Button>
-          <p className="max-w-md text-xs text-muted-foreground">
-            The daily CNMC availability dump (<span className="font-mono">nw_aval_btsipid_wise_day…</span>) as .csv, up to {formatBytes(options.max_bytes)}.
-            The server checks every row before anything is imported, and nothing is saved until you confirm.
-          </p>
-        </div>
-        {fileError && <p className="flex items-center gap-1.5 text-sm text-destructive" role="alert"><CircleAlert className="size-4" aria-hidden="true" />{fileError}</p>}
-        {!file && !fileError && touched.file && <p className="text-sm text-destructive">{errors.file}</p>}
-        {file && (
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2" aria-label="Selected file">
-            <span className="grid size-9 shrink-0 place-items-center rounded-md bg-emerald-50 text-emerald-700"><FileSpreadsheet className="size-5" aria-hidden="true" /></span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium" title={file.name}>{file.name}</p>
-              <p className="text-xs text-muted-foreground">CSV · {formatBytes(file.size)}</p>
-            </div>
-            {fileState && <Badge variant="outline" className={cn('font-medium', fileState.tone)}>{phase !== 'idle' && <Loader2 className="animate-spin" />}{fileState.label}</Badge>}
-            <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => input.current?.click()}><RefreshCw /> Replace</Button>
-            <Button type="button" variant="ghost" size="sm" disabled={busy} aria-label="Remove file" onClick={() => pick(null)}><X /> Remove</Button>
-          </div>
-        )}
+        <FileDropZone inputId="raw-file" inputLabel="Raw daily CSV file" accept=".csv,text/csv" kind="CSV" file={file} status={fileState} busy={busy}
+          spinning={phase !== 'idle'} title="Upload your daily CSV file" dropTitle="Drop the CSV to select it"
+          description="Drag and drop your CSV here, or browse files from your computer." oneFileMessage="Drop one CSV file at a time."
+          hint={<>The daily CNMC availability dump (<span className="font-mono">nw_aval_btsipid_wise_day…</span>) as .csv, up to {formatBytes(options.max_bytes)}.
+            The server checks every row before anything is imported, and nothing is saved until you confirm.</>}
+          requiredError={touched.file ? errors.file : null} check={checkFile}
+          onFile={(next) => { setTouched((t) => ({ ...t, file: true })); onFile(next); }} />
         {error?.phase === 'validate' && (
           <Alert variant="destructive" role="alert"><CircleAlert /><AlertTitle>The file could not be validated</AlertTitle><AlertDescription>{error.message}</AlertDescription></Alert>
         )}
@@ -326,19 +252,6 @@ function UploadPanel({ options, username, form, circle, fixed, file, batch, phas
           </Button>
         </div>
       </Card>
-    </div>
-  );
-}
-
-function DetailField({ id, label, required = false, error, children }: { id: string; label: string; required?: boolean; error?: string | null; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <div className="flex items-center gap-1">
-        <Label htmlFor={id} className="text-[11px] font-medium text-muted-foreground">{label}</Label>
-        {required && <span className="text-[11px] text-destructive" aria-hidden="true" title="Required">*</span>}
-      </div>
-      {children}
-      {error && <p id={`${id}-error`} className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }

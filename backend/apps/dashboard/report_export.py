@@ -70,20 +70,23 @@ class Scope:
         return self.circle or 'All Circles'
 
 
-def resolve_scope(ds: Dataset, report_type: str | None, circle: str | None, allowed: set[str] | None) -> Scope:
-    """Sites of the project and circle, within the user's circles. Raises ExportError when there are none."""
-    circles = None if allowed is None else sorted(allowed)
-    if circle:
-        if allowed is not None and circle not in allowed:
-            raise ExportError(f'You are not assigned to circle {circle}.', 403)
-        circles = [circle]
-    if circles == []:
-        raise ExportError('No circle is assigned to your account.', 403)
+def resolve_scope(ds: Dataset, report_type: str | None, circle: str | None, allowed: set[tuple[str, str]] | None) -> Scope:
+    """Sites of the project and circle, within the user's project/circle pairs (accounts.scope). Raises ExportError
+    when there are none. A pair limits by project and circle together: MP under 4G never exports MP LWE sites."""
+    if allowed is not None:
+        mine = {(p, c) for p, c in allowed if (not report_type or p == report_type) and (not circle or c == circle)}
+        if not mine:
+            raise ExportError(f'You are not assigned to {f"circle {circle}" if circle else "any circle"}{f" under {report_type}" if report_type else ""}.'
+                              if allowed else 'No circle is assigned to your account.', 403)
+    circles = [circle] if circle else (None if allowed is None else sorted({c for _, c in mine}))
     mask = np.ones(len(ds.sites), dtype=bool)
     if report_type:
         mask &= (ds.sites['report_type'] == report_type).to_numpy()
-    if circles is not None:
-        mask &= ds.sites['circle'].isin(circles).to_numpy()
+    if circle:
+        mask &= (ds.sites['circle'] == circle).to_numpy()
+    if allowed is not None:
+        keys = ds.sites['report_type'].astype(str) + '|' + ds.sites['circle'].astype(str)
+        mask &= keys.isin([f'{p}|{c}' for p, c in mine]).to_numpy()
     scope = Scope(report_type, circles, circle, np.flatnonzero(mask))
     if not len(scope.rows):
         raise ExportError(f'No {scope.project_label} sites in {scope.circle_label} in the selected data source.', 404)

@@ -23,7 +23,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from apps.accounts.audit import audit
-from apps.dashboard.activity import CIRCLES, ENTITIES
+from apps.dashboard.activity import ENTITIES
 
 from .models import EscalationImportBatch, EscalationSite, SiteMonthlyPerformance, UptimeSite
 from .parser import sha256, site_key
@@ -108,12 +108,16 @@ def project_of(entity: str) -> str:
     return ENTITIES.get(entity.casefold(), entity)
 
 
-def circle_of(circle_raw: str) -> str:
-    return CIRCLES.get(circle_raw.casefold(), circle_raw.upper())
+def circle_of(circle_raw: str, resolver=None) -> str:
+    """Circle code through Organization > Code Mapping (source "Consolidated Escalation Matrix"); as written if unknown."""
+    from apps.organization.services import AliasResolver
+    return (resolver or AliasResolver('escalation_matrix')).resolve(circle_raw) or circle_raw.upper()
 
 
 def parse(path: Path, filename: str) -> dict:
     """Rows of the Raw Data sheet as model field values, plus a parse summary. Raises EscalationRejected."""
+    from apps.organization.services import AliasResolver
+    circles = AliasResolver('escalation_matrix')
     book = load_workbook(path, read_only=True, data_only=True)
     try:
         if SHEET not in book.sheetnames:
@@ -155,7 +159,7 @@ def parse(path: Path, filename: str) -> dict:
                 skipped += any(v is not None for v in row)
                 continue
             values['project'] = project_of(values.get('entity_raw', ''))
-            values['circle'] = circle_of(values.get('circle_raw', ''))
+            values['circle'] = circle_of(values.get('circle_raw', ''), circles)
             values['site_key'] = site_key(values['site_id'])
             values['source_file'], values['source_row'] = filename, row_number
             identity = (values['project'], values['site_key'])
@@ -178,7 +182,7 @@ def parse(path: Path, filename: str) -> dict:
     if too_long:
         raise EscalationRejected(f'{filename}: values too long to store: {"; ".join(too_long)}.')
     unknown_circles = sorted({v['circle_raw'] for v in sites.values()
-                              if v['project'] in ENTITIES.values() and v['circle_raw'].casefold() not in CIRCLES})
+                              if v['project'] in ENTITIES.values() and not circles.is_known(v['circle_raw'])})
     return {
         'sites': sites,
         'summary': {

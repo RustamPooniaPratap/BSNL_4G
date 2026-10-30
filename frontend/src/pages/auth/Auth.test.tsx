@@ -240,29 +240,36 @@ describe('user management', () => {
     expect(screen.queryByTestId('temporary-password')).not.toBeInTheDocument();
   });
 
-  it('assigns the circles a CI user may upload raw daily data for', async () => {
+  it('grants a CI user projects and circles from the Organization, one project at a time', async () => {
     const user = userEvent.setup();
-    const ci = { id: 9, username: 'odisha.ci', name: '', email: '', role: 'ci', circles: [] as string[], is_active: true, is_superuser: false,
-      must_change_password: false, last_login: null, date_joined: '2026-10-23T10:00:00' };
-    const admin = { ...ci, id: 1, username: 'asha.admin', role: 'admin', circles: [] };
+    const ci = { id: 9, username: 'odisha.ci', name: '', email: '', role: 'ci', circles: [] as string[], access: [] as { project: string; circle: string }[],
+      legacy_circles: [] as string[], is_active: true, is_superuser: false, must_change_password: false, last_login: null, date_joined: '2026-10-23T10:00:00' };
+    const admin = { ...ci, id: 1, username: 'asha.admin', role: 'admin' };
+    const catalog = {
+      projects: [{ key: '4G Saturation', code: '4G', name: '4G Saturation', is_active: true }, { key: 'LWE', code: 'LWE', name: 'LWE', is_active: true }],
+      circles: [{ code: 'OD', name: 'Odisha', is_active: true }],
+      associations: [{ project: '4G Saturation', circle: 'OD', is_active: true }, { project: 'LWE', circle: 'OD', is_active: true }],
+    };
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith('/auth/csrf/')) return json({ csrf_token: 't' });
-      if (url.endsWith('/auth/users/9/')) {
-        ci.circles = JSON.parse((init as RequestInit).body as string).circles;
-        return json({ user: ci });
+      if (url.endsWith('/organization/catalog/')) return json(catalog);
+      if (url.endsWith('/organization/access/9/')) {
+        ci.access = JSON.parse((init as RequestInit).body as string).pairs;
+        return json({ user: { ...ci, pairs: ci.access, limited: true, needs_review: false } });
       }
       return json({ users: [admin, ci] });
     });
     renderWithWorkbook(<UsersPage />, { url: '/admin/users' });
     const row = await screen.findByRole('row', { name: 'odisha.ci' });
     expect(row).toHaveTextContent('None assigned');
-    expect(screen.getByRole('row', { name: 'asha.admin' })).toHaveTextContent('All circles');
+    expect(screen.getByRole('row', { name: 'asha.admin' })).toHaveTextContent('All projects and circles');
     await user.click(within(row).getByRole('button', { name: 'Edit circles of odisha.ci' }));
-    await user.click(within(row).getByRole('checkbox', { name: 'OD' }));
-    await user.click(within(row).getByRole('button', { name: 'Save' }));
-    const [, init] = fetchMock.mock.calls.find(([u, i]) => String(u).endsWith('/auth/users/9/') && (i as RequestInit)?.method === 'PATCH')!;
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ circles: ['OD'] });
-    expect(await screen.findByText('odisha.ci can upload for OD.')).toBeInTheDocument();
+    await user.click(await within(row).findByRole('checkbox', { name: 'OD under 4G Saturation' }));
+    expect(within(row).getByRole('checkbox', { name: 'OD under LWE' })).not.toBeChecked();  // OD LWE is a separate grant
+    await user.click(within(row).getByRole('button', { name: 'Save access' }));
+    const [, init] = fetchMock.mock.calls.find(([u, i]) => String(u).endsWith('/organization/access/9/') && (i as RequestInit)?.method === 'PUT')!;
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ pairs: [{ project: '4G Saturation', circle: 'OD' }], reason: '' });
+    expect(await screen.findByText('odisha.ci can now use OD (4G Saturation).')).toBeInTheDocument();
   });
 });

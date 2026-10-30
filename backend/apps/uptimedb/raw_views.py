@@ -1,8 +1,10 @@
 """Raw daily CSV upload API (Data Entry -> Upload CSV). Permissions are enforced here, whatever the interface shows.
 
-- Any portal user may use it within their circles (accounts.scope): Admin and NOC Lead every circle, a CI user only
-  the circles assigned to the account (none assigned: nothing).
-- An upload is visible to the user who made it and to Admins, and only within the user's circles; anything else
+- Any portal user may use it within their scope (accounts.scope): Admin and NOC Lead everything, a CI user only the
+  project/circle pairs granted to the account (none granted: nothing). MP under 4G does not open MP under LWE.
+- Projects and circles come from the Organization (Administration > Organization): a circle is offered for a project only
+  while it is associated with it, and the project, circle and association are active.
+- An upload is visible to the user who made it and to Admins, and only within the user's scope; anything else
   answers "not found" so other users' uploads are not revealed.
 """
 from __future__ import annotations
@@ -11,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 from django.conf import settings
+from django.db.models import Count
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status
@@ -22,14 +25,15 @@ from rest_framework.response import Response
 from apps.accounts.audit import audit
 from apps.accounts.permissions import IsAdminRole, IsPortalUser
 from apps.accounts.roles import ADMIN, role_of
-from apps.accounts.scope import KNOWN_CIRCLES, allowed_circles, may_use_circle
+from apps.accounts.scope import allowed_pairs, may_use
+from apps.organization import services as organization
 
 from . import arrivals
 from .models import DataImportBatch, UptimeSite
 from .raw import parser
 from .raw.rules import PROJECT_RULES
 from .raw.resolvers import RESOLVERS
-from .raw.service import PROJECTS, Details, RawUploadRejected, commit, discard, preview, rows_page, validation_csv
+from .raw.service import Details, RawUploadRejected, commit, discard, preview, rows_page, validation_csv
 
 
 
@@ -57,7 +61,7 @@ def _batch_json(batch: DataImportBatch, *, full: bool = False) -> dict:
 
 def _batch(request, batch_id: int) -> DataImportBatch:
     batch = DataImportBatch.objects.select_related('imported_by').filter(pk=batch_id, kind=DataImportBatch.Kind.RAW_DAILY_CSV).first()
-    if batch is None or not (_is_admin(request) or batch.imported_by_id == request.user.pk) or not may_use_circle(request.user, batch.circle):
+    if batch is None or not (_is_admin(request) or batch.imported_by_id == request.user.pk) or not may_use(request.user, batch.project, batch.circle):
         raise NotFound('No such upload.')
     return batch
 
@@ -69,13 +73,22 @@ def _error(exc: RawUploadRejected) -> Response:
 @api_view(['GET'])
 @permission_classes([IsPortalUser])
 def raw_options(request):
-    """What the form may offer this user: projects, the circles of the site master within the user's scope, limits."""
-    allowed = allowed_circles(request.user)
-    master = sorted(set(UptimeSite.objects.order_by().values_list('project', 'circle').distinct()))
+    """What the form may offer this user: the active projects, and per project its active circles within the user's scope
+    with their site-master size (a circle without master sites is listed, but nothing can be validated against it)."""
+    allowed = allowed_pairs(request.user)
+    sites = dict(((p, c), n) for p, c, n in UptimeSite.objects.order_by().values_list('project', 'circle').annotate(n=Count('id')))
+    pairs = organization.associations(active_only=True)
+    projects = []
+    for p in organization.project_keys(active_only=True):
+        rules, resolver = PROJECT_RULES.get(p), RESOLVERS.get(p)
+        circles = [c for proj, c in pairs if proj == p and (allowed is None or (p, c) in allowed)]
+        projects.append({'value': p, 'configured': bool(rules and resolver and resolver.configured),
+                         'availability_column': rules.availability_column if rules else None,
+                         'circles': circles, 'site_counts': {c: sites.get((p, c), 0) for c in circles}})
     return Response({
-        'projects': [{'value': p, 'configured': RESOLVERS[p].configured, 'availability_column': PROJECT_RULES[p].availability_column,
-                      'circles': [c for proj, c in master if proj == p and (allowed is None or c in allowed)]} for p in PROJECTS],
-        'assigned_circles': None if allowed is None else sorted(allowed),
+        'projects': projects,
+        'assigned_circles': None if allowed is None else sorted({c for _, c in allowed}),
+        'access': None if allowed is None else [{'project': p, 'circle': c} for p, c in sorted(allowed)],
         'max_bytes': settings.MAX_UPLOAD_BYTES,
         'formula': 'outage minutes = 1440 × (1 − availability / 100)',
     })
@@ -87,9 +100,9 @@ def raw_list(request):
     qs = DataImportBatch.objects.select_related('imported_by').filter(kind=DataImportBatch.Kind.RAW_DAILY_CSV)
     if not _is_admin(request):
         qs = qs.filter(imported_by=request.user)
-    allowed = allowed_circles(request.user)
+    allowed = allowed_pairs(request.user)
     if allowed is not None:
-        qs = qs.filter(circle__in=allowed)
+        qs = [b for b in qs if (b.project, b.circle) in allowed]
     return Response({'uploads': [_batch_json(b) for b in qs[:100]]})
 
 
@@ -97,11 +110,15 @@ def _details(request) -> Details:
     data = request.data
     errors = {}
     project = str(data.get('project') or '')
-    if project not in PROJECTS:
-        errors['project'] = 'Choose 4G Saturation or LWE.'
+    if project not in organization.project_keys(active_only=True):
+        errors['project'] = 'Choose an active project.'
+    elif project not in PROJECT_RULES:
+        errors['project'] = f'Raw daily uploads are not configured for {project} (no availability rule).'
     circle = str(data.get('circle') or '').strip().upper()
-    if circle not in KNOWN_CIRCLES:
+    if not circle:
         errors['circle'] = 'Choose a circle.'
+    elif 'project' not in errors and not organization.is_associated(project, circle):
+        errors['circle'] = f'{circle} is not an active circle of {project} (Administration > Organization).'
     day = parser.parse_date(str(data.get('reporting_date') or ''))
     if day is None:
         errors['reporting_date'] = 'Enter the reporting date.'
@@ -109,8 +126,8 @@ def _details(request) -> Details:
         errors['reporting_date'] = 'The reporting date cannot be in the future.'
     if errors:
         raise ValidationError(errors)
-    if not may_use_circle(request.user, circle):
-        raise PermissionDenied(f'You are not assigned to circle {circle}. Ask an Admin to assign it to your account.')
+    if not may_use(request.user, project, circle):
+        raise PermissionDenied(f'You are not assigned to {circle} under {project}. Ask an Admin to grant it to your account.')
     return Details(project, circle, day, str(data.get('remarks') or '').strip()[:2000])
 
 
@@ -204,7 +221,7 @@ def _query_date(request, name: str):
 
 
 @api_view(['GET'])
-@permission_classes([IsAdminRole])  # CSV arrival tracking is an Admin page; circles are still limited by accounts.scope
+@permission_classes([IsAdminRole])  # CSV arrival tracking is an Admin page; still limited by accounts.scope
 def arrival_tracker(request):
     """Per project/circle for ?date=YYYY-MM-DD: stored daily-data coverage and raw CSV uploads, plus a daily range
     (?start=&end=, at most 92 days) for gaps. Read only; computed from PostgreSQL on every request."""
@@ -218,4 +235,4 @@ def arrival_tracker(request):
         raise ValidationError({'range': 'The range start is after its end.'})
     if start and end and (end - start).days >= arrivals.MAX_RANGE_DAYS:
         raise ValidationError({'range': f'Choose at most {arrivals.MAX_RANGE_DAYS} days.'})
-    return Response(arrivals.tracker(day, allowed_circles(request.user), start, end))
+    return Response(arrivals.tracker(day, allowed_pairs(request.user), start, end))

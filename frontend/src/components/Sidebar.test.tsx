@@ -21,9 +21,41 @@ describe('Sidebar order and groups', () => {
     await user.click(within(nav()).getByRole('button', { name: 'CSV Arrival & Follow-up' }));
     expect(links()).toEqual(['Site Portfolio', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance',
       'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload RCA Data',
-      'Data Source', 'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles']);
+      'Data Source', 'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles', 'Organization']);
     expect(within(nav()).getByText('Data')).toBeInTheDocument();
     expect(within(nav()).getByText('Administration')).toBeInTheDocument();
+  });
+
+  it('groups the RCA Summary pages, opens the Overview from the label and keeps the filters inside the section', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<><Sidebar /><Location /></>, { url: '/rca/summary/breakdown?project=LWE&circle=BH' });
+    const group = document.getElementById('nav-group-rca-summary')!;
+    expect(within(group).getAllByRole('link').map((a) => a.textContent))
+      .toEqual(['Overview', 'Circle-wise RCA Breakdown', 'Root Cause Analysis', 'Project & Circle Analysis', 'Daily & Monthly Trends']);
+    expect(within(group).getByRole('link', { name: 'Circle-wise RCA Breakdown' })).toHaveAttribute('aria-current', 'page');
+    expect(within(group).getByRole('link', { name: 'Daily & Monthly Trends' })).toHaveAttribute('href', '/rca/summary/trends?project=LWE&circle=BH');
+    await user.click(within(nav()).getByRole('link', { name: 'RCA Summary' }));  // the label opens the Overview
+    expect(screen.getByTestId('location')).toHaveTextContent('/rca/summary?project=LWE&circle=BH');
+    expect(within(group).getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page');
+    await user.click(within(nav()).getByRole('link', { name: 'RCA Register' }));
+    expect(within(nav()).getByRole('link', { name: 'RCA Summary' })).toHaveAttribute('href', '/rca/summary');  // outside: no carried filters
+  });
+
+  it('has one Organization entry under Administration, active on every Organization tab', () => {
+    renderWithWorkbook(<Sidebar />, { url: '/admin/organization/code-mapping' });
+    expect(within(nav()).getByRole('link', { name: 'Organization' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav()).queryByRole('link', { name: 'Code Mapping' })).not.toBeInTheDocument();  // tabs are inside the page
+  });
+
+  it('shows no Organization entry to a CI user', () => {
+    renderWithWorkbook(<Sidebar />, { url: '/portfolio', auth: authValue({ user: CI_USER }) });
+    expect(within(nav()).queryByRole('link', { name: 'Organization' })).not.toBeInTheDocument();
+  });
+
+  it('shows no RCA Summary pages to a CI user', () => {
+    renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: CI_USER }) });
+    expect(within(nav()).queryByRole('link', { name: 'RCA Summary' })).not.toBeInTheDocument();
+    expect(within(nav()).queryByRole('link', { name: 'Root Cause Analysis' })).not.toBeInTheDocument();
   });
 
   it('keeps closed groups out of the tab order and the accessibility tree', () => {

@@ -1,11 +1,15 @@
 /** Raw daily CSV upload (Data Entry -> Upload CSV). Every count, status and value comes from the API. */
 
-export type RawProject = '4G Saturation' | 'LWE';
+/** A project key of the Organization (e.g. "4G Saturation"); projects are not fixed in the frontend. */
+export type RawProject = string;
 
 export interface RawUploadOptions {
-  projects: { value: RawProject; configured: boolean; availability_column: string; circles: string[] }[];
+  /** Active projects of the Organization; per project its active circles within the user's scope and their master size. */
+  projects: { value: RawProject; configured: boolean; availability_column: string | null; circles: string[]; site_counts?: Record<string, number> }[];
   /** null: every circle (Admin, NOC Lead); otherwise the circles assigned to the account (possibly none). */
   assigned_circles: string[] | null;
+  /** The same as project/circle pairs: null = not limited. */
+  access?: { project: string; circle: string }[] | null;
   max_bytes: number;
   formula: string;
 }

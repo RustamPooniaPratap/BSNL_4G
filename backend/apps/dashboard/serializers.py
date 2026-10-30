@@ -25,17 +25,21 @@ class SelectionSerializer(serializers.Serializer):
     def validate_report_type(self, value):
         if not value:
             return None
-        if value not in REPORT_TYPE_ALIASES:
-            raise serializers.ValidationError(
-                f"Unknown report type. Expected one of: {', '.join(REPORT_TYPES.values())}."
-            )
-        return REPORT_TYPE_ALIASES[value]
+        if value in REPORT_TYPE_ALIASES:
+            return REPORT_TYPE_ALIASES[value]
+        from apps.organization.services import project_keys
+        known = project_keys()  # a project of the Organization, with or without data yet
+        if value not in known:
+            raise serializers.ValidationError(f"Unknown report type. Expected one of: {', '.join(known)}.")
+        return value
 
     def validate(self, attrs):
         dataset = self.context['dataset']
         circle = attrs.get('circle') or None
         if circle and circle not in set(dataset.sites['circle']):
-            raise serializers.ValidationError({'circle': 'Unknown circle.'})
+            from apps.organization.services import circle_codes
+            if circle not in circle_codes():  # an Organization circle without data yet is valid (and matches no site)
+                raise serializers.ValidationError({'circle': 'Unknown circle.'})
         if attrs['scope'] == 'om_start' and not dataset.has_om_start:
             raise serializers.ValidationError({'scope': 'The O&M Start scope is not available in this workbook.'})
         attrs['selection'] = Selection(attrs.get('report_type'), circle, attrs['scope'])

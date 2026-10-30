@@ -19,10 +19,11 @@ export const circleLabel = (key: string) => {
 };
 
 /** Every circle series the workbook has, in a stable order (4G first), from the filter options. */
-export function allCircleKeys(circles: { value: string; report_types: string[] }[]) {
+export function allCircleKeys(circles: { value: string; report_types: string[]; data_report_types?: string[] }[]) {
   const order = ['4G Saturation', 'LWE'];
   return circles
-    .flatMap((c) => c.report_types.map((t) => circleKey(t, c.value)))
+    // Series only where sites exist: a circle set up in the Organization without data yet draws no empty line.
+    .flatMap((c) => (c.data_report_types ?? c.report_types).map((t) => circleKey(t, c.value)))
     .sort((a, b) => {
       const [ta, ca] = a.split('|');
       const [tb, cb] = b.split('|');

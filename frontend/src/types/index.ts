@@ -58,8 +58,14 @@ export interface AppliedFilters {
 }
 
 export interface FilterOptions {
-  report_types: { value: string; label: string; site_count: number }[];
-  circles: { value: string; label: string; report_types: string[]; site_count: number }[];
+  /** Projects with data, plus active Organization projects without data yet (``has_data`` false, nothing counted). */
+  report_types: { value: string; label: string; site_count: number; has_data?: boolean }[];
+  /**
+   * Circles with data (kept for historical reporting even when no longer associated), plus active Organization
+   * associations without data yet. ``report_types``: selectable projects; ``data_report_types``: those with sites
+   * (chart series); ``configured_for``: active associations.
+   */
+  circles: { value: string; label: string; report_types: string[]; site_count: number; has_data?: boolean; data_report_types?: string[]; configured_for?: string[] }[];
   scopes: { value: Scope; label: string; available: boolean }[];
   default_scope: Scope;
   buckets: { id: BucketId; label: string; workbook_label: string }[];
@@ -687,6 +693,8 @@ export interface AuthUser {
   must_change_password: boolean;
   /** Circles for raw daily uploads and exports: null = every circle (Admin, NOC Lead). */
   circles?: string[] | null;
+  /** The same as project/circle pairs: null = not limited. */
+  access?: { project: string; circle: string }[] | null;
 }
 
 /** An account as listed for Admins. Passwords are never returned, except a new temporary one once. */
@@ -696,8 +704,12 @@ export interface PortalUser {
   name: string;
   email: string;
   role: Role | null;
-  /** Circles assigned to a CI user for raw daily uploads. */
+  /** Circles of the CI user's grants (any project), for display. */
   circles: string[];
+  /** Project/circle grants (Organization > User Access). */
+  access?: { project: string; circle: string }[];
+  /** Circle-only assignments from before project-specific access (every project; to be reviewed). */
+  legacy_circles?: string[];
   is_active: boolean;
   is_superuser: boolean;
   must_change_password: boolean;

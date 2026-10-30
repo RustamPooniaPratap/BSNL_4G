@@ -132,15 +132,19 @@ class RulesTests(SimpleTestCase):
         self.assertEqual((both.value, both.code), (98, None))
         self.assertIn('confirmed source', both.note)  # a disagreement is shown, the confirmed column is used
 
-    def test_only_verified_circle_aliases(self):
-        self.assertEqual((canonical_circle('OR'), canonical_circle(' od '), canonical_circle('MP'), canonical_circle('XX')), ('OD', 'OD', 'MP', 'XX'))
-
     def test_lwe_is_not_configured(self):
         self.assertFalse(PROJECT_RULES['LWE'].availability_confirmed)
         self.assertFalse(LweResolver.configured)
 
 
 @override_settings()
+class AliasTests(TestCase):
+    """Raw circle codes resolve through Organization > Code Mapping (seeded with the verified OR -> OD only)."""
+
+    def test_only_verified_circle_aliases(self):
+        self.assertEqual((canonical_circle('OR'), canonical_circle(' od '), canonical_circle('MP'), canonical_circle('XX')), ('OD', 'OD', 'MP', 'XX'))
+
+
 class RawUploadTestCase(TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

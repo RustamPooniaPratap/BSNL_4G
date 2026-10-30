@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { CalendarDays, Info } from 'lucide-react';
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { CalendarDays, ChevronRight, Info } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChartCard } from '../../components/dashboard/ChartCard';
 import { DataTable } from '../../components/dashboard/DataTable';
@@ -23,17 +24,33 @@ type Measure = 'records' | 'minutes';
 type CircleMeasure = 'records' | 'minutes' | 'rate';
 type Network = 'all' | '4G Saturation' | 'LWE';
 
-/** RCA Summary (Admin): one snapshot of the stored RCA records, by classification, circle and largest outages. */
+/** The RCA Summary pages: one dataset (the same filtered API response), several views. */
+const SUMMARY_VIEWS = [
+  { path: '/rca/summary', label: 'Overview', description: 'Headline totals of the filtered RCA records, and where to look next.' },
+  { path: '/rca/summary/breakdown', label: 'Circle-wise RCA Breakdown', description: 'RCA records per circle and Final Bucket reporting category, with totals and shares.' },
+  { path: '/rca/summary/root-causes', label: 'Root Cause Analysis', description: 'RCA classifications (Final Bucket, Bucket - 2) and the standardised cause categories.' },
+  { path: '/rca/summary/circles', label: 'Project & Circle Analysis', description: 'Circles compared within 4G Saturation and LWE, and the sites with the largest outages.' },
+  { path: '/rca/summary/trends', label: 'Daily & Monthly Trends', description: 'RCA records per reporting date, and per month from the dates with records.' },
+] as const;
+type SummaryView = (typeof SUMMARY_VIEWS)[number];
+
+/**
+ * RCA Summary (Admin): one snapshot of the stored RCA records, split into an Overview and analysis pages. Every page
+ * reads the same filters from the URL (date, project, circle, buckets…), so moving between them keeps the selection.
+ */
 export function RcaSummaryPage() {
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const options = useApiQuery('rca-options', (signal) => fetchRcaOptions(signal));
+  const view = SUMMARY_VIEWS.find((v) => v.path === location.pathname.replace(/\/+$/, ''));
   const query = new URLSearchParams();
   for (const key of FILTER_KEYS) {
     const v = params.get(key);
     if (v && key !== 'q' && key !== 'status') query.set(key, v);
   }
   const summary = useApiQuery(`rca-summary-${query}`, (signal) => fetchRcaSummary(query, signal));
+  if (!view) return <Navigate to={{ pathname: '/rca/summary', search: location.search }} replace />;  // unknown subpage: the Overview
   const onFilter = (key: FilterKey, value: string) => setParams((cur) => {
     const next = new URLSearchParams(cur);
     if (value) next.set(key, value); else next.delete(key);
@@ -50,8 +67,9 @@ export function RcaSummaryPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeading title="RCA Summary"
+      <PageHeading title={view.path === '/rca/summary' ? 'RCA Summary' : `RCA Summary · ${view.label}`}
         subtitle={options.data ? `${showingText(options.data, params)} · ${rcaCoverageText(options.data.dates)}` : 'Accepted RCA records'} />
+      <SummaryNav current={view} search={location.search} />
       {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}
       {options.data ? (
         <RcaFilterBar options={options.data} params={params} onChange={onFilter} onReset={() => setParams(new URLSearchParams(), { replace: true })}
@@ -62,8 +80,8 @@ export function RcaSummaryPage() {
           }, { replace: true })} />} />
       ) : !options.error && <Skeleton className="h-16 w-full" />}
 
-      {summary.error && <Alert variant="destructive"><AlertDescription>{summary.error.message}</AlertDescription></Alert>}
-      {!s && !summary.error && <Skeleton className="h-96 w-full" />}
+      {summary.error && <Alert variant="destructive" role="alert"><AlertDescription>{summary.error.message}</AlertDescription></Alert>}
+      {!s && !summary.error && <Skeleton className="h-96 w-full" aria-label="Loading the RCA summary" />}
       {s && (
         <>
           {s.dates.length <= 1 && !query.get('date_from') && !query.get('date_to') && (
@@ -72,20 +90,98 @@ export function RcaSummaryPage() {
               {s.dates.length ? `Single-date snapshot: ${formatDate(s.dates[0].date)}. Trends over time appear once RCA data for more reporting dates is imported.` : 'No RCA records match these filters.'}
             </p>
           )}
-          <Kpis s={s} />
-          <RootCauseBreakdown data={s.breakdown} />
-          <div className="grid gap-5 xl:grid-cols-2">
-            <ClassificationCard title="RCA classification: Final Bucket" items={s.final_buckets} field="final_bucket" onSelect={openRegister} />
-            <ClassificationCard title="Secondary classification: Bucket - 2" items={s.bucket_2} field="bucket_2" onSelect={openRegister}
-              scopeNote={s.kpis.rca_not_applicable.records ? `RCA-applicable records only: the ${formatNumber(s.kpis.rca_not_applicable.records)} ${s.kpis.rca_not_applicable.label} records are not included.` : undefined} />
-          </div>
-          <div className="grid gap-5 xl:grid-cols-2">
-            <CircleCard circles={s.circles} populationSource={s.population_source} onSelect={(circle) => openRegister({ circle })} />
-            <CategoryCard s={s} onSelect={(category) => openRegister({ category })} />
-          </div>
-          <TopRecords s={s} />
+          {view.path === '/rca/summary' && (
+            <>
+              <Kpis s={s} />
+              <OverviewLinks s={s} search={location.search} />
+            </>
+          )}
+          {view.path === '/rca/summary/breakdown' && <RootCauseBreakdown data={s.breakdown} />}
+          {view.path === '/rca/summary/root-causes' && (
+            <>
+              <div className="grid gap-5 xl:grid-cols-2">
+                <ClassificationCard title="RCA classification: Final Bucket" items={s.final_buckets} field="final_bucket" onSelect={openRegister} />
+                <ClassificationCard title="Secondary classification: Bucket - 2" items={s.bucket_2} field="bucket_2" onSelect={openRegister}
+                  scopeNote={s.kpis.rca_not_applicable.records ? `RCA-applicable records only: the ${formatNumber(s.kpis.rca_not_applicable.records)} ${s.kpis.rca_not_applicable.label} records are not included.` : undefined} />
+              </div>
+              <CategoryCard s={s} onSelect={(category) => openRegister({ category })} />
+            </>
+          )}
+          {view.path === '/rca/summary/circles' && (
+            <>
+              <CircleCard circles={s.circles} populationSource={s.population_source} onSelect={(circle) => openRegister({ circle })} />
+              <TopRecords s={s} />
+            </>
+          )}
+          {view.path === '/rca/summary/trends' && <TrendsCard dates={s.dates} />}
         </>
       )}
+    </div>
+  );
+}
+
+/** The RCA Summary pages as tabs; every link keeps the current filters. */
+function SummaryNav({ current, search }: { current: SummaryView; search: string }) {
+  return (
+    <nav aria-label="RCA Summary pages" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1 shadow-xs">
+      {SUMMARY_VIEWS.map((v) => (
+        <Link key={v.path} to={{ pathname: v.path, search }} aria-current={v.path === current.path ? 'page' : undefined}
+          className={cn('rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            v.path === current.path ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
+          {v.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/** Overview: one line per analysis page, with a figure taken from the same response. */
+function OverviewLinks({ s, search }: { s: RcaSummary; search: string }) {
+  const topCause = s.final_buckets.filter((i) => !i.unclassified && !i.rca_not_applicable).sort((a, b) => b.records - a.records)[0];
+  const topCircle = [...s.circles].sort((a, b) => b.records - a.records)[0];
+  const facts: Record<string, string> = {
+    '/rca/summary/breakdown': `${formatNumber(s.breakdown.grand_total)} records in the reporting categories${s.breakdown.not_mapped.records ? ` · ${formatNumber(s.breakdown.not_mapped.records)} not mapped` : ''}`,
+    '/rca/summary/root-causes': topCause ? `Most frequent Final Bucket: ${topCause.label} (${formatNumber(topCause.records)})` : 'No classified Final Bucket in the filter',
+    '/rca/summary/circles': topCircle ? `Most records: ${topCircle.circle} · ${shortProject(topCircle.project)} (${formatNumber(topCircle.records)})` : 'No circle in the filter',
+    '/rca/summary/trends': `${formatNumber(s.dates.length)} reporting date${s.dates.length === 1 ? '' : 's'} with records`,
+  };
+  return (
+    <section aria-label="RCA analysis pages" className="grid gap-3 md:grid-cols-2">
+      {SUMMARY_VIEWS.slice(1).map((v) => (
+        <Link key={v.path} to={{ pathname: v.path, search }}
+          className="group flex flex-col gap-1 rounded-xl border bg-card px-4 py-3 shadow-xs transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+          <span className="flex items-center justify-between text-sm font-semibold">{v.label}<ChevronRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" /></span>
+          <span className="text-xs text-muted-foreground">{v.description}</span>
+          <span className="mt-1 text-sm tabular-nums">{facts[v.path]}</span>
+        </Link>
+      ))}
+    </section>
+  );
+}
+
+/** RCA records per reporting date and per month (the sum of that month's dates with records). Dates without records are absent, not zero. */
+function TrendsCard({ dates }: { dates: RcaSummary['dates'] }) {
+  const months = new Map<string, { records: number; dates: number }>();
+  for (const d of dates) {
+    const key = d.date.slice(0, 7);
+    const m = months.get(key) ?? { records: 0, dates: 0 };
+    months.set(key, { records: m.records + d.records, dates: m.dates + 1 });
+  }
+  const daily: BarRow[] = dates.map((d) => ({ key: d.date, label: formatDate(d.date), value: d.records, display: formatNumber(d.records) }));
+  const monthly: BarRow[] = [...months].map(([key, m]) => ({
+    key, label: monthLabel(key), value: m.records, display: formatNumber(m.records), note: `${m.dates} reporting date${m.dates === 1 ? '' : 's'}`,
+  }));
+  return (
+    <div className="grid gap-5 xl:grid-cols-2">
+      <ChartCard title="Daily: RCA records per reporting date" description="Oldest first. Only dates with RCA records are listed; a missing date is not shown as zero." empty={!dates.length}>
+        <RankedBars rows={daily} label="RCA records per reporting date" />
+        <DataTable caption="RCA records per reporting date" columns={['Reporting date', 'Records']} rows={dates.map((d) => [formatDate(d.date), formatNumber(d.records)])} />
+      </ChartCard>
+      <ChartCard title="Monthly: RCA records per month" description="Each month adds up its reporting dates with records (the same rule as the month choice of the Reporting date filter)." empty={!dates.length}>
+        <RankedBars rows={monthly} label="RCA records per month" />
+        <DataTable caption="RCA records per month" columns={['Month', 'Records', 'Reporting dates with records']}
+          rows={[...months].map(([key, m]) => [monthLabel(key), formatNumber(m.records), formatNumber(m.dates)])} />
+      </ChartCard>
     </div>
   );
 }

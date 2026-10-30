@@ -30,8 +30,6 @@ from django.utils import timezone
 from openpyxl import load_workbook
 
 from apps.accounts.audit import audit
-from apps.dashboard.activity import CIRCLES as STATE_NAMES
-from apps.dashboard.workbook import CIRCLE_ALIASES
 
 from . import datasource
 from .importer import PROJECTS, _Actor, _same, _stage
@@ -48,14 +46,11 @@ class DaywiseError(ValueError):
     """The file cannot be read as a day-wise outage sheet."""
 
 
-def canonical_circle(name: str) -> str | None:
-    """Circle code for a circle written as a code or a state name, using only the established aliases."""
-    text = ' '.join(str(name or '').split())
-    if not text:
-        return None
-    if text.upper() in {c for c in STATE_NAMES.values()}:
-        return text.upper()
-    return CIRCLE_ALIASES.get(text) or STATE_NAMES.get(text.lower())
+def canonical_circle(name: str, project: str | None = None, resolver=None) -> str | None:
+    """Circle code for a circle written as a code or a state name: Organization > Code Mapping, source "Day-wise outage
+    report" (only established aliases; None when unknown)."""
+    from apps.organization.services import AliasResolver
+    return (resolver or AliasResolver('daywise_report')).resolve(name, project)
 
 
 @dataclass
@@ -152,6 +147,8 @@ def parse(path: Path, *, filename: str | None = None, sheet: str = SHEET) -> Par
 
 def analyse(parsed: Parsed, project: str) -> dict:
     """Classify every row and site/day against the master and the stored values. Reads only."""
+    from apps.organization.services import AliasResolver
+    circles = AliasResolver('daywise_report')
     if project not in PROJECTS:
         raise DaywiseError(f'Unknown project {project!r}; choose 4G Saturation or LWE.')
     master: dict[str, list[dict]] = {}
@@ -162,7 +159,7 @@ def analyse(parsed: Parsed, project: str) -> dict:
     rejected, resolved, seen = [], {}, {}
     for r in parsed.rows:
         key = site_key(r['site_id']) if r['site_id'] else ''
-        circle = canonical_circle(r['circle_raw'])
+        circle = canonical_circle(r['circle_raw'], project, circles)
         reason = None
         if not key:
             reason = ('missing_site_id', 'No site ID.')
@@ -214,7 +211,7 @@ def analyse(parsed: Parsed, project: str) -> dict:
                                   'stored_uptime_pct': old[1], 'file_uptime_pct': uptime})
     total_diff = sum(1 for r in resolved.values() if parsed.file_totals.get(r['row']) is not None
                      and abs(parsed.file_totals[r['row']] - sum(o for o, _ in r['days'].values())) > 0.01)
-    by_circle = Counter(r_circle for r_circle in (canonical_circle(r['circle_raw']) for r in resolved.values()))
+    by_circle = Counter(r_circle for r_circle in (canonical_circle(r['circle_raw'], project, circles) for r in resolved.values()))
     summary = {
         'project': project, 'file': parsed.filename, 'sheet': parsed.sheet, 'header_row': parsed.header_row, 'id_column': parsed.id_column,
         'dates': {'first': parsed.dates[0].isoformat(), 'last': parsed.dates[-1].isoformat(), 'count': len(parsed.dates)},

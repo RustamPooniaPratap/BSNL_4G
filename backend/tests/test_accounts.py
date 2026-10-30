@@ -75,7 +75,7 @@ class SignInTests(AuthTestCase):
         response = self.sign_in('asha.admin')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['user'], {'username': 'asha.admin', 'name': '', 'role': 'admin', 'role_label': 'Admin',
-                                                   'must_change_password': False, 'circles': None})
+                                                   'must_change_password': False, 'circles': None, 'access': None})
         self.assertNotEqual(self.client.session.session_key, before)
         self.assertTrue(response.cookies['sessionid']['httponly'])
         for name in DASHBOARD + ADMIN_ONLY_GET:

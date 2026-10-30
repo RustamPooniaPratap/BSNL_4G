@@ -156,6 +156,11 @@ describe('RCA Summary', () => {
     expect(screen.queryByRole('group', { name: 'Other Media — RCA Not Applicable' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Reporting period')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Project-wise summary')).not.toBeInTheDocument();  // removed from the summary
+    // The Overview is concise: the details are on their own pages, reached from the tabs or the overview links.
+    expect(screen.queryByRole('region', { name: 'Circle-wise Root Cause Breakdown' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'RCA analysis pages' })).getAllByRole('link').map((l) => l.textContent?.split(/[A-Z][a-z]+ [a-z]/)[0]))
+      .toHaveLength(4);
+    await user.click(within(screen.getByRole('navigation', { name: 'RCA Summary pages' })).getByRole('link', { name: 'Root Cause Analysis' }));
     const title = 'RCA classification: Final Bucket';
     // Technical causes are ranked; Other Media follows, labelled as not applicable, even though it has the most records.
     expect(bars(title).map((t) => t!.split(/\d/)[0])).toEqual(['BSNL OFC', 'BBNL OFC', 'Other Media — RCA not applicable']);
@@ -170,7 +175,7 @@ describe('RCA Summary', () => {
 
   it('compares circles by rate per 100 sites, not only by raw counts', async () => {
     const user = userEvent.setup();
-    renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary' });
+    renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary/circles' });
     await screen.findByText(/Single-date snapshot/);
     expect(bars('RCA by circle').map((t) => t!.slice(0, 2))).toEqual(['OD', 'UP']);  // raw incidents
     await user.click(screen.getByRole('button', { name: 'Per 100 sites' }));
@@ -180,17 +185,19 @@ describe('RCA Summary', () => {
   });
 
   it('points to the review queue while no cause category has been approved, and opens records from the attention table', async () => {
-    renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary' });
+    const user = userEvent.setup();
+    renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary/root-causes' });
     expect(await screen.findByText(/394 distinct RCA texts/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'OD0001' })).toHaveAttribute('href', '/rca?record=1');
+    await user.click(within(screen.getByRole('navigation', { name: 'RCA Summary pages' })).getByRole('link', { name: 'Project & Circle Analysis' }));
+    expect(await screen.findByRole('link', { name: 'OD0001' })).toHaveAttribute('href', '/rca?record=1');
   });
 
   it('shows the circle-wise root cause breakdown below the KPIs, reconciled and refreshed with the period', async () => {
     const user = userEvent.setup();
     m.fetchRcaOptions.mockResolvedValue({ ...OPTIONS, dates: ['2026-10-21', '2026-10-22'], months: [] });
-    renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary' });
+    renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary/breakdown' });
     const table = await screen.findByRole('region', { name: 'Circle-wise Root Cause Breakdown' });
-    expect(table.previousElementSibling!.querySelectorAll('[role=group]').length).toBeGreaterThan(0);  // directly after the KPI cards
+    expect(screen.queryByRole('region', { name: 'RCA summary KPIs' })).not.toBeInTheDocument();  // its own page
     expect(within(table).getByText('Through 26 Oct 2026 · Final Bucket, filtered as above')).toBeInTheDocument();
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
     expect(headers).toEqual(['Circle', ...BREAKDOWN_LABELS.map((l) => (l === 'BSNL-Link' ? 'BSNL-Linkpending' : l)), 'Grand Total', 'Not mapped']);
@@ -209,6 +216,38 @@ describe('RCA Summary', () => {
     const updated = await screen.findByRole('region', { name: 'Circle-wise Root Cause Breakdown' });
     expect(await within(updated).findByText('No RCA records match these filters.')).toBeInTheDocument();
     expect(within(updated).getByText(/^Through 22 Oct 2026/)).toBeInTheDocument();
+  });
+
+  it('keeps the filters on every RCA Summary page and falls back to the Overview for unknown pages', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary/trends?project=LWE&date_from=2026-10-21&date_to=2026-10-21' });
+    expect(await screen.findByText('Daily: RCA records per reporting date')).toBeInTheDocument();
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-21', date_to: '2026-10-21', project: 'LWE' }), expect.anything());
+    const tabs = within(screen.getByRole('navigation', { name: 'RCA Summary pages' }));
+    expect(tabs.getAllByRole('link').map((l) => l.textContent)).toEqual(['Overview', 'Circle-wise RCA Breakdown', 'Root Cause Analysis', 'Project & Circle Analysis', 'Daily & Monthly Trends']);
+    expect(tabs.getByRole('link', { name: 'Daily & Monthly Trends' })).toHaveAttribute('aria-current', 'page');
+    await user.click(tabs.getByRole('link', { name: 'Circle-wise RCA Breakdown' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/rca/summary/breakdown?project=LWE&date_from=2026-10-21&date_to=2026-10-21');
+    expect(await screen.findByRole('region', { name: 'Circle-wise Root Cause Breakdown' })).toBeInTheDocument();
+    await user.click(within(screen.getByRole('navigation', { name: 'RCA Summary pages' })).getByRole('link', { name: 'Overview' }));
+    await user.click(within(await screen.findByRole('region', { name: 'RCA analysis pages' })).getByRole('link', { name: /Daily & Monthly Trends/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/rca/summary/trends?project=LWE&date_from=2026-10-21&date_to=2026-10-21');
+  });
+
+  it('opens the Overview, with the filters, for an unknown RCA Summary page', async () => {
+    renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary/no-such-page?project=LWE' });
+    expect(await screen.findByRole('region', { name: 'RCA summary KPIs' })).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/rca\/summary\?project=LWE$/);
+  });
+
+  it('lists only reporting dates with records in the daily and monthly trends', async () => {
+    m.fetchRcaSummary.mockResolvedValue({ ...SUMMARY, dates: [{ date: '2026-09-30', records: 4 }, { date: '2026-10-21', records: 10 }, { date: '2026-10-23', records: 6 }] });
+    renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary/trends' });
+    const daily = within(await screen.findByRole('table', { name: 'RCA records per reporting date' })).getAllByRole('row').slice(1).map((r) => r.textContent);
+    expect(daily).toEqual(['30 Sept 20264', '21 Oct 202610', '23 Oct 20266']);  // 22 Oct has no records: not listed as 0
+    const monthly = within(screen.getByRole('table', { name: 'RCA records per month' })).getAllByRole('row').slice(1).map((r) => r.textContent);
+    expect(monthly).toHaveLength(2);  // Sep and Oct; 22 Oct (no records) is not a zero
+    expect(monthly).toEqual(['Sept 202641', 'Oct 2026162']);  // records, then reporting dates with records
   });
 
   it('selects one reporting date or a month aggregated from the dates with records', async () => {

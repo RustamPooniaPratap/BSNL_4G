@@ -37,6 +37,7 @@ import type {
   RcaSummary, RcaUploadDetails, RcaWorkflowInput,
 } from '../types/rca';
 import type { ArrivalTracker, RawRowsPage, RawUpload, RawUploadDetails, RawUploadOptions } from '../types/rawUpload';
+import type { OrgAccessUser, OrgAlias, OrgAssociation, OrgChange, OrgCircle, OrgProject, OrgRemoval, OrgSiteIdMapping, OrganizationCatalog } from '../types/organization';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
@@ -293,7 +294,7 @@ export const addRcaComment = (id: number, text: string, evidence: string) => sen
 export const fetchRcaSummary = (params: URLSearchParams, signal?: AbortSignal) => request<RcaSummary>('/rca/summary/', params, { signal });
 /** The signed-in user's uploads; an Admin may ask for every upload. */
 export const fetchRcaImports = (signal?: AbortSignal, all = false) =>
-  request<{ imports: RcaImportBatch[]; records: number; all: boolean }>('/rca/imports/', all ? new URLSearchParams({ all: '1' }) : undefined, { signal });
+  request<{ imports: RcaImportBatch[]; records: number; all: boolean; max_bytes?: number }>('/rca/imports/', all ? new URLSearchParams({ all: '1' }) : undefined, { signal });
 export const fetchRcaImport = (id: number, signal?: AbortSignal) => request<RcaImportBatch>(`/rca/imports/${id}/`, undefined, { signal });
 export async function previewRcaImport(file: File, details: RcaUploadDetails) {
   const form = new FormData();
@@ -362,3 +363,34 @@ export async function downloadReport(kind: ReportKind, params: Record<string, st
   const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `${kind}_report.xlsx`;
   return { blob: await response.blob(), filename };
 }
+
+// --- Organization (Administration > Organization) ---------------------------------------------
+type Reason = { reason?: string };
+export const fetchOrganizationCatalog = (signal?: AbortSignal) => request<OrganizationCatalog>('/organization/catalog/', undefined, { signal });
+export const fetchOrgProjects = (signal?: AbortSignal) => request<{ projects: OrgProject[] }>('/organization/projects/', undefined, { signal });
+export const createOrgProject = (body: { key: string; code: string; name: string; description?: string } & Reason) =>
+  send<{ projects: OrgProject[] }>('/organization/projects/', body);
+export const updateOrgProject = (id: number, body: Partial<Pick<OrgProject, 'code' | 'name' | 'description' | 'is_active'>> & Reason) =>
+  send<{ project: OrgProject }>(`/organization/projects/${id}/`, body, 'PATCH');
+export const fetchOrgCircles = (signal?: AbortSignal) => request<{ circles: OrgCircle[] }>('/organization/circles/', undefined, { signal });
+export const createOrgCircle = (body: { code: string; name: string; description?: string } & Reason) =>
+  send<{ circles: OrgCircle[] }>('/organization/circles/', body);
+export const updateOrgCircle = (id: number, body: Partial<Pick<OrgCircle, 'name' | 'description' | 'is_active'>> & Reason) =>
+  send<{ circles: OrgCircle[] }>(`/organization/circles/${id}/`, body, 'PATCH');
+export const fetchOrgAssociations = (signal?: AbortSignal) => request<{ associations: OrgAssociation[] }>('/organization/associations/', undefined, { signal });
+export const createOrgAssociation = (body: { project: string; circle: string } & Reason) =>
+  send<{ associations: OrgAssociation[] }>('/organization/associations/', body);
+export const updateOrgAssociation = (id: number, body: { is_active: boolean } & Reason) =>
+  send<{ associations: OrgAssociation[] }>(`/organization/associations/${id}/`, body, 'PATCH');
+export const removeOrgAssociation = (id: number, body: Reason = {}) => send<OrgRemoval>(`/organization/associations/${id}/`, body, 'DELETE');
+export const deleteOrgCircle = (id: number, body: Reason = {}) => send<{ circles: OrgCircle[] }>(`/organization/circles/${id}/`, body, 'DELETE');
+export const fetchOrgAliases = (signal?: AbortSignal) =>
+  request<{ aliases: OrgAlias[]; sources: { value: string; label: string }[]; site_id_mapping: OrgSiteIdMapping[] }>('/organization/aliases/', undefined, { signal });
+export const createOrgAlias = (body: { source: string; project: string | null; raw_code: string; circle: string; notes?: string } & Reason) =>
+  send<{ aliases: OrgAlias[]; sources: { value: string; label: string }[] }>('/organization/aliases/', body);
+export const updateOrgAlias = (id: number, body: Partial<{ project: string | null; raw_code: string; circle: string; is_active: boolean; notes: string }> & Reason) =>
+  send<{ aliases: OrgAlias[]; sources: { value: string; label: string }[] }>(`/organization/aliases/${id}/`, body, 'PATCH');
+export const fetchOrgAccess = (signal?: AbortSignal) => request<{ users: OrgAccessUser[] }>('/organization/access/', undefined, { signal });
+export const setOrgAccess = (userId: number, pairs: { project: string; circle: string }[], reason = '') =>
+  send<{ user: OrgAccessUser }>(`/organization/access/${userId}/`, { pairs, reason }, 'PUT');
+export const fetchOrgHistory = (signal?: AbortSignal) => request<{ changes: OrgChange[] }>('/organization/history/', undefined, { signal });

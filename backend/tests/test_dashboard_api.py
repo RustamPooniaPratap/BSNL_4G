@@ -38,7 +38,10 @@ class FiltersApiTests(DashboardApiTestCase):
     def test_filter_options_come_from_workbook(self):
         data = self.get('dashboard-filters')
         self.assertEqual([t['value'] for t in data['report_types']], ['4G Saturation', 'LWE'])
-        self.assertEqual([c['value'] for c in data['circles']], ['BH', 'MP', 'OD', 'RJ'])
+        self.assertEqual([c['value'] for c in data['circles'] if c['has_data']], ['BH', 'MP', 'OD', 'RJ'])
+        # Circles of the Organization without data in this workbook are listed too, with nothing counted for them.
+        self.assertEqual({c['value']: c['site_count'] for c in data['circles'] if not c['has_data']},
+                         {'AP': 0, 'CG': 0, 'JH': 0, 'MH': 0, 'TL': 0, 'UP': 0, 'WB': 0})
         mp = next(c for c in data['circles'] if c['value'] == 'MP')
         self.assertEqual(mp['report_types'], ['4G Saturation', 'LWE'])
         self.assertEqual(data['default_date'], '2026-10-03')
@@ -48,6 +51,15 @@ class FiltersApiTests(DashboardApiTestCase):
 
 
 class SummaryApiTests(DashboardApiTestCase):
+    def test_an_organization_circle_without_data_is_selectable_and_reports_nothing(self):
+        for name in ('dashboard-summary', 'dashboard-trends', 'dashboard-breakdowns', 'dashboard-records', 'dashboard-thresholds', 'dashboard-monthly', 'dashboard-teams', 'dashboard-teams-top'):
+            data = self.get(name, circle='AP', report_type='LWE')  # AP is an LWE circle with no site in this workbook
+            self.assertEqual((data.get('filters') or {}).get('circle', 'AP'), 'AP', name)
+        summary = self.get('dashboard-summary', circle='AP')
+        self.assertEqual(summary['metrics']['sites_in_scope'], 0)
+        self.assertIsNone(summary['metrics']['daily_uptime_pct'])  # no data: no uptime, never 0
+        self.get('dashboard-summary', 400, circle='ZZ')  # not a circle at all
+
     def test_defaults_to_latest_date_all_circles_on_air(self):
         data = self.get('dashboard-summary')
         self.assertEqual(data['reporting_date'], '2026-10-03')

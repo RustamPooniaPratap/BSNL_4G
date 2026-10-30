@@ -177,7 +177,7 @@ describe('Sidebar', () => {
     const nav = screen.getByRole('navigation', { name: 'Main' });
     expect(within(nav).getByRole('button', { name: 'Data Entry' })).toHaveAttribute('aria-expanded', 'true');
     const labels = within(nav).getAllByRole('link').map((a) => a.textContent);
-    expect(labels.slice(labels.indexOf('Add Row'))).toEqual(['Add Row', 'Upload CSV', 'Add Site', 'Users & Roles']);
+    expect(labels.slice(labels.indexOf('Add Row'))).toEqual(['Add Row', 'Upload CSV', 'Add Site', 'Users & Roles', 'Organization']);
     expect(within(nav).getByRole('link', { name: 'Upload CSV' })).toHaveAttribute('aria-current', 'page');
     expect(within(nav).getByRole('link', { name: 'Add Row' })).not.toHaveAttribute('aria-current');
   });

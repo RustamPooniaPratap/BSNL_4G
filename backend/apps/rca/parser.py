@@ -1,6 +1,7 @@
 """Read an RCA workbook (Date, Project, Circle, Site ID, ..., RCA) into validated rows.
 
-No database access. The data sheet is found by its header (for example "Sheet1" of a plain RCA file, or
+Circle names and codes resolve through the Organization's RCA workbook aliases (read once per file); otherwise no
+database access. The data sheet is found by its header (for example "Sheet1" of a plain RCA file, or
 "RCA Backup" of the Daily RCA Compilation, whose header is on row 2 and whose "Sheet1" is a pivot table);
 columns are found by header text. Values are trimmed but otherwise kept as written; normalised companions
 (project, circle code, ``*_key``) are added for filtering only. Every problem is reported with its Excel row;
@@ -34,13 +35,8 @@ REQUIRED = ('date', 'project', 'circle', 'site id', 'outage min.', 'final bucket
 # Project labels -> the dashboard's report types. "4G Satu" is a shortened label: mapped, but flagged for confirmation.
 PROJECTS = {'4g satu': '4G Saturation', '4g satu.': '4G Saturation', '4g saturation': '4G Saturation', 'lwe': 'LWE'}
 PROJECTS_TO_CONFIRM = {'4g satu', '4g satu.'}
-# Circle names -> the dashboard's circle codes (the codes themselves are accepted too).
-CIRCLES = {
-    'odisha': 'OD', 'orissa': 'OD', 'rajasthan': 'RJ', 'madhya pradesh': 'MP', 'jharkhand': 'JH', 'bihar': 'BH',
-    'chhattisgarh': 'CG', 'chhatisgarh': 'CG', 'chattisgarh': 'CG', 'chattishgarh': 'CG', 'chhattishgarh': 'CG', 'uttar pradesh': 'UP', 'west bengal': 'WB', 'andhra pradesh': 'AP', 'telangana': 'TL',
-    'maharashtra': 'MH',
-}
-CIRCLE_CODES = set(CIRCLES.values())
+# Circle names and codes -> the dashboard's circle codes: Organization > Code Mapping, source "RCA workbook".
+ALIAS_SOURCE = 'rca_workbook'
 PLACEHOLDERS = {'', '-', '--', 'na', 'n/a', '#n/a', 'nil', 'null', 'none', '0'}
 MAX_EXAMPLES = 20
 
@@ -180,6 +176,9 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
     trimmed = 0
     blank_rows = 0
 
+    from apps.organization.services import AliasResolver
+    circles = AliasResolver(ALIAS_SOURCE)
+
     def issue(severity, code, row, site_id, message):
         issues.append({'severity': severity, 'code': code, 'row': row, 'site_id': site_id, 'message': message})
 
@@ -202,7 +201,7 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
         if project is None:
             errors.append(('unknown_project', f'Project "{values["project_raw"]}" is not 4G Saturation or LWE.'))
         circle_raw = values['circle_raw']
-        circle = CIRCLES.get(circle_raw.casefold()) or (circle_raw.upper() if circle_raw.upper() in CIRCLE_CODES else None)
+        circle = circles.resolve(circle_raw, project)
         if circle is None:
             errors.append(('unknown_circle', f'Circle "{circle_raw}" is not a known circle.'))
         outage, valid = _number(cell('outage_minutes'))

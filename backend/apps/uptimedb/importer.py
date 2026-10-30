@@ -74,12 +74,17 @@ def preview(primary: Path, primary_name: str, *, user=None, reconciliation: Path
     """
     if project is not None and project not in PROJECTS:
         raise ImportRejected(f'Unknown project {project!r}; choose 4G Saturation or LWE.')
+    from apps.organization.services import project_keys
+    if project is not None and project not in project_keys():
+        raise ImportRejected(f'Project {project!r} is not in the Organization.')
     if daily_only and reconciliation is not None:
         raise ImportRejected('A daily-values-only import takes one workbook; leave the second report empty.')
     staged, checksum = _stage(primary, primary_name)
     parsed = _parse(staged, primary_name, project=project)
     report = {'primary': {**summary(parsed), 'all_issues': parsed.issues[:5000]}, 'database_effect': database_effect(parsed),
-              'options': {'project': project, 'daily_only': daily_only}}
+              'options': {'project': project, 'daily_only': daily_only},
+              # Project/circle pairs the Organization does not cover: a full import is refused until an Admin sets them up.
+              'organization': organization_check(parsed)}
     if daily_only:
         report['daily_effect'] = daily_effect(parsed)
     batch = DataImportBatch(original_filename=primary_name, checksum_sha256=checksum, sheet_name=parsed.sheet,
@@ -101,6 +106,11 @@ def preview(primary: Path, primary_name: str, *, user=None, reconciliation: Path
     audit('import_previewed', _Actor(user) if user else None, batch=batch.pk, file=primary_name,
           sites=len(parsed.sites), rejected=parsed.rejected)
     return batch
+
+
+def organization_check(parsed: ParsedWorkbook) -> dict:
+    from apps.organization.services import check_pairs
+    return check_pairs({(p, c) for p, c, _ in parsed.sites})
 
 
 def daily_effect(parsed: ParsedWorkbook) -> dict:
@@ -169,6 +179,12 @@ def commit(batch: DataImportBatch, *, user=None, conflict_source: str = '') -> D
         raise ImportRejected('The staged file is missing or has changed since the preview. Preview it again.', 409)
     options = batch.report.get('options') or {}
     parsed = _parse(path, batch.original_filename, project=options.get('project'))
+    from apps.organization.services import blocking_message
+    # Checked again (the Organization may have changed since the preview). Only an import that writes sites is blocked: a
+    # daily-values-only import writes to existing master sites alone and skips the rest.
+    blocked = '' if options.get('daily_only') else blocking_message(organization_check(parsed))
+    if blocked:
+        raise ImportRejected(blocked, 409)
     replaced = 0
     if batch.reconciliation_path and conflict_source == 'reconciliation':
         other_path = Path(batch.reconciliation_path)

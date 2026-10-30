@@ -52,8 +52,9 @@ def _applied(params: dict) -> dict:
 
 @api_view(['GET'])
 def filters_view(request):
+    from apps.organization.services import merge_filter_options
     dataset = _dataset()
-    return Response({**metrics.filter_options(dataset), 'source': _source(dataset)})
+    return Response({**merge_filter_options(metrics.filter_options(dataset)), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -344,9 +345,9 @@ def om_heads_view(request):
 # --- Excel downloads (Daily Uptime Report, Full Consolidated Report) ---------------------------------------------
 
 def _export_scope(request, dataset, selection):
-    """The selected project/circle, limited on the server to the circles the user may use (accounts.scope)."""
-    from apps.accounts.scope import allowed_circles
-    return report_export.resolve_scope(dataset, selection.report_type, selection.circle, allowed_circles(request.user))
+    """The selected project/circle, limited on the server to the project/circle pairs the user may use (accounts.scope)."""
+    from apps.accounts.scope import allowed_pairs
+    return report_export.resolve_scope(dataset, selection.report_type, selection.circle, allowed_pairs(request.user))
 
 
 def _source_label(dataset) -> str:

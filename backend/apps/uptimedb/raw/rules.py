@@ -18,14 +18,16 @@ from dataclasses import dataclass
 
 MINUTES_PER_DAY = 1440
 
-# Raw circle codes -> site-master circle codes. Only verified aliases: the Odisha dump writes "OR" for the master's
-# "OD" (the same sites, UVOR... IDs). Every other raw code equal to a master code is used as is.
-CIRCLE_ALIASES = {'OR': 'OD'}
+ALIAS_SOURCE = 'raw_daily_csv'
 
 
-def canonical_circle(raw: str) -> str:
-    code = (raw or '').strip().upper()
-    return CIRCLE_ALIASES.get(code, code)
+def canonical_circle(raw: str, project: str | None = None, resolver=None) -> str:
+    """The site-master circle code of a raw circle code, through the Organization's raw daily CSV aliases (Administration >
+    Organization > Code Mapping; e.g. the verified "OR" for "OD" of the Odisha dump). A code that is neither an alias nor
+    a circle is returned as written (upper case), so it is reported as a mismatch, never turned into a circle."""
+    from apps.organization.services import AliasResolver
+    resolver = resolver or AliasResolver(ALIAS_SOURCE)
+    return resolver.resolve(raw, project) or (raw or '').strip().upper()
 
 
 @dataclass(frozen=True)
