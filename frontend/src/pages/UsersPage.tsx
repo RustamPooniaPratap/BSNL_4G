@@ -57,6 +57,21 @@ export function UsersPage() {
     }
   };
 
+  /** Membership of the RCA Consolidated Uploaders group (circle uploads give no right to upload consolidated RCA). */
+  const setConsolidated = async (target: PortalUser, allowed: boolean) => {
+    setBusyId(target.id);
+    setMessage(null);
+    try {
+      await updateUser(target.id, { rca_consolidated: allowed });
+      setMessage({ kind: 'ok', text: `${target.username} ${allowed ? 'may now' : 'may no longer'} upload consolidated RCA workbooks.` });
+      reload();
+    } catch (e) {
+      setMessage({ kind: 'error', text: (e as Error).message });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const changeRole = async (target: PortalUser, role: Role) => {
     setMessage(null);
     try {
@@ -106,7 +121,7 @@ export function UsersPage() {
               <Table className="text-xs">
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    <TableHead className="pl-4">Login ID</TableHead><TableHead>Name</TableHead><TableHead className="w-36">Role</TableHead><TableHead>Projects &amp; circles (uploads, exports)</TableHead>
+                    <TableHead className="pl-4">Login ID</TableHead><TableHead>Name</TableHead><TableHead className="w-36">Role</TableHead><TableHead>Projects &amp; circles (uploads, exports)</TableHead><TableHead>Consolidated RCA</TableHead>
                     <TableHead>Status</TableHead><TableHead>Last sign-in</TableHead><TableHead className="pr-4 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -127,6 +142,15 @@ export function UsersPage() {
                           {u.role === 'ci' && !locked
                             ? <CirclesEditor user={u} onSaved={(text) => { setMessage({ kind: 'ok', text }); reload(); }} onError={(text) => setMessage({ kind: 'error', text })} />
                             : <span className="text-muted-foreground">All projects and circles</span>}
+                        </TableCell>
+                        <TableCell>
+                          {u.role === 'admin' || u.is_superuser ? <span className="text-muted-foreground">Allowed (Admin)</span> : (
+                            <label className="inline-flex items-center gap-1.5">
+                              <input type="checkbox" checked={!!u.rca_consolidated} disabled={busyId === u.id || !u.role} aria-label={`Consolidated RCA upload for ${u.username}`}
+                                onChange={() => { void setConsolidated(u, !u.rca_consolidated); }} />
+                              {u.rca_consolidated ? 'Allowed' : 'Not allowed'}
+                            </label>
+                          )}
                         </TableCell>
                         <TableCell>
                           {u.is_active ? <Badge variant="outline" className="border-emerald-300 text-emerald-800">Active</Badge> : <Badge variant="outline">Deactivated</Badge>}

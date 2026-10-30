@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Download, FileCheck2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -42,7 +43,7 @@ export function RcaSubmissionsPage() {
   return (
     <div className="space-y-4">
       <PageHeading title="RCA Submissions"
-        subtitle={`${list.data ? `${list.data.cycles.length} reporting period${list.data.cycles.length === 1 ? '' : 's'}` : 'Loading'} · a project / circle counts as received only when accepted records for it exist`} />
+        subtitle={`${list.data ? `${list.data.cycles.length} reporting period${list.data.cycles.length === 1 ? '' : 's'}` : 'Loading'} · circle submissions (confirmed circle files) are tracked apart from RCA data availability`} />
       {list.error && <Alert variant="destructive"><AlertDescription>{list.error.message}</AlertDescription></Alert>}
       <FilterCard label="Reporting period"
         footer={list.data && !list.data.cycles.length && !starting
@@ -233,17 +234,30 @@ function PeriodView({ cycle, onChanged }: { cycle: RcaCycleDetail; onChanged: ()
       </Card>
 
       <Card className="gap-2 rounded-xl px-5 py-4" aria-label="Expected coverage">
-        <h2 className="text-base font-semibold">Received and pending data</h2>
+        <h2 className="text-base font-semibold">Circle submissions and RCA data</h2>
+        <p className="text-xs text-muted-foreground">
+          Circle submission: a confirmed Upload Circle RCA file of that project, circle and date (consolidated uploads never count). RCA data: accepted records of
+          the project and circle, from any upload; the final report needs data for every expected unit. No deadline is configured, so receipt times are shown without
+          on-time or late.
+        </p>
         {cycle.units.length ? (
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader><TableRow>{['Circle', 'Project', 'Coverage', 'Accepted records', 'Outage minutes', 'From uploaded files'].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
+              <TableHeader><TableRow>{['Circle', 'Project', 'Circle submission', 'Received', 'RCA data', 'Accepted records', 'Outage minutes', 'From uploaded files'].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
               <TableBody>
                 {cycle.units.map((u) => (
                   <TableRow key={`${u.project}|${u.circle}`}>
                     <TableCell className="font-medium">{u.circle}</TableCell>
                     <TableCell>{u.project}</TableCell>
-                    <TableCell><CycleBadge code={u.status} label={u.status_label} /></TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={u.submission_status === 'received' ? 'border-emerald-300 text-emerald-800' : 'border-slate-300 text-slate-600'}>
+                        {u.submission_label ?? 'Not received'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs whitespace-nowrap">
+                      {u.submission ? <>{formatDateTime(u.submission.committed_at ?? u.submission.uploaded_at)}<span className="block text-muted-foreground">by {u.submission.uploaded_by ?? '—'} · #{u.submission.batch}</span></> : '—'}
+                    </TableCell>
+                    <TableCell><CycleBadge code={u.status} label={u.data_label ?? u.status_label} /></TableCell>
                     <TableCell className="tabular-nums">{formatNumber(u.records)}</TableCell>
                     <TableCell className="tabular-nums">{u.records ? formatMin(u.outage_minutes) : '—'}</TableCell>
                     <TableCell className="max-w-80 truncate text-xs" title={u.source_files.join(', ')}>{u.source_files.join(', ') || '—'}</TableCell>
@@ -291,7 +305,7 @@ function PeriodView({ cycle, onChanged }: { cycle: RcaCycleDetail; onChanged: ()
 
 function UploadTable({ uploads, showPeriod = false, empty }: { uploads: RcaImportBatch[]; showPeriod?: boolean; empty: string }) {
   if (!uploads.length) return <p className="text-sm text-muted-foreground">{empty}</p>;
-  const headers = ['#', 'Report', ...(showPeriod ? ['Period'] : []), 'Uploaded by', 'File', 'Scope', 'Uploaded', 'Status', 'Circles in workbook', 'Imported · updated · skipped · rejected', ''];
+  const headers = ['#', 'Report', ...(showPeriod ? ['Period'] : []), 'Uploaded by', 'File', 'Type · scope', 'Uploaded', 'Status', 'Circles in workbook', 'Imported · updated · skipped · rejected', ''];
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -308,7 +322,10 @@ function UploadTable({ uploads, showPeriod = false, empty }: { uploads: RcaImpor
                 {showPeriod && <TableCell className="whitespace-nowrap">{periodText(b.period_start, b.period_end)}</TableCell>}
                 <TableCell>{b.imported_by ?? '—'}</TableCell>
                 <TableCell className="max-w-44 truncate" title={b.file}>{b.file}</TableCell>
-                <TableCell className="text-xs">{b.project_scope === 'both' ? '4G + LWE' : b.project_scope ? shortProject(b.project_scope) : '—'}</TableCell>
+                <TableCell className="text-xs">
+                  {b.upload_type === 'circle' ? `Circle · ${b.circle} ${b.project_scope ? shortProject(b.project_scope) : ''}` : b.upload_type === 'consolidated' ? 'Consolidated' : 'Legacy'}
+                  <span className="block text-muted-foreground">{b.project_scope === 'both' ? '4G + LWE' : b.project_scope ? shortProject(b.project_scope) : '—'}</span>
+                </TableCell>
                 <TableCell className="whitespace-nowrap">{formatDateTime(b.uploaded_at)}</TableCell>
                 <TableCell className={problem ? 'text-destructive' : ''}>
                   {b.status_label}{b.correction && <span className="block text-xs text-amber-800">Correction</span>}

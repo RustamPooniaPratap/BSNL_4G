@@ -13,6 +13,7 @@ from django.urls import reverse
 from openpyxl import load_workbook
 
 from apps.rca.models import RcaEvent, RcaImportBatch, RcaRecord, RcaReport, RcaReportingCycle
+from apps.accounts.roles import set_rca_consolidated
 from tests.auth_helpers import portal_user
 from tests.test_rca import RcaTestCase, uptime_sites, workbook
 
@@ -25,7 +26,7 @@ RJ = [[DAY, '4G Satu', 'Rajasthan', 'RJ0001', 'Charlie', 'Jaisalmer', 'JODHPUR',
 BH = [[DAY, 'LWE', 'Bihar', 'LWEBH0063', 'Haibatpur', 'Gaya', 'Gaya', 'Yes', 20.6, 'Other Media', 'BSNL Media', 'Media Flacuatation']]
 LWE_OD = [[DAY, 'LWE', 'Odisha', 'LWEOD0001', 'Lima', '', '', 'Yes', 4, 'BSNL OFC', 'Fiber', 'Cut']]
 WORKBOOK = OD + RJ + BH
-DETAILS = {'report_name': 'October 2026 RCA Report', 'period_start': '2026-10-21', 'period_end': '', 'project_scope': 'both', 'remarks': ''}
+DETAILS = {'upload_type': 'consolidated', 'report_name': 'October 2026 RCA Report', 'period_start': '2026-10-21', 'period_end': '', 'project_scope': 'both', 'remarks': ''}
 SCOPE = [['4G Saturation', 'OD'], ['4G Saturation', 'RJ'], ['LWE', 'BH'], ['LWE', 'OD']]
 
 
@@ -35,6 +36,8 @@ class UploadTestCase(RcaTestCase):
         super().setUp()
         self.noc = portal_user('noc-lead', 'noc_lead')
         self.other_noc = portal_user('noc-lead-2', 'noc_lead')
+        for user in (self.noc, self.other_noc):  # consolidated uploads need the group; being a NOC Lead is not enough
+            set_rca_consolidated(user, True)
         uptime_sites(('4G Saturation', 'OD', 'OD0001'), ('4G Saturation', 'OD', 'OD0002'), ('4G Saturation', 'OD', 'OD0003'),
                      ('4G Saturation', 'RJ', 'RJ0001'), ('LWE', 'BH', 'LWEBH0063'), ('LWE', 'OD', 'LWEOD0001'))
         self.client.force_login(self.noc)
@@ -134,11 +137,16 @@ class NocLeadUploadTests(UploadTestCase):
         self.assertEqual(self.commit(none_valid['id']).status_code, 409)
         self.assertEqual(RcaRecord.objects.count(), 2)
         missing = self.client.post(reverse('rca-import-preview'), {'file': SimpleUploadedFile('a.xlsx', b'x'), 'project_scope': 'both'})
-        self.assertEqual(set(missing.json()['details']), {'report_name', 'period_start'})
+        self.assertEqual(set(missing.json()['details']), {'upload_type'})
+        missing = self.client.post(reverse('rca-import-preview'), {'file': SimpleUploadedFile('a.xlsx', b'x'), 'upload_type': 'consolidated'})
+        self.assertEqual(set(missing.json()['details']), {'report_name', 'project_scope'})
 
     def test_reuploading_the_same_workbook_creates_no_duplicates(self):
-        self.imported(WORKBOOK)
-        preview = self.upload(WORKBOOK).json()
+        data = workbook(Path(self.tmp.name) / 'same.xlsx', rows=WORKBOOK).read_bytes()  # the very same file, uploaded twice
+        post = lambda: self.client.post(reverse('rca-import-preview'), {'file': SimpleUploadedFile('rca.xlsx', data), **DETAILS})  # noqa: E731
+        first = post().json()
+        self.assertEqual(self.commit(first['id']).status_code, 200)
+        preview = post().json()
         self.assertIsNotNone(preview['report']['already_imported'])
         self.assertFalse(preview['report']['is_correction'])
         result = self.commit(preview['id']).json()
@@ -170,13 +178,16 @@ class NocLeadUploadTests(UploadTestCase):
         self.assertEqual(self.client.get(reverse('rca-records'), {'q': 'OD0002'}).json()['count'], 0)
         self.assertEqual(RcaImportBatch.objects.filter(status='committed').count(), 3)  # history kept
 
-    def test_periods_never_overlap(self):
+    def test_periods_are_daily_and_never_overlap(self):
         self.imported(WORKBOOK)
-        overlap = self.upload(WORKBOOK, period_start='2026-10-20', period_end='2026-10-22')
-        self.assertEqual(overlap.status_code, 409)
-        self.assertIn('overlaps the existing reporting period 21 Oct 2026', overlap.json()['error'])
+        ranged = self.upload(WORKBOOK, period_start='2026-10-20', period_end='2026-10-22')
+        self.assertEqual(ranged.status_code, 400)  # an upload is for one reporting date; periods are daily
+        self.assertIn('periods are daily', str(ranged.json()))
         future = self.upload(WORKBOOK, period_start='2099-01-01')
         self.assertEqual(future.status_code, 400)
+        self.imported(WORKBOOK + DAY2_ROWS, 'day2.xlsx', period_start='2026-10-22', report_name='RCA 22 Oct')
+        periods = [(c.reporting_date.isoformat(), c.end.isoformat()) for c in RcaReportingCycle.objects.order_by('reporting_date')]
+        self.assertEqual(periods, [('2026-10-21', '2026-10-21'), ('2026-10-22', '2026-10-22')])
 
 
 DAY2 = datetime(2026, 10, 22)
@@ -280,9 +291,10 @@ class CoverageTests(UploadTestCase):
         # An upload that is only validated, not confirmed, is not received data.
         waiting = self.upload(LWE_OD, 'lwe.xlsx', project_scope='LWE').json()
         self.assertEqual((self.detail()['status']['code'], self.detail()['status']['received']), ('review', 3))
-        # Confirming it: the LWE-only workbook does not list the stored LWE Bihar record, which is kept.
-        self.assertEqual(self.commit(waiting['id']).status_code, 409)
-        result = self.commit(waiting['id'], missing_action='keep').json()
+        # Confirming it: the LWE-only workbook holds LWE Odisha only, so the stored LWE Bihar record is outside its scope:
+        # never listed as missing, never offered for withdrawal.
+        self.assertEqual(waiting['report']['missing_rows'], 0)
+        result = self.commit(waiting['id']).json()
         self.assertEqual(result['final_report']['version'], 1)  # every expected unit now has data
         detail = self.detail()
         self.assertEqual((detail['status']['code'], detail['status']['label']), ('final', 'Final report generated'))
@@ -323,8 +335,9 @@ class CoverageTests(UploadTestCase):
                                                             'name': 'October 2026 RCA Report', 'units': SCOPE})
         self.assertEqual(started.status_code, 201, started.content)
         self.assertEqual((started.json()['period_label'], started.json()['status']['code']), ('01 Oct 2026 – 31 Oct 2026', 'awaiting'))
-        self.imported(WORKBOOK, period_start='2026-10-01', period_end='2026-10-31')
-        summary = self.as_admin('get', 'rca-summary').json()
+        upload = self.imported(WORKBOOK)  # reporting date 21 Oct: filed under the Admin's October period, no new period
+        self.assertEqual((upload['cycle'], RcaReportingCycle.objects.count()), (started.json()['id'], 1))
+        summary = self.as_admin('get', 'rca-summary', data={'date_from': '2026-10-01', 'date_to': '2026-10-31'}).json()
         self.assertEqual((summary['kpis']['records'], summary['cycle']['status']['received'], summary['cycle']['status']['required']), (4, 3, 4))
         self.assertEqual(summary['projects'][0]['project'], '4G Saturation')
         listing = self.as_admin('get', 'rca-cycles').json()
@@ -342,9 +355,11 @@ class PermissionTests(UploadTestCase):
         # The NOC Lead has no Admin pages: periods, summary, users, team performance.
         for name, args in (('rca-cycles', []), ('rca-cycle', [1]), ('rca-summary', []), ('auth-users', []), ('dashboard-teams', [])):
             self.assertEqual(self.client.get(reverse(name, args=args)).status_code, 403, name)
-        # CI users cannot upload or see uploads.
+        # CI users see only their own (circle) uploads, never another user's, a period workbook or a consolidated upload.
         self.client.force_login(self.ci)
-        for name, args in (('rca-imports', []), ('rca-import', [mine['id']]), ('rca-import-workbook', [mine['id']]), ('rca-cycles', [])):
+        self.assertEqual(self.client.get(reverse('rca-imports')).json()['imports'], [])
+        self.assertEqual(self.client.get(reverse('rca-import', args=[mine['id']])).status_code, 404)
+        for name, args in (('rca-import-workbook', [mine['id']]), ('rca-cycles', [])):
             self.assertEqual(self.client.get(reverse(name, args=args)).status_code, 403, name)
         self.assertEqual(self.upload(WORKBOOK).status_code, 403)
         # An Admin sees every upload.

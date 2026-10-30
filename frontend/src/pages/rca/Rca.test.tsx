@@ -34,13 +34,13 @@ const REC: RcaRecord = {
 };
 const PAGE: RcaPage = { count: 2, page: 1, page_size: 25, pages: 1, results: [REC, { ...REC, id: 2, site_id: 'LWEBH0063', project: 'LWE', project_raw: 'LWE', circle: 'BH', outage_minutes: 20.6, bucket_2: 'BSNL Media', bucket_2_unclassified: false, rca_text: 'Media Flacuatation' }] };
 const DETAIL: RcaRecordDetail = { ...REC, source_file: 'Book1_RCA_Rustam.xlsx', source_row: 7, batch: 1, created_by: null, created_at: '2026-10-26T09:05:00', workflow: null, comments: [], history: [], other_records: [] };
-const BREAKDOWN_LABELS = ['PTPL-Battery', 'PTPL-OFC', 'PTPL-Techn', 'PTPL-Others', 'BSNL-OFC', 'BSNL-Media', 'BSNL-Link', 'BSNL-Others', 'BBNL-OFC',
+const BREAKDOWN_LABELS = ['PTPL-Battery', 'PTPL-OFC', 'PTPL-Others', 'BSNL-OFC', 'BSNL-Media', 'BSNL-Others', 'BBNL-OFC',
   'DMW', 'HFCL', 'Iaasp Link', 'Iaasp OFC', 'Iaasp Others', 'Iaasp Power', 'TCS', 'Tech Delay', 'Theft', 'Vsat', 'Others'];
 const counts = (values: Record<string, number>, empty = false) =>
-  Object.fromEntries(BREAKDOWN_LABELS.map((l) => [l, empty || l === 'BSNL-Link' ? null : (values[l] ?? 0)]));
+  Object.fromEntries(BREAKDOWN_LABELS.map((l) => [l, empty ? null : (values[l] ?? 0)]));
 const BREAKDOWN: RcaBreakdown = {
   through: '2026-10-26',
-  columns: BREAKDOWN_LABELS.map((label) => ({ label, pending: label === 'BSNL-Link', final_buckets: label === 'BSNL-Link' ? [] : [label] })),
+  columns: BREAKDOWN_LABELS.map((label) => ({ label, pending: false, final_buckets: [label] })),
   rows: [
     { circle: 'AP', has_records: false, counts: counts({}, true), grand_total: null, not_mapped: null },
     { circle: 'MP', has_records: true, counts: counts({ 'BSNL-OFC': 30, Others: 10 }), grand_total: 40, not_mapped: 5 },
@@ -48,7 +48,7 @@ const BREAKDOWN: RcaBreakdown = {
   ],
   totals: counts({ 'BSNL-OFC': 50, TCS: 40, Others: 10 }),
   grand_total: 100,
-  percent_of_total: Object.fromEntries(BREAKDOWN_LABELS.map((l) => [l, l === 'BSNL-Link' ? null : ({ 'BSNL-OFC': 50, TCS: 40, Others: 10 } as Record<string, number>)[l] ?? 0])),
+  percent_of_total: Object.fromEntries(BREAKDOWN_LABELS.map((l) => [l, ({ 'BSNL-OFC': 50, TCS: 40, Others: 10 } as Record<string, number>)[l] ?? 0])),
   not_mapped: { records: 5, values: [{ final_bucket: 'BB', records: 5 }] },
   records: 105,
   empty: false,
@@ -170,7 +170,7 @@ describe('RCA Summary', () => {
     expect(bars(title)[0]).toContain('1,31,086 min');
     expect(screen.getByText(/RCA-applicable records only: the 1,076 Other Media — RCA Not Applicable records are not included/)).toBeInTheDocument();
     // Bucket - 2: the "-" placeholder is listed last as unclassified, not ranked as a cause.
-    expect(bars('Secondary classification: Bucket - 2').at(-1)).toMatch(/^Unclassified/);
+    expect(bars('Secondary classification: Bucket - 2 (per Final Bucket)').at(-1)).toMatch(/^Unclassified/);
   });
 
   it('compares circles by rate per 100 sites, not only by raw counts', async () => {
@@ -200,12 +200,14 @@ describe('RCA Summary', () => {
     expect(screen.queryByRole('region', { name: 'RCA summary KPIs' })).not.toBeInTheDocument();  // its own page
     expect(within(table).getByText('Through 26 Oct 2026 · Final Bucket, filtered as above')).toBeInTheDocument();
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(headers).toEqual(['Circle', ...BREAKDOWN_LABELS.map((l) => (l === 'BSNL-Link' ? 'BSNL-Linkpending' : l)), 'Grand Total', 'Not mapped']);
+    expect(headers).toEqual(['Circle', ...BREAKDOWN_LABELS, 'Grand Total', 'Not mapped']);
+    expect(headers).not.toContain('BSNL-Link');  // out of scope: removed
+    expect(headers).not.toContain('PTPL-Techn');
     const row = (name: string) => within(table).getByRole('row', { name }).querySelectorAll('th, td');
     const at = (name: string, label: string) => row(name)[headers.indexOf(label)].textContent;
     expect([at('RCA % of Total', 'BSNL-OFC'), at('RCA % of Total', 'TCS'), at('RCA % of Total', 'Grand Total')]).toEqual(['50%', '40%', '100%']);
     expect([at('Total', 'BSNL-OFC'), at('Total', 'Grand Total'), at('Total', 'Not mapped')]).toEqual(['50', '100', '5']);
-    expect([at('Circle MP', 'BSNL-OFC'), at('Circle MP', 'Grand Total'), at('Circle MP', 'BSNL-Linkpending')]).toEqual(['30', '40', '']);  // pending: empty
+    expect([at('Circle MP', 'BSNL-OFC'), at('Circle MP', 'Grand Total')]).toEqual(['30', '40']);
     expect([at('Circle AP', 'BSNL-OFC'), at('Circle AP', 'Grand Total')]).toEqual(['', '']);  // no records: empty, not 0
     expect(within(table).getByText(/Not mapped \(outside the Grand Total\): BB 5\./)).toBeInTheDocument();
     m.fetchRcaSummary.mockResolvedValue({ ...SUMMARY, breakdown: { ...BREAKDOWN, through: '2026-10-22', rows: [], totals: counts({}), grand_total: 0, records: 0, empty: true,
@@ -303,25 +305,30 @@ describe('RCA cause mapping', () => {
 });
 
 describe('RCA in the sidebar', () => {
-  it('lists RCA as its own section; a CI sees only the RCA Register, a NOC Lead also the upload, an Admin four RCA pages but not Cause Mapping', async () => {
-    const view = renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: CI_USER }) });
+  it('lists RCA as its own section; a CI sees the RCA Register (and circle upload when granted), a NOC Lead the circle upload, an Admin every RCA page but Cause Mapping', async () => {
+    const view = renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: { ...CI_USER, rca_upload: { circle: false, consolidated: false } } }) });
     const nav = () => screen.getByRole('navigation', { name: 'Main' });
     expect(within(nav()).getByText('RCA')).toHaveClass('uppercase');  // a section heading, like Data
     expect(within(nav()).queryByRole('button', { name: 'RCA' })).not.toBeInTheDocument();
     expect(within(nav()).getByRole('link', { name: 'RCA Register' })).toHaveAttribute('aria-current', 'page');
-    for (const name of ['RCA Summary', 'RCA Submissions', 'Cause Mapping', 'Upload RCA Data']) {
+    for (const name of ['RCA Summary', 'RCA Submissions', 'Cause Mapping', 'Upload Circle RCA', 'Upload Consolidated RCA']) {
       expect(within(nav()).queryByRole('link', { name, hidden: true })).not.toBeInTheDocument();
     }
     view.unmount();
-    const noc = renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: NOC_LEAD }) });
-    expect(within(nav()).getByRole('link', { name: 'Upload RCA Data' })).toHaveAttribute('href', '/rca/import');
+    const granted = renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: { ...CI_USER, rca_upload: { circle: true, consolidated: false } } }) });
+    expect(within(nav()).getByRole('link', { name: 'Upload Circle RCA' })).toHaveAttribute('href', '/rca/import');
+    expect(within(nav()).queryByRole('link', { name: 'Upload Consolidated RCA', hidden: true })).not.toBeInTheDocument();
+    granted.unmount();
+    const noc = renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: { ...NOC_LEAD, rca_upload: { circle: true, consolidated: false } } }) });
+    expect(within(nav()).getByRole('link', { name: 'Upload Circle RCA' })).toHaveAttribute('href', '/rca/import');
+    expect(within(nav()).queryByRole('link', { name: 'Upload Consolidated RCA', hidden: true })).not.toBeInTheDocument();  // not in the group
     for (const name of ['RCA Summary', 'RCA Submissions', 'Cause Mapping', 'Team Performance', 'CSV Arrival Tracking', 'Users & Roles']) {
       expect(within(nav()).queryByRole('link', { name, hidden: true })).not.toBeInTheDocument();
     }
     noc.unmount();
-    renderWithWorkbook(<Sidebar />, { url: '/portfolio' });
-    expect(['RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload RCA Data'].map((n) => within(nav()).getByRole('link', { name: n }).getAttribute('href')))
-      .toEqual(['/rca', '/rca/summary', '/rca/submissions', '/rca/import']);
+    renderWithWorkbook(<Sidebar />, { url: '/portfolio', auth: authValue({ user: { ...authValue().user!, rca_upload: { circle: true, consolidated: true } } }) });
+    expect(['RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload Circle RCA', 'Upload Consolidated RCA'].map((n) => within(nav()).getByRole('link', { name: n }).getAttribute('href')))
+      .toEqual(['/rca', '/rca/summary', '/rca/submissions', '/rca/import', '/rca/import/consolidated']);
     // Cause Mapping is out of the navigation; its page and data are kept.
     expect(within(nav()).queryByRole('link', { name: 'Cause Mapping', hidden: true })).not.toBeInTheDocument();
   });

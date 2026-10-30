@@ -8,6 +8,14 @@ to cover, and a unit counts as received when accepted RCA records of that projec
 period. A successful upload alone proves nothing about a circle that has no rows in it. Without a configured
 scope the period reports "expected scope not configured" and its report stays partial.
 
+Two facts per expected unit, never derived from each other:
+- RCA data availability ("received" / "pending"): accepted records of the project and circle exist in the period,
+  whichever upload (circle, consolidated, legacy) or manual entry wrote them. Period completeness and the final report
+  rest on this.
+- Circle submission ("received" / "not_received"): a committed *circle* upload of that project, circle and reporting
+  date, with its upload and commit times. Previews, failed or rejected uploads, consolidated and legacy uploads never
+  count. No deadline is configured, so nothing is called on time or late.
+
 Upload status (validated, imported, failed...) is kept apart from period completeness. The period's status is
 derived each time:
 - "final": the latest final report was built from exactly the records stored now (same fingerprint);
@@ -42,7 +50,9 @@ STATUS_LABELS = {
     'partial': 'Partially received', 'ready': 'Ready for final report', 'final': 'Final report generated',
     'revised': 'Revised after finalization',
 }
-UNIT_LABELS = {'received': 'Data received', 'pending': 'Pending — no accepted records'}
+UNIT_LABELS = {'received': 'Data received', 'pending': 'Pending — no accepted records'}  # as printed in the final workbook
+DATA_LABELS = {'received': 'Data available', 'pending': 'No data'}
+SUBMISSION_LABELS = {'received': 'Received', 'not_received': 'Not received'}
 
 
 class CycleError(Exception):
@@ -72,16 +82,24 @@ def period_cycle(start: date, end: date, *, create: bool = False, name: str = ''
         return exact
     cycle = RcaReportingCycle.objects.create(reporting_date=start, period_end=end if end != start else None, name=name, created_by=user)
     # The expected scope carries over from the previous period; a first period starts unconfigured (an Admin sets it).
+    # Units no longer active in the Organization (association, project or circle deactivated) are not carried over.
     previous = RcaReportingCycle.objects.exclude(pk=cycle.pk).filter(reporting_date__lt=start).order_by('-reporting_date').first()
     if previous is not None:
-        set_required(cycle, list(previous.required.values_list('project', 'circle')))
+        from apps.organization.services import associations
+        active = set(associations(active_only=True))
+        set_required(cycle, [u for u in previous.required.values_list('project', 'circle') if u in active])
     return cycle
 
 
-def cycle_for_date(day: date, *, user=None) -> RcaReportingCycle:
-    """The period containing ``day``, or a new single-date period for it."""
+def containing_cycle(day: date) -> RcaReportingCycle | None:
+    """The existing period containing ``day`` (read only, no lock, nothing created)."""
+    return next((c for c in RcaReportingCycle.objects.filter(reporting_date__lte=day) if c.end >= day), None)
+
+
+def cycle_for_date(day: date, *, user=None, name: str = '') -> RcaReportingCycle:
+    """The period containing ``day``, or a new single-date (daily) period for it, named ``name``."""
     containing = next((c for c in RcaReportingCycle.objects.select_for_update().filter(reporting_date__lte=day) if c.end >= day), None)
-    return containing or period_cycle(day, day, create=True, user=user, lock=True)
+    return containing or period_cycle(day, day, create=True, name=name, user=user, lock=True)
 
 
 def available_units() -> list[tuple[str, str]]:
@@ -159,6 +177,7 @@ def batch_json(batch: RcaImportBatch, *, full: bool = False) -> dict:
         label = batch.get_status_display()
     data = {
         'id': batch.pk, 'status': status, 'status_label': label, 'file': batch.original_filename, 'checksum': batch.checksum_sha256,
+        'upload_type': batch.upload_type, 'upload_type_label': batch.get_upload_type_display(), 'circle': batch.circle or None,
         'sheet': batch.sheet_name, 'uploaded_at': batch.uploaded_at.isoformat(),
         'committed_at': batch.committed_at.isoformat() if batch.committed_at else None,
         'imported_by': batch.imported_by.get_username() if batch.imported_by else None,
@@ -181,14 +200,35 @@ def unit_states(cycle: RcaReportingCycle) -> list[dict]:
     sources: dict[tuple, set] = {}
     for p, c, f in recs.values_list('project', 'circle', 'source_file').distinct():
         sources.setdefault((p, c), set()).add(f or 'Recorded in the portal')
+    submitted = circle_submissions(cycle)
     states = []
     for unit in cycle.required.all():
         row = stored.get((unit.project, unit.circle), {})
         status = 'received' if row.get('records') else 'pending'
+        files = submitted.get((unit.project, unit.circle), [])
+        submission = 'received' if files else 'not_received'
+        latest = files[0] if files else None
         states.append({'project': unit.project, 'circle': unit.circle, 'status': status, 'status_label': UNIT_LABELS[status],
+                       'data_label': DATA_LABELS[status],
                        'records': row.get('records', 0), 'outage_minutes': services._round(row.get('minutes')),
-                       'source_files': sorted(sources.get((unit.project, unit.circle), ()))})
+                       'source_files': sorted(sources.get((unit.project, unit.circle), ())),
+                       'submission_status': submission, 'submission_label': SUBMISSION_LABELS[submission],
+                       'submission': latest, 'submissions': len(files)})
     return states
+
+
+def circle_submissions(cycle: RcaReportingCycle) -> dict[tuple[str, str], list[dict]]:
+    """Committed circle uploads per (project, circle) with a reporting date in the period, latest first."""
+    out: dict[tuple[str, str], list[dict]] = {}
+    batches = (RcaImportBatch.objects.filter(upload_type=RcaImportBatch.UploadType.CIRCLE, status=RcaImportBatch.Status.COMMITTED,
+                                             period_start__range=(cycle.reporting_date, cycle.end))
+               .select_related('imported_by').order_by('-committed_at', '-id'))
+    for b in batches:
+        out.setdefault((b.project_scope, b.circle), []).append({
+            'batch': b.pk, 'file': b.original_filename, 'reporting_date': b.period_start.isoformat(),
+            'uploaded_at': b.uploaded_at.isoformat(), 'committed_at': b.committed_at.isoformat() if b.committed_at else None,
+            'uploaded_by': b.imported_by.get_username() if b.imported_by else None})
+    return out
 
 
 def status(cycle: RcaReportingCycle, *, units: list[dict] | None = None, current: str | None = None) -> dict:
@@ -196,6 +236,7 @@ def status(cycle: RcaReportingCycle, *, units: list[dict] | None = None, current
     current = fingerprint(records(cycle)) if current is None else current
     latest = cycle.reports.first()
     required, received = len(units), sum(1 for u in units if u['status'] == 'received')
+    submitted = sum(1 for u in units if u.get('submission_status') == 'received')
     complete = bool(required) and received == required
     waiting = RcaImportBatch.objects.filter(period_start=cycle.reporting_date, period_end=cycle.end,
                                             status=RcaImportBatch.Status.PREVIEWED).exists()
@@ -213,6 +254,8 @@ def status(cycle: RcaReportingCycle, *, units: list[dict] | None = None, current
         code = 'awaiting'
     return {
         'code': code, 'label': STATUS_LABELS[code], 'required': required, 'received': received, 'complete': complete,
+        # Circle files received (separate from data availability; never needed for the final report).
+        'circle_submissions': submitted,
         'outstanding': [{'project': u['project'], 'circle': u['circle'], 'status': u['status'], 'status_label': u['status_label']}
                         for u in units if u['status'] != 'received'],
         'final_version': latest.version if latest else None, 'upload_awaiting_confirmation': waiting,

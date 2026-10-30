@@ -72,7 +72,14 @@ export interface RcaPage {
   results: RcaRecord[];
 }
 
-export interface RcaOption { value: string; label: string; unclassified?: boolean }
+export interface RcaOption {
+  value: string; label: string; unclassified?: boolean;
+  /** In the approved bucketization (Final Bucket and Bucket - 2 filter options only). */
+  approved?: boolean;
+}
+
+/** Approved-classification status of records: approved pair, approved Final Bucket only, not approved, blank. */
+export type RcaClassificationCounts = Record<'approved' | 'final_only' | 'unapproved' | 'blank', number>;
 
 export interface RcaOptions {
   dates: string[];
@@ -85,6 +92,8 @@ export interface RcaOptions {
   categories: RcaOption[];
   statuses: RcaOption[];
   total_records: number;
+  /** The approved bucketization (from the server; the pages keep no list of their own). */
+  classification?: { final_bucket: string; bucket_2: string[] }[];
 }
 
 export interface RcaRanked {
@@ -97,6 +106,10 @@ export interface RcaRanked {
   outage_minutes: number | null;
   /** Source spellings grouped under this label (case and spaces ignored). */
   variants: string[];
+  /** In the approved bucketization (a Final Bucket; for Bucket - 2, the pair with its Final Bucket). */
+  approved?: boolean;
+  /** Bucket - 2 groups: the pair's filter (Final Bucket and Bucket - 2 together). */
+  filter?: { final_bucket: string; bucket_2: string };
 }
 
 export interface RcaCircle {
@@ -142,7 +155,10 @@ export interface RcaSummary {
   };
   dates: { date: string; records: number }[];
   final_buckets: RcaRanked[];
+  /** Per Final Bucket and Bucket - 2 pair: a sub-bucket is never grouped by its name alone. */
   bucket_2: RcaRanked[];
+  /** Records of the filter by approved-classification status. */
+  classification?: RcaClassificationCounts;
   circles: RcaCircle[];
   projects: { project: string; records: number; outage_minutes: number | null; affected_sites: number; rca_not_applicable: number; incomplete_records: number }[];
   /** The reporting period matching the date filter, or the latest period when no dates are filtered. */
@@ -235,6 +251,11 @@ export type RcaProjectScope = '4G Saturation' | 'LWE' | 'both';
 export interface RcaImportBatch {
   id: number;
   status: 'previewed' | 'committed' | 'failed' | 'rejected' | 'discarded';
+  /** circle, consolidated, or legacy (uploaded before upload types existed; never a circle submission). */
+  upload_type?: RcaUploadType | 'legacy';
+  upload_type_label?: string;
+  /** The circle of a circle upload. */
+  circle?: string | null;
   /** Shown to users: e.g. "Validated — awaiting confirmation", "Imported with rejected rows". */
   status_label: string;
   file: string;
@@ -285,6 +306,13 @@ export interface RcaUnitState {
   records: number;
   outage_minutes: number | null;
   source_files: string[];
+  /** RCA data availability (records of the unit in the period, from any upload): "Data available" / "No data". */
+  data_label?: string;
+  /** Circle submission: a committed circle upload of the unit and date (never a consolidated or legacy upload). */
+  submission_status?: 'received' | 'not_received';
+  submission_label?: string;
+  submission?: { batch: number; file: string; reporting_date: string; uploaded_at: string; committed_at: string | null; uploaded_by: string | null } | null;
+  submissions?: number;
 }
 
 export interface RcaCycleStatus {
@@ -344,12 +372,29 @@ export interface RcaCycleList {
   available_units: [string, string][];
 }
 
+/** Upload Circle RCA (one project, circle and date) or Upload Consolidated RCA (several circles and dates). */
+export type RcaUploadType = 'circle' | 'consolidated';
+
 export interface RcaUploadDetails {
+  upload_type: RcaUploadType;
+  /** Required for a consolidated upload; generated from project, circle and date for a circle upload. */
   report_name: string;
+  /** The reporting date. Optional for a consolidated upload: the latest date in the workbook. */
   period_start: string;
-  period_end: string;
+  /** Consolidated uploads. */
   project_scope: RcaProjectScope;
+  /** Circle uploads. */
+  project: string;
+  circle: string;
   remarks: string;
+}
+
+/** What the upload pages may offer the signed-in user (the server checks every upload again). */
+export interface RcaUploadRights {
+  circle: boolean;
+  consolidated: boolean;
+  /** Project/circle pairs a CI user may upload circle files for; null = every pair (Admin, NOC Lead). */
+  access: { project: string; circle: string }[] | null;
 }
 
 export interface RcaWorkflowInput {

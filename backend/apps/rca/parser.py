@@ -3,7 +3,9 @@
 Circle names and codes resolve through the Organization's RCA workbook aliases (read once per file); otherwise no
 database access. The data sheet is found by its header (for example "Sheet1" of a plain RCA file, or
 "RCA Backup" of the Daily RCA Compilation, whose header is on row 2 and whose "Sheet1" is a pivot table);
-columns are found by header text. Values are trimmed but otherwise kept as written; normalised companions
+columns are found by header text. Values are trimmed but otherwise kept as written, except that Final Bucket and
+Bucket - 2 take the approved spelling where they match the approved bucketization exactly (taxonomy.resolve; pairs
+outside it are kept as written and flagged); normalised companions
 (project, circle code, ``*_key``) are added for filtering only. Every problem is reported with its Excel row;
 rows with errors are rejected, never repaired.
 
@@ -21,6 +23,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from openpyxl import load_workbook
+
+from . import taxonomy
 
 SHEET_NAME = 'Sheet1'  # the usual data sheet; any sheet with the RCA header is accepted
 HEADER_SEARCH_ROWS = 10
@@ -148,14 +152,19 @@ def _number_occurrences(rows: list[dict]) -> None:
 
 
 def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None, projects: set[str] | None = None,
-          known_sites: dict[tuple[str, str], str] | None = None) -> dict:
+          known_sites: dict[tuple[str, str], str] | None = None, circle: str | None = None, single_date: bool = False) -> dict:
     """Validated rows and a report: counts, issues (with Excel rows) and the distinct source labels.
 
     For an upload with report details the caller also passes what the rows must match: a date no later than the
     end of ``period`` (first, last day), a project of ``projects`` and a site of ``known_sites`` ((project, site
     key) -> circle in the Up-Time Report). A row that does not match is rejected. Rows dated before the period are
     kept and marked ``earlier_date``: the Daily RCA Compilation is cumulative and repeats the earlier days.
+
+    A circle upload also passes ``circle`` (rows of another circle, or of a site the Up-Time Report lists under another
+    circle, are rejected) and ``single_date`` (a row of any date other than the reporting date is an ``other_date``
+    error: the importer refuses such a file as a whole).
     """
+    expected_circle = circle
     try:
         book = load_workbook(path, read_only=True, data_only=True)
     except Exception as exc:  # not an xlsx, or a damaged file
@@ -178,6 +187,9 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
 
     from apps.organization.services import AliasResolver
     circles = AliasResolver(ALIAS_SOURCE)
+    classified: Counter = Counter()  # rows per classification status (taxonomy.STATUS_LABELS)
+    normalised: Counter = Counter()  # (final, bucket 2 as written, approved final, approved bucket 2) -> rows
+    unapproved: Counter = Counter()  # pairs outside the approved classification -> rows
 
     def issue(severity, code, row, site_id, message):
         issues.append({'severity': severity, 'code': code, 'row': row, 'site_id': site_id, 'message': message})
@@ -212,6 +224,10 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
 
         if period and day and day > period[1]:
             errors.append(('after_reporting_period', f'Date {day.isoformat()} is after the reporting date ({period[1].isoformat()}).'))
+        if single_date and period and day and day != period[0] and day <= period[1]:
+            errors.append(('other_date', f'Date {day.isoformat()} is not the reporting date ({period[0].isoformat()}).'))
+        if expected_circle and circle and circle != expected_circle:
+            errors.append(('outside_circle', f'Circle {circle} is not the selected circle {expected_circle}.'))
         if projects is not None and project and project not in projects:
             errors.append(('outside_project_scope', f'Project {project} is outside the upload\'s project scope ({" and ".join(sorted(projects))}).'))
         uptime_circle = None
@@ -219,6 +235,8 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
             uptime_circle = known_sites.get((project, site_key(site_id)))
             if uptime_circle is None:
                 errors.append(('unknown_site', f'Site ID is not in the Up-Time Report for {project}.'))
+            elif expected_circle and uptime_circle != expected_circle:
+                errors.append(('site_of_other_circle', f'The Up-Time Report lists this {project} site under {uptime_circle}, not {expected_circle}.'))
 
         key = tuple(_text(v) for v in raw)
         if key in seen:
@@ -241,6 +259,14 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
         om_start = True if om == 'yes' else False if om == 'no' else None
         if om_start is None:
             issue('warning', 'om_start_unrecognised', offset, site_id, f'O&M Start "{values["om_start_raw"]}" is not Yes or No: kept as written.')
+        # The approved bucketization (taxonomy): approved spellings where they match exactly, everything else as written.
+        resolved = taxonomy.resolve(values['final_bucket'], values['bucket_2'])
+        if (resolved.final_bucket, resolved.bucket_2) != (values['final_bucket'], values['bucket_2']):
+            normalised[(values['final_bucket'], values['bucket_2'], resolved.final_bucket, resolved.bucket_2)] += 1
+            values['final_bucket'], values['bucket_2'] = resolved.final_bucket, resolved.bucket_2
+        classified[resolved.status] += 1
+        if resolved.status in ('final_only', 'unapproved'):
+            unapproved[(resolved.final_bucket, resolved.bucket_2, resolved.status)] += 1
         for field, label in (('final_bucket', 'Final Bucket'), ('bucket_2', 'Bucket - 2'), ('rca_text', 'RCA')):
             if is_placeholder(values[field]):
                 issue('info', f'unclassified_{field}', offset, site_id,
@@ -256,6 +282,12 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
         })
 
     _number_occurrences(rows)
+    for (final_raw, b2_raw, final, b2), n in sorted(normalised.items(), key=lambda kv: -kv[1]):
+        issue('info', 'bucket_spelling_approved', None, '',
+              f'"{final_raw} / {b2_raw}" ({n:,} rows) is stored with the approved spelling "{final} / {b2}".')
+    for (final, b2, status), n in sorted(unapproved.items(), key=lambda kv: -kv[1]):
+        issue('warning', 'bucket_pair_not_approved', None, '',
+              f'"{final} / {b2 or "blank"}" ({n:,} rows): {taxonomy.STATUS_LABELS[status].lower()}. Kept as written, for review; not reassigned.')
     projects_raw = Counter(r['project_raw'] for r in rows)
     to_confirm = sorted(p for p in projects_raw if p.casefold() in PROJECTS_TO_CONFIRM)
     for label in to_confirm:
@@ -293,6 +325,8 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
             'bucket_2': dict(Counter(r['bucket_2'] for r in rows).most_common()),
             'distinct_rca': len({r['rca_key'] for r in rows if r['rca_key']}),
             'label_variants': variants,
+            # Rows by approved-classification status (taxonomy): approved pairs, approved Final Bucket only, not approved, blank.
+            'classification': {k: classified.get(k, 0) for k in taxonomy.STATUS_LABELS},
             'severity_counts': {k: severities.get(k, 0) for k in ('error', 'warning', 'info')},
             'issue_counts': dict(Counter(i['code'] for i in issues)),
             'issues': issues[:MAX_EXAMPLES * 10],

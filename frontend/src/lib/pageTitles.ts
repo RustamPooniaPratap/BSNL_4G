@@ -31,7 +31,8 @@ const TITLES: Record<string, string> = {
   '/rca/summary/circles': 'Project & Circle Analysis',
   '/rca/summary/trends': 'Daily & Monthly Trends',
   '/rca/submissions': 'RCA Submissions',
-  '/rca/import': 'Upload RCA Data',
+  '/rca/import': 'Upload Circle RCA',
+  '/rca/import/consolidated': 'Upload Consolidated RCA',
   '/rca/mappings': 'RCA Cause Mapping',
   '/change-password': 'Change Password',
 };

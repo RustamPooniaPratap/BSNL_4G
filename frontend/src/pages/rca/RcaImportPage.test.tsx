@@ -2,7 +2,7 @@ import { fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RequirePage } from '../../components/auth/Guards';
+import { RequirePage, RequireRcaConsolidated } from '../../components/auth/Guards';
 import * as api from '../../services/api';
 import { CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
 import type { AuthUser } from '../../types';
@@ -12,6 +12,7 @@ import { RcaImportPage } from './RcaImportPage';
 vi.mock('../../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/api')>()),
   fetchRcaImports: vi.fn(), fetchRcaImport: vi.fn(), previewRcaImport: vi.fn(), commitRcaImport: vi.fn(), discardRcaImport: vi.fn(),
+  fetchOrganizationCatalog: vi.fn(),
 }));
 const m = vi.mocked(api);
 /** Each workflow step as "label: state" (from the indicator's data-state). */
@@ -46,9 +47,18 @@ const DONE: RcaImportBatch & { records: number; final_report: null } = {
   counts: { total: 6, valid: 5, rejected: 1, inserted: 4, updated: 1, skipped: 0, withdrawn: 0, correction: true },
 };
 
+const CATALOG = {
+  projects: [{ key: '4G Saturation', code: '4G', name: '4G Saturation', is_active: true }, { key: 'LWE', code: 'LWE', name: 'LWE', is_active: true }],
+  circles: ['OD', 'RJ'].map((code) => ({ code, name: code, is_active: true })),
+  associations: [{ project: '4G Saturation', circle: 'OD', is_active: true }, { project: '4G Saturation', circle: 'RJ', is_active: true },
+    { project: 'LWE', circle: 'OD', is_active: true }],
+};
+const CI_OD: AuthUser = { ...CI_USER, username: 'ci.od', rca_upload: { circle: true, consolidated: false } };
+
 beforeEach(() => {
   vi.clearAllMocks();
   m.fetchRcaImports.mockResolvedValue({ imports: [], records: 1819, all: false });
+  m.fetchOrganizationCatalog.mockResolvedValue(CATALOG);
 });
 
 describe('Upload RCA Data', () => {
@@ -56,7 +66,7 @@ describe('Upload RCA Data', () => {
     const user = userEvent.setup();
     m.previewRcaImport.mockResolvedValue(PREVIEW);
     m.commitRcaImport.mockResolvedValue(DONE);
-    renderWithWorkbook(<RcaImportPage />, { url: '/rca/import', auth: authValue({ user: NOC }) });
+    renderWithWorkbook(<RcaImportPage mode="consolidated" />, { url: '/rca/import', auth: authValue({ user: NOC }) });
     expect(await screen.findByText(/uploaded as noc\.lead/)).toBeInTheDocument();  // the uploader is the signed-in account
     const validate = screen.getByRole('button', { name: 'Validate workbook' });
     expect(validate).toBeDisabled();
@@ -66,7 +76,8 @@ describe('Upload RCA Data', () => {
     await user.upload(screen.getByLabelText('RCA workbook'), new File(['x'], 'Oct_RCA.xlsx'));
     await user.click(validate);
     expect(m.previewRcaImport).toHaveBeenCalledWith(expect.any(File), {
-      report_name: 'October 2026 RCA Report', period_start: '2026-10-21', period_end: '', project_scope: 'both', remarks: 'Corrected OD outage' });
+      upload_type: 'consolidated', report_name: 'October 2026 RCA Report', period_start: '2026-10-21', project_scope: 'both', project: '', circle: '',
+      remarks: 'Corrected OD outage' });
     const preview = await screen.findByLabelText('Import preview');
     expect(within(preview).getByText(/Correction: this period already has 1 imported upload/)).toBeInTheDocument();
     expect(within(preview).getByText('Row 7 (OD9999): Site ID is not in the Up-Time Report for 4G Saturation.')).toBeInTheDocument();
@@ -95,25 +106,26 @@ describe('Upload RCA Data', () => {
     const user = userEvent.setup();
     m.fetchRcaImports.mockResolvedValue({ imports: [DONE], records: 1823, all: false });
     m.fetchRcaImport.mockResolvedValue(DONE);
-    renderWithWorkbook(<RcaImportPage />, { url: '/rca/import', auth: authValue({ user: NOC }) });
+    renderWithWorkbook(<RcaImportPage mode="consolidated" />, { url: '/rca/import', auth: authValue({ user: NOC }) });
     const mine = await screen.findByLabelText('My uploads');
+    expect(within(mine).getByText('My consolidated uploads')).toBeInTheDocument();
     const row = (await within(mine).findAllByRole('row'))[1];
     expect(row).toHaveTextContent('October 2026 RCA Report21 Oct 2026Oct_RCA.xlsx');
     expect(row).toHaveTextContent('4 · 1 · 0 · 1');
     await user.click(within(row).getByRole('button', { name: 'View' }));
     expect(m.fetchRcaImport).toHaveBeenCalledWith(20);
     expect(await screen.findByLabelText('Upload summary')).toBeInTheDocument();
-    expect(m.fetchRcaImports).toHaveBeenCalledWith(expect.anything());  // own uploads only, never ?all
+    expect(m.fetchRcaImports).toHaveBeenCalledWith(expect.anything(), false, 'consolidated');  // own consolidated uploads only, never ?all
   });
 
   it('matches the Upload CSV layout: steps, details, drop zone, file checks, Replace / Remove and stale previews', async () => {
     const user = userEvent.setup();
     m.fetchRcaImports.mockResolvedValue({ imports: [], records: 1819, all: false, max_bytes: 50 * 1024 * 1024 });
     m.previewRcaImport.mockResolvedValue(PREVIEW);
-    renderWithWorkbook(<RcaImportPage />, { url: '/rca/import', auth: authValue({ user: NOC }) });
+    renderWithWorkbook(<RcaImportPage mode="consolidated" />, { url: '/rca/import', auth: authValue({ user: NOC }) });
     expect(await screen.findByText(/as \.xlsx or \.xlsm, up to 50\.0 MB/)).toBeInTheDocument();  // the server's configured limit
     expect(steps()).toEqual(['Upload: current', 'Validate & Preview: todo', 'Confirm Import: todo', 'Results: todo']);
-    expect(screen.getByText('Still needed: report name, reporting date, RCA workbook.')).toBeInTheDocument();
+    expect(screen.getByText('Still needed: report name, RCA workbook.')).toBeInTheDocument();  // the date is optional (latest in the workbook)
     expect(screen.getByRole('button', { name: 'Validate workbook' })).toBeDisabled();
     const zone = screen.getByText('Upload your RCA workbook').closest('div')!;
     fireEvent.drop(zone, { dataTransfer: { files: [new File(['x'], 'rca.csv')] } });  // wrong type: refused, never selected
@@ -141,7 +153,7 @@ describe('Upload RCA Data', () => {
   it('shows a rejected workbook and a failed import as failures, and success only after the server commits', async () => {
     const user = userEvent.setup();
     m.previewRcaImport.mockRejectedValueOnce(new api.ApiError('Oct_RCA.xlsx: no sheet has the RCA columns.', 400));
-    renderWithWorkbook(<RcaImportPage />, { url: '/rca/import', auth: authValue({ user: NOC }) });
+    renderWithWorkbook(<RcaImportPage mode="consolidated" />, { url: '/rca/import', auth: authValue({ user: NOC }) });
     await user.type(await screen.findByLabelText(/Report name/), 'October 2026 RCA Report');
     await user.type(screen.getByLabelText(/Reporting date/), '2026-10-21');
     await user.upload(screen.getByLabelText('RCA workbook'), new File(['x'], 'Oct_RCA.xlsx'));
@@ -164,10 +176,39 @@ describe('Upload RCA Data', () => {
     expect(steps()).toEqual(['Upload: done', 'Validate & Preview: done', 'Confirm Import: done', 'Results: done']);
   });
 
-  it('is open to Admins and NOC Leads, not to CI users', () => {
-    renderWithWorkbook(<Routes><Route path="/rca/import" element={<RequirePage><RcaImportPage /></RequirePage>} /></Routes>,
-      { url: '/rca/import', auth: authValue({ user: CI_USER }) });
+  it('opens Upload Consolidated RCA only to Admins and the RCA Consolidated Uploaders group', () => {
+    const route = <Routes><Route path="/rca/import/consolidated" element={<RequireRcaConsolidated><RcaImportPage mode="consolidated" /></RequireRcaConsolidated>} /></Routes>;
+    const noc = renderWithWorkbook(route, { url: '/rca/import/consolidated', auth: authValue({ user: { ...NOC, rca_upload: { circle: true, consolidated: false } } }) });
     expect(screen.getByText('You do not have access to this page')).toBeInTheDocument();
     expect(m.fetchRcaImports).not.toHaveBeenCalled();
+    noc.unmount();
+    renderWithWorkbook(route, { url: '/rca/import/consolidated', auth: authValue({ user: { ...NOC, rca_upload: { circle: true, consolidated: true } } }) });
+    expect(screen.getByRole('heading', { name: 'Upload Consolidated RCA' })).toBeInTheDocument();
+  });
+
+  it('offers a CI user only their granted project and circle and sends one circle and date', async () => {
+    const user = userEvent.setup();
+    m.fetchRcaImports.mockResolvedValue({ imports: [], records: 0, all: false, rights: { circle: true, consolidated: false, access: [{ project: '4G Saturation', circle: 'OD' }] } });
+    m.previewRcaImport.mockResolvedValue({ ...PREVIEW, upload_type: 'circle', circle: 'OD', project_scope: '4G Saturation' });
+    renderWithWorkbook(<Routes><Route path="/rca/import" element={<RequirePage><RcaImportPage mode="circle" /></RequirePage>} /></Routes>,
+      { url: '/rca/import', auth: authValue({ user: CI_OD }) });
+    expect(await screen.findByRole('heading', { name: 'Upload Circle RCA' })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Report name/)).not.toBeInTheDocument();
+    expect(await screen.findByText('Still needed: reporting date, RCA workbook.')).toBeInTheDocument();  // the only grant is preselected
+    expect(screen.getByRole('combobox', { name: /Project/ })).toHaveTextContent('4G Saturation');
+    expect(screen.getByRole('combobox', { name: /Circle/ })).toHaveTextContent('OD');
+    await user.type(screen.getByLabelText(/Reporting date/), '2026-10-21');
+    await user.upload(screen.getByLabelText('RCA workbook'), new File(['x'], 'OD_RCA.xlsx'));
+    await user.click(screen.getByRole('button', { name: 'Validate workbook' }));
+    expect(m.previewRcaImport).toHaveBeenCalledWith(expect.any(File), {
+      upload_type: 'circle', report_name: '', period_start: '2026-10-21', project_scope: 'both', project: '4G Saturation', circle: 'OD', remarks: '' });
+    expect(m.fetchRcaImports).toHaveBeenCalledWith(expect.anything(), false, 'circle');
+  });
+
+  it('tells a CI user without a granted circle and keeps validation disabled', async () => {
+    m.fetchRcaImports.mockResolvedValue({ imports: [], records: 0, all: false, rights: { circle: false, consolidated: false, access: [] } });
+    renderWithWorkbook(<RcaImportPage mode="circle" />, { url: '/rca/import', auth: authValue({ user: { ...CI_USER, rca_upload: { circle: false, consolidated: false } } }) });
+    expect(await screen.findByText('No circle granted')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Validate workbook' })).toBeDisabled();
   });
 });

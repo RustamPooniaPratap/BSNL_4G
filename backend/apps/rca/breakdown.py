@@ -2,15 +2,15 @@
 
 The layout follows the RCA workbook's "RCA Analysis - Updated" table. In the workbook every column counts the
 "RCA Backup" rows whose **Final Bucket** equals the column header with "-" read as a space, ignoring case
-(COUNTIFS), and BSNL-Link counted the "Iaasp Link" rows, which the Iaasp Link column also counts (the same records
-twice). Rules here:
+(COUNTIFS). The workbook's BSNL-Link and PTPL-Techn columns are out of scope and not shown (removed 30 Oct 2026; a
+PTPL Techn record would be listed under Not mapped). Rules here:
 
 - ``FINAL_BUCKET_CATEGORIES`` is the one mapping from Final Bucket (case and spacing ignored, ``parser.text_key``)
   to a column. It holds the workbook rule for each column plus the equivalents confirmed on 29 Oct 2026:
   Above 98.5% / Others / Other Media / NC -> Others; BSNL OFC / SSA OFC -> BSNL OFC; BBNL Media / BBNL OFC -> BBNL OFC;
-  Iaasp Others / Iaasp Other -> Iaasp Others. Nothing else is inferred from similar spelling.
-- A record is counted in one column only. BSNL-Link is shown but left empty (pending the updated workbook), because
-  its workbook rule conflicts with Iaasp Link.
+  Iaasp Others / Iaasp Other -> Iaasp Others; and on 30 Oct 2026 BSNL OFC Break / ETR/SSA OFC -> BSNL OFC,
+  Vsat-Media / bsnl Hub site -> BSNL Media, Ceragon -> DMW. Nothing else is inferred from similar spelling.
+- A record is counted in one column only.
 - Final Bucket values that map to no column (and blank values) are never put in Others: they are counted under
   "Not mapped", listed with their raw values, and kept out of the Grand Total, so every record is accounted for.
 - Rows: one per circle (projects combined, as the workbook keys rows on the circle), for every circle of the selected
@@ -28,14 +28,12 @@ from .parser import text_key
 COLUMNS: tuple[tuple[str, tuple[str, ...] | None], ...] = (
     ('PTPL-Battery', ('PTPL Battery',)),
     ('PTPL-OFC', ('PTPL OFC',)),
-    ('PTPL-Techn', ('PTPL Techn',)),
     ('PTPL-Others', ('PTPL Others',)),
-    ('BSNL-OFC', ('BSNL OFC', 'SSA OFC')),
-    ('BSNL-Media', ('BSNL Media',)),
-    ('BSNL-Link', None),  # the workbook counts "Iaasp Link" here and again under Iaasp Link: pending the updated workbook
+    ('BSNL-OFC', ('BSNL OFC', 'SSA OFC', 'BSNL OFC Break', 'ETR/SSA OFC')),
+    ('BSNL-Media', ('BSNL Media', 'Vsat-Media', 'bsnl Hub site')),
     ('BSNL-Others', ('BSNL Others',)),
     ('BBNL-OFC', ('BBNL OFC', 'BBNL Media')),
-    ('DMW', ('DMW',)),
+    ('DMW', ('DMW', 'Ceragon')),
     ('HFCL', ('HFCL',)),
     ('Iaasp Link', ('Iaasp Link',)),
     ('Iaasp OFC', ('Iaasp OFC',)),

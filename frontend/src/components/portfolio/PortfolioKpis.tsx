@@ -24,7 +24,7 @@ const TINT = {
   amber: 'bg-amber-100 text-amber-700',
   slate: 'bg-slate-100 text-slate-600',
 } as const;
-type Tint = keyof typeof TINT;
+export type Tint = keyof typeof TINT;
 
 /** Presentation of each KPI from buildKpis: icon, colour and the "View …" link text. */
 const LOOK: Record<string, { icon: LucideIcon; tint: Tint; view: string }> = {
@@ -59,7 +59,8 @@ export function DeltaChip({ d, higherIsBetter }: { d: Delta | null; higherIsBett
   );
 }
 
-function Definition({ label, text }: { label: string; text: string }) {
+/** The ⓘ next to a KPI title: how it is calculated (shared with the RCA pages). */
+export function Definition({ label, text }: { label: string; text: string }) {
   return (
     <Popover>
       <PopoverTrigger className="relative z-10 rounded-full text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
@@ -71,7 +72,7 @@ function Definition({ label, text }: { label: string; text: string }) {
   );
 }
 
-function IconTile({ icon: Icon, tint }: { icon: LucideIcon; tint: Tint }) {
+export function IconTile({ icon: Icon, tint }: { icon: LucideIcon; tint: Tint }) {
   return (
     <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', TINT[tint])} aria-hidden="true">
       <Icon className="size-4" />
@@ -79,7 +80,7 @@ function IconTile({ icon: Icon, tint }: { icon: LucideIcon; tint: Tint }) {
   );
 }
 
-function ViewLink({ to, children }: { to: string; children: ReactNode }) {
+export function ViewLink({ to, children }: { to: string | { pathname: string; search: string }; children: ReactNode }) {
   return (
     <Link to={to} className="relative z-10 inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline focus-visible:underline focus-visible:outline-none">
       {children} <ArrowRight className="size-3.5" aria-hidden="true" />

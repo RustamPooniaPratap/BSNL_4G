@@ -42,6 +42,47 @@ The filters are kept in the URL (`date_from`, `date_to`, `project`, `circle`, `f
   - rows whose facts differ from a stored record are conflicts. The Admin must choose **skip** or **overwrite**, and an overwrite is recorded in the record's history.
 - **Validation report:** `GET /api/rca/imports/<id>/issues.csv` lists every issue and conflict with its Excel row.
 
+## Upload Circle RCA and Upload Consolidated RCA (migration `rca.0005_upload_types`)
+
+Both upload types use the same importer and write the same `RcaRecord` table, so both feed the RCA Summary and the
+reports. `RcaImportBatch.upload_type` records the type (`circle`, `consolidated`, or `legacy` for uploads made before
+the types existed). `circle` holds a circle upload's circle; its project is `project_scope`.
+
+| | Upload Circle RCA (`/rca/import`) | Upload Consolidated RCA (`/rca/import/consolidated`) |
+|---|---|---|
+| Who | Admin, NOC Lead; CI users for their granted project/circle pairs (Organization > User Access) | Admin; members of the `RCA Consolidated Uploaders` group (Users & Roles) |
+| Details | Project, circle, reporting date | Report name, project scope, optional reporting date (default: the latest date in the workbook) |
+| Rows | Must be the selected project, circle and date, and a site of that circle in the Up-Time Report. A file with another date is refused as a whole. | Every circle and date in the workbook. Earlier dates are history and never withdrawn. |
+| Withdrawal offered for | Stored records of that project, circle and date only | Stored records of the project/circle units the workbook holds on the reporting date only |
+
+- **Permissions:** checked on preview and again at commit.
+- **Daily periods:** each date has one reporting period. An existing period containing the date is reused, so periods
+  never overlap. A new daily period carries over the previous period's expected units, limited to active Organization
+  associations. The first period has none until an Admin configures it.
+- **Tracker (RCA Submissions):**
+  - *Circle submission* (Received / Not received, with upload and commit times) counts only committed circle uploads of
+    that project, circle and date.
+  - *RCA data* (Data available / No data) counts accepted records, from any upload.
+  - Final-report completeness and the automatic final report use RCA data, so a consolidated workbook can complete a
+    period.
+  - No deadline is configured, so nothing is shown as on time or late.
+
+## Approved bucketization (`apps/rca/taxonomy.py`)
+
+The approved Final Bucket → Bucket - 2 list (confirmed 30 Oct 2026) is kept only in `taxonomy.APPROVED`. The filters
+receive it from `/api/rca/options/` as `classification`; no workbook is read for it.
+
+- **Matching:** a value takes the approved name only when the two are equal ignoring case, spaces and punctuation, and a
+  Bucket - 2 only within its own Final Bucket. Typos, other words, a sub-bucket under another parent, and blanks are
+  kept as written, flagged and never put in Others.
+- **Imports:** apply the same matching. Pairs outside the approved list are imported but flagged
+  (`bucket_pair_not_approved`), never rejected.
+- **Summary:** Bucket - 2 is grouped per (Final Bucket, Bucket - 2) pair. Counts by status are in
+  `summary.classification`.
+- **Existing records:** `manage.py rca_bucketization` is a dry run; `--report file.csv` writes every combination with its
+  status; `--apply` writes only the certain corrections in one transaction, with an `RcaEvent` per record. Run on
+  30 Oct 2026: 1,537 records corrected and 10,795 left for review (`Data/processed/rca_bucketization/`).
+
 ## Classification and categories
 
 - **Source fields:** Final Bucket, Bucket - 2 and RCA are separate source fields. Their business meaning beyond the workbook is not assumed.

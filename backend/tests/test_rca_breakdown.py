@@ -11,7 +11,7 @@ from apps.rca.parser import text_key
 from .auth_helpers import SignedInTestCase, portal_user
 
 _ids = count(1)
-LABELS = ['PTPL-Battery', 'PTPL-OFC', 'PTPL-Techn', 'PTPL-Others', 'BSNL-OFC', 'BSNL-Media', 'BSNL-Link', 'BSNL-Others', 'BBNL-OFC',
+LABELS = ['PTPL-Battery', 'PTPL-OFC', 'PTPL-Others', 'BSNL-OFC', 'BSNL-Media', 'BSNL-Others', 'BBNL-OFC',
           'DMW', 'HFCL', 'Iaasp Link', 'Iaasp OFC', 'Iaasp Others', 'Iaasp Power', 'TCS', 'Tech Delay', 'Theft', 'Vsat', 'Others']
 
 
@@ -27,11 +27,13 @@ class MappingTests(SignedInTestCase):
         self.assertEqual([label for label, _ in breakdown.COLUMNS], LABELS)
         cases = {'BSNL OFC': 'BSNL-OFC', 'ssa ofc': 'BSNL-OFC', 'IaasP OFC': 'Iaasp OFC', 'VSAT': 'Vsat', 'HFCl': 'HFCL',
                  'Other Media': 'Others', 'Above 98.5%': 'Others', 'NC': 'Others', 'Others': 'Others', 'BBNL Media': 'BBNL-OFC',
-                 'Iaasp Other': 'Iaasp Others', 'Iaasp Link': 'Iaasp Link', 'PTPL Techn': 'PTPL-Techn'}
+                 'Iaasp Other': 'Iaasp Others', 'Iaasp Link': 'Iaasp Link',
+                 # confirmed 30 Oct 2026 for values that were Not mapped
+                 'BSNL OFC Break': 'BSNL-OFC', 'ETR/SSA OFC': 'BSNL-OFC', 'Vsat-Media': 'BSNL-Media', 'bsnl Hub site': 'BSNL-Media', 'Ceragon': 'DMW'}
         self.assertEqual({raw: breakdown.category_of(raw) for raw in cases}, cases)
-        for unknown in ('BB', 'Other', 'Below 60%', '71-90%', 'BSNL Link', '', '-', 'Solar'):
+        for unknown in ('BB', 'Other', 'Below 60%', '71-90%', 'BSNL Link', 'PTPL Techn', '', '-', 'Solar'):  # PTPL Techn: out of scope
             self.assertIsNone(breakdown.category_of(unknown), unknown)  # never guessed, never "Others"
-        self.assertEqual(breakdown.PENDING, ('BSNL-Link',))
+        self.assertEqual(breakdown.PENDING, ())  # BSNL-Link and PTPL-Techn are out of scope: no column at all
         values = [v for _, vs in breakdown.COLUMNS if vs for v in vs]
         self.assertEqual(len({text_key(v) for v in values}), len(values))  # one column per value: no double counting
 
@@ -59,12 +61,11 @@ class SummaryBreakdownTests(SignedInTestCase):
         for r in (rows['MP'], rows['OD']):
             self.assertEqual(r['grand_total'], sum(v for v in r['counts'].values() if v))
         for label in LABELS:
-            if label != 'BSNL-Link':
-                self.assertEqual(b['totals'][label], sum(r['counts'][label] or 0 for r in b['rows']), label)
+            self.assertEqual(b['totals'][label], sum(r['counts'][label] or 0 for r in b['rows']), label)
         self.assertEqual(b['grand_total'], 12)
         self.assertEqual((b['percent_of_total']['TCS'], b['percent_of_total']['BSNL-OFC'], b['percent_of_total']['PTPL-OFC']), (41.67, 33.33, 0.0))
-        self.assertIsNone(b['totals']['BSNL-Link'])  # pending: empty, not 0
-        self.assertIsNone(rows['MP']['counts']['BSNL-Link'])
+        self.assertNotIn('BSNL-Link', b['totals'])
+        self.assertNotIn('PTPL-Techn', [c['label'] for c in b['columns']])
         # Unmapped values stay visible and outside the Grand Total: every record is accounted for.
         self.assertEqual(b['not_mapped'], {'records': 2, 'values': [{'final_bucket': 'BB', 'records': 1}, {'final_bucket': '(blank)', 'records': 1}]})
         self.assertEqual((rows['MP']['not_mapped'], rows['OD']['not_mapped']), (1, 1))

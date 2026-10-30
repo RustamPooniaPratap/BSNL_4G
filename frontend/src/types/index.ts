@@ -695,6 +695,8 @@ export interface AuthUser {
   circles?: string[] | null;
   /** The same as project/circle pairs: null = not limited. */
   access?: { project: string; circle: string }[] | null;
+  /** RCA uploads this user may make (the server checks every upload again). */
+  rca_upload?: { circle: boolean; consolidated: boolean };
 }
 
 /** An account as listed for Admins. Passwords are never returned, except a new temporary one once. */
@@ -710,6 +712,8 @@ export interface PortalUser {
   access?: { project: string; circle: string }[];
   /** Circle-only assignments from before project-specific access (every project; to be reviewed). */
   legacy_circles?: string[];
+  /** Member of the RCA Consolidated Uploaders group (Admins may upload consolidated RCA without it). */
+  rca_consolidated?: boolean;
   is_active: boolean;
   is_superuser: boolean;
   must_change_password: boolean;

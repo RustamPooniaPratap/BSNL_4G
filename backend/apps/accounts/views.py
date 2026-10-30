@@ -26,7 +26,8 @@ from rest_framework.views import APIView
 from .audit import audit
 from .models import must_change_password, set_must_change_password
 from .permissions import IsAdminRole, IsSignedIn
-from .roles import ADMIN, CI, NOC_LEAD, ROLES, role_of, set_role
+from .roles import (ADMIN, CI, NOC_LEAD, RCA_CONSOLIDATED_GROUP, ROLES, can_upload_circle_rca, can_upload_consolidated_rca, role_of,
+                    set_rca_consolidated, set_role)
 from .scope import allowed_circles, allowed_pairs, assigned_circles, granted_pairs, legacy_circles, set_circles
 from .throttles import LoginIPThrottle, LoginUserThrottle
 
@@ -45,6 +46,8 @@ def me_payload(user) -> dict:
         'circles': None if allowed_circles(user) is None else sorted(allowed_circles(user)),
         # The same as project/circle pairs (Organization > User Access): null = not limited.
         'access': None if allowed_pairs(user) is None else [{'project': p, 'circle': c} for p, c in sorted(allowed_pairs(user))],
+        # RCA uploads this user may make (the server checks every upload again).
+        'rca_upload': {'circle': can_upload_circle_rca(user), 'consolidated': can_upload_consolidated_rca(user)},
     }
 
 
@@ -213,6 +216,8 @@ def user_payload(user) -> dict:
         'circles': assigned_circles(user),
         'access': [{'project': p, 'circle': c} for p, c in granted_pairs(user)],
         'legacy_circles': legacy_circles(user),
+        # Member of the RCA Consolidated Uploaders group (Admins may upload consolidated RCA without it).
+        'rca_consolidated': user.groups.filter(name=RCA_CONSOLIDATED_GROUP).exists(),
         'last_login': user.last_login.isoformat(timespec='seconds') if user.last_login else None,
         'date_joined': user.date_joined.isoformat(timespec='seconds'),
     }
@@ -257,6 +262,8 @@ class UpdateUserSerializer(serializers.Serializer):
     is_active = serializers.BooleanField(required=False)
     # Circles a CI user uploads raw daily data for (ignored for Admin and NOC Lead, who are not limited).
     circles = serializers.ListField(child=serializers.CharField(max_length=20), required=False)
+    # Membership of the RCA Consolidated Uploaders group.
+    rca_consolidated = serializers.BooleanField(required=False)
 
     def validate_circles(self, value):
         return _known_circles(value)
@@ -313,6 +320,9 @@ class UserDetailView(APIView):
         if 'circles' in v and (sorted(set(v['circles'])) != assigned_circles(user) or legacy_circles(user)):
             set_circles(user, v['circles'], actor=request.user)
             audit('circles_changed', request, user_id=user.pk, login_id=user.username, circles=','.join(sorted(set(v['circles']))))
+        if 'rca_consolidated' in v and v['rca_consolidated'] != user.groups.filter(name=RCA_CONSOLIDATED_GROUP).exists():
+            set_rca_consolidated(user, v['rca_consolidated'])
+            audit('rca_consolidated_changed', request, user_id=user.pk, login_id=user.username, allowed=v['rca_consolidated'])
         if 'is_active' in v and v['is_active'] != user.is_active:
             user.is_active = v['is_active']
             user.save(update_fields=['is_active'])

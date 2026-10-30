@@ -55,6 +55,11 @@ class RcaRequiredSubmission(models.Model):
 
 
 class RcaImportBatch(models.Model):
+    class UploadType(models.TextChoices):
+        CIRCLE = 'circle', 'Circle RCA (one project, circle and reporting date)'
+        CONSOLIDATED = 'consolidated', 'Consolidated RCA (several circles and dates)'
+        LEGACY = 'legacy', 'Uploaded before upload types existed'
+
     class Status(models.TextChoices):
         PREVIEWED = 'previewed', 'Previewed'
         COMMITTED = 'committed', 'Committed'
@@ -90,9 +95,14 @@ class RcaImportBatch(models.Model):
                                       help_text='"keep" or "withdraw": stored records of the units that the file no longer lists.')
     stored_path = models.CharField(max_length=500, blank=True, help_text='Copy of the uploaded file kept for audit.')
     file_size = models.PositiveIntegerField(null=True, blank=True)
+    # How the file was uploaded. Only a committed circle upload is a circle's submission; uploads made before the types
+    # existed stay "legacy" and are never counted as one.
+    upload_type = models.CharField(max_length=20, choices=UploadType.choices, default=UploadType.LEGACY)
+    circle = models.CharField(max_length=20, null=True, blank=True, help_text='Circle of a circle upload (its project is project_scope).')
 
     class Meta:
         ordering = ['-uploaded_at']
+        indexes = [models.Index(fields=['upload_type', 'status', 'period_start'], name='rca_batch_submission_idx')]
 
     def __str__(self):
         return f'RCA import #{self.pk} {self.original_filename} ({self.status})'

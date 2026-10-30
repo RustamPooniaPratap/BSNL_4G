@@ -49,7 +49,7 @@ def uptime_sites(*sites) -> None:
 
 ROW_SITES = [('LWE', 'BH', 'LWEBH0063'), ('LWE', 'JH', 'LWEJH0001'), ('4G Saturation', 'OD', 'OD0001'),
              ('4G Saturation', 'RJ', 'RJ0001'), ('4G Saturation', 'MP', 'MP0001')]
-DETAILS = {'report_name': 'October 2026 RCA Report', 'period_start': '2026-10-21', 'project_scope': 'both'}
+DETAILS = {'upload_type': 'consolidated', 'report_name': 'October 2026 RCA Report', 'period_start': '2026-10-21', 'project_scope': 'both'}
 
 
 class RcaTestCase(TestCase):
@@ -87,7 +87,9 @@ class ParserTests(RcaTestCase):
         self.assertEqual(report['issue_counts']['outage_over_day'], 1)
         # Case variants share a key; the source spellings are kept.
         self.assertEqual(od['final_bucket_key'], next(r for r in rows if r['site_key'] == 'RJ0001')['final_bucket_key'])
-        self.assertIn(['IaasP OFC', 'Iaasp OFC'], report['label_variants']['final_bucket'])
+        # Final Bucket takes the approved spelling ("IaasP OFC" and "Iaasp OFC" are "IaaSP OFC"); the change is reported.
+        self.assertEqual({r['final_bucket'] for r in rows if r['final_bucket_key'] == 'iaasp ofc'}, {'IaaSP OFC'})
+        self.assertGreaterEqual(report['issue_counts']['bucket_spelling_approved'], 1)
         self.assertEqual(next(r for r in rows if r['site_key'] == 'RJ0001')['rca_key'], 'media fluctuation')
 
     def test_rejects_bad_rows_with_reasons_and_never_repairs_them(self):
@@ -245,12 +247,13 @@ class ApiTests(RcaTestCase):
         self.assertEqual(data['kpis']['incomplete_by_field'], {'final_bucket': 0, 'bucket_2': 2, 'rca': 1})
         self.assertEqual((data['kpis']['rca_applicable_records'], data['kpis']['completeness_pct']), (4, 50.0))
         self.assertEqual(data['kpis']['rca_not_applicable']['records'], 1)
-        b2 = {i['label']: i['records'] for i in data['bucket_2']}
-        self.assertEqual(b2['Unclassified (blank or "-")'], 2)
+        # Bucket - 2 is grouped per Final Bucket; the blank ones are listed per Final Bucket too, never as a cause.
+        self.assertEqual(sum(i['records'] for i in data['bucket_2'] if i['unclassified']), 2)
+        b2 = {i['bucket_2']: i['records'] for i in data['bucket_2'] if not i['unclassified']}
         self.assertNotIn('-', b2)
         self.assertTrue(data['bucket_2'][-1]['unclassified'])  # listed last, never ranked as a cause
         iaasp = next(i for i in data['final_buckets'] if i['key'] == 'iaasp ofc')
-        self.assertEqual((iaasp['records'], iaasp['variants']), (2, ['IaasP OFC', 'Iaasp OFC']))
+        self.assertEqual((iaasp['records'], iaasp['variants'], iaasp['approved']), (2, ['IaaSP OFC'], True))  # stored with the approved spelling
         self.assertEqual(data['categories']['unreviewed']['records'], 4)
         self.assertEqual(data['top_records'][0]['site_id'], 'LWEJH0001')
         self.assertEqual(self.client.get(reverse('rca-summary'), {'project': 'LWE'}).json()['kpis']['records'], 2)
@@ -305,8 +308,9 @@ class ApiTests(RcaTestCase):
         self.imported()
         rec = RcaRecord.objects.get(site_key='OD0001')
         self.client.force_login(self.ci)
-        for name, method in (('rca-summary', 'get'), ('rca-imports', 'get'), ('rca-causes', 'get')):
+        for name, method in (('rca-summary', 'get'), ('rca-causes', 'get')):
             self.assertEqual(getattr(self.client, method)(reverse(name)).status_code, 403, name)
+        self.assertEqual(self.client.get(reverse('rca-imports')).json()['imports'], [])  # their own uploads only (none)
         self.assertEqual(self.client.post(reverse('rca-categories'), {'name': 'x'}, content_type='application/json').status_code, 403)
         url = reverse('rca-workflow', args=[rec.pk])
         put = lambda body: self.client.put(url, body, content_type='application/json')  # noqa: E731

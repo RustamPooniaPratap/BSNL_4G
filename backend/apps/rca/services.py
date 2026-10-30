@@ -19,6 +19,7 @@ from datetime import date
 from django.db.models import Count, Max, OuterRef, Q, QuerySet, Subquery, Sum
 from rest_framework.exceptions import ValidationError
 
+from . import taxonomy
 from .breakdown import breakdown
 from .models import RcaCauseCategory, RcaCauseMapping, RcaRecord, RcaWorkflow
 
@@ -113,9 +114,14 @@ def _variants(qs: QuerySet, key: str, label: str) -> dict[str, list[str]]:
 
 def options() -> dict:
     qs = RcaRecord.objects.order_by()
+    # Values present in the records (the filters only offer what can match), each flagged against the approved
+    # classification: a Final Bucket by its name, a Bucket - 2 if it is an approved sub-bucket of some Final Bucket.
+    approved_children = {taxonomy.match_key(c) for children in taxonomy.APPROVED.values() for c in children}
+    approved = {'final_bucket': lambda v: taxonomy.is_approved_final(v), 'bucket_2': lambda v: taxonomy.match_key(v) in approved_children}
     buckets = lambda key, label: [  # noqa: E731
-        {'value': k or UNCLASSIFIED, 'label': v if k else 'Unclassified (blank or "-")', 'unclassified': not k}
-        for k, v in sorted(_labels(qs, key, label).items(), key=lambda kv: (kv[0] == '', kv[1].casefold()))
+        {'value': k or UNCLASSIFIED, 'label': v if k else 'Unclassified (blank or "-")', 'unclassified': not k,
+         'approved': bool(k) and approved[label](v)}
+        for k, v in sorted(_labels(qs, key, label).items(), key=lambda kv: (kv[0] == '', not approved[label](kv[1]), kv[1].casefold()))
     ]
     return {
         'dates': [d.isoformat() for d in qs.values_list('reporting_date', flat=True).distinct().order_by('reporting_date')],
@@ -129,6 +135,8 @@ def options() -> dict:
         'bucket_2': buckets('bucket_2_key', 'bucket_2'),
         'categories': [{'value': str(c.pk), 'label': c.name} for c in RcaCauseCategory.objects.all()],
         'statuses': [{'value': v, 'label': label} for v, label in RcaWorkflow.Status.choices],
+        # The approved bucketization (apps.rca.taxonomy), the one list the pages use.
+        'classification': taxonomy.classification(),
         'total_records': qs.count(),
     }
 
@@ -227,8 +235,33 @@ def summary(params) -> dict:
                   'unclassified': not r[key], 'rca_not_applicable': key == 'final_bucket_key' and r[key] in RCA_NOT_APPLICABLE,
                   'records': r['records'], 'outage_minutes': _round(r['minutes']),
                   'variants': variants.get(r[key], []) if r[key] else []} for r in rows]
+        for i in items:
+            i['approved'] = key == 'final_bucket_key' and not i['unclassified'] and taxonomy.is_approved_final(i['label'])
         # Technical causes first (ranked), then RCA-not-applicable groups, then unclassified.
         return sorted(items, key=lambda i: (i['unclassified'], i['rca_not_applicable'], -i['records'], i['label'].casefold()))
+
+    def ranked_pairs(base: QuerySet) -> list[dict]:
+        """Bucket - 2 per Final Bucket: a sub-bucket is always read with its parent ("Fluctuation" under BSNL Media, DMW and
+        HFCL are three groups). The filter of a group sets both fields."""
+        finals = _labels(base, 'final_bucket_key', 'final_bucket')
+        children = _labels(base, 'bucket_2_key', 'bucket_2')
+        variants = _variants(base, 'bucket_2_key', 'bucket_2')
+        rows = base.values('final_bucket_key', 'bucket_2_key').annotate(records=Count('id'), minutes=Sum('outage_minutes'))
+        items = []
+        for r in rows:
+            fk, ck = r['final_bucket_key'], r['bucket_2_key']
+            final, child = finals.get(fk, ''), children.get(ck, '')
+            status = taxonomy.resolve(final, child).status if ck else 'blank'
+            items.append({'key': f'{fk or UNCLASSIFIED}||{ck or UNCLASSIFIED}', 'label': f'{child} · {final or "no Final Bucket"}' if ck else
+                          f'Unclassified (blank or "-") · {final or "no Final Bucket"}', 'unclassified': not ck, 'rca_not_applicable': False,
+                          'final_bucket': final, 'bucket_2': child, 'approved': status == 'approved',
+                          'filter': {'final_bucket': fk or UNCLASSIFIED, 'bucket_2': ck or UNCLASSIFIED},
+                          'records': r['records'], 'outage_minutes': _round(r['minutes']), 'variants': variants.get(ck, []) if ck else []})
+        return sorted(items, key=lambda i: (i['unclassified'], -i['records'], i['label'].casefold()))
+
+    pair_status = Counter()
+    for r in qs.values('final_bucket', 'bucket_2').annotate(n=Count('id')):
+        pair_status[taxonomy.resolve(r['final_bucket'], r['bucket_2']).status] += r['n']
 
     population = _population()
     circles = []
@@ -290,7 +323,9 @@ def summary(params) -> dict:
                   for r in qs.values('reporting_date').annotate(n=Count('id')).order_by('reporting_date')],
         'final_buckets': ranked(qs, 'final_bucket_key', 'final_bucket'),
         # Bucket - 2 is a cause breakdown: RCA-applicable records only (Other Media is counted in kpis.rca_not_applicable).
-        'bucket_2': ranked(applicable, 'bucket_2_key', 'bucket_2'),
+        'bucket_2': ranked_pairs(applicable),
+        # Records of the filter by approved-classification status (approved pair, approved Final Bucket only, not approved, blank).
+        'classification': {k: pair_status.get(k, 0) for k in taxonomy.STATUS_LABELS},
         'circles': circles,
         'projects': projects,
         'population_source': 'Sites per circle in the dashboard\'s current Master data' if population else None,

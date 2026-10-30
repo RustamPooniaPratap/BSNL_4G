@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { canOpen, useAuth } from '../context/auth';
+import type { AuthUser } from '../types';
 
 type Icon = React.ComponentType<{ className?: string }>;
 type IsActive = (pathname: string, params: URLSearchParams) => boolean;
@@ -17,6 +18,8 @@ interface NavItem {
   isActive: IsActive;
   /** While the current page is under this path, the link keeps the current query (e.g. the RCA Summary filters). */
   keepQueryWithin?: string;
+  /** Shown only when this holds for the signed-in user (beyond the role's pages); the server checks again. */
+  show?: (user: AuthUser | null) => boolean;
 }
 
 /**
@@ -71,7 +74,13 @@ const entries: NavEntry[] = [
     ],
   },
   { kind: 'link', item: page('/rca/submissions', 'RCA Submissions', ClipboardCheck) },
-  { kind: 'link', item: page('/rca/import', 'Upload RCA Data', FileUp) },
+  {
+    kind: 'group', id: 'rca-upload', label: 'Upload RCA Data', icon: FileUp, defaultOpen: true,
+    items: [
+      { ...page('/rca/import', 'Upload Circle RCA', FileUp), show: (u) => (u?.rca_upload ? u.rca_upload.circle : u?.role !== 'ci') },
+      { ...page('/rca/import/consolidated', 'Upload Consolidated RCA', Layers3), show: (u) => !!u?.rca_upload?.consolidated },
+    ],
+  },
   { kind: 'heading', heading: 'Data' },
   {
     kind: 'group', id: 'data-management', label: 'Data Management', icon: FolderCog,
@@ -94,7 +103,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const params = new URLSearchParams(location.search);
   const { user } = useAuth();
   // Only the pages the role may open are listed (the pages and the API check the role as well).
-  const allowed = (item: NavItem) => canOpen(user?.role, item.to.split('?')[0]);
+  const allowed = (item: NavItem) => canOpen(user?.role, item.to.split('?')[0]) && (!item.show || item.show(user));
   const filtered = entries.flatMap((entry): NavEntry[] => {
     if (entry.kind === 'heading') return [entry];
     if (entry.kind === 'link') return allowed(entry.item) ? [entry] : [];

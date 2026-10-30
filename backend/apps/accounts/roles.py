@@ -31,9 +31,43 @@ def role_of(user) -> str | None:
     return None
 
 
+# Users allowed to upload consolidated RCA workbooks besides Admins (a plain Django group, managed on Users & Roles).
+RCA_CONSOLIDATED_GROUP = 'RCA Consolidated Uploaders'
+
+
 def can_upload_rca(user) -> bool:
-    """Admins and NOC Leads upload the consolidated RCA workbook."""
+    """Admins and NOC Leads: every RCA upload of their own, the period workbooks and the uploads list (all circles)."""
     return role_of(user) in (ADMIN, NOC_LEAD)
+
+
+def can_upload_consolidated_rca(user) -> bool:
+    """Admins, and portal users an Admin put in the RCA Consolidated Uploaders group. Uploading circle files gives no
+    right to upload a consolidated workbook."""
+    role = role_of(user)
+    if role == ADMIN:
+        return True
+    return role is not None and user.groups.filter(name=RCA_CONSOLIDATED_GROUP).exists()
+
+
+def can_upload_circle_rca(user, project: str | None = None, circle: str | None = None) -> bool:
+    """Admins and NOC Leads for every project and circle; a CI user only for the project/circle pairs granted to them
+    (Organization > User Access). Without a project and circle: whether the user may upload any circle file."""
+    from .scope import allowed_pairs
+    role = role_of(user)
+    if role in (ADMIN, NOC_LEAD):
+        return True
+    if role != CI:
+        return False
+    pairs = allowed_pairs(user) or set()
+    return bool(pairs) if project is None else (project, (circle or '').upper()) in pairs
+
+
+def set_rca_consolidated(user, allowed: bool) -> None:
+    group, _ = Group.objects.get_or_create(name=RCA_CONSOLIDATED_GROUP)
+    if allowed:
+        user.groups.add(group)
+    else:
+        user.groups.remove(group)
 
 
 def set_role(user, role: str) -> None:

@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
-import { RequireAdmin, RequireAuth, RequirePage } from './components/auth/Guards';
+import { RequireAdmin, RequireAuth, RequirePage, RequireRcaConsolidated } from './components/auth/Guards';
 import { AuthProvider } from './context/AuthProvider';
 import { TrackingProvider } from './context/TrackingProvider';
 import { WorkbookProvider } from './context/WorkbookProvider';
@@ -60,7 +60,8 @@ function PortalRoutes() {
               <Route path="/rca" element={<RcaRegisterPage />} />
               <Route path="/rca/summary/*" element={<RequireAdmin><RcaSummaryPage /></RequireAdmin>} />
               <Route path="/rca/mappings" element={<RequireAdmin><RcaMappingPage /></RequireAdmin>} />
-              <Route path="/rca/import" element={<RequirePage><RcaImportPage /></RequirePage>} />
+              <Route path="/rca/import" element={<RequirePage><RcaImportPage mode="circle" /></RequirePage>} />
+              <Route path="/rca/import/consolidated" element={<RequireRcaConsolidated><RcaImportPage mode="consolidated" /></RequireRcaConsolidated>} />
               <Route path="/rca/submissions" element={<RequireAdmin><RcaSubmissionsPage /></RequireAdmin>} />
               <Route path="/data/database" element={<Navigate to="/workbook" replace />} />
               {/* Earlier report-type links now open the dashboard with that filter applied. */}

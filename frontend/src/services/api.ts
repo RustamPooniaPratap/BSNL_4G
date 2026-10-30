@@ -34,7 +34,7 @@ import type {
 } from '../types';
 import type {
   RcaCauses, RcaCycleDetail, RcaCycleList, RcaImportBatch, RcaOptions, RcaPage, RcaRecordDetail, RcaRecordInput, RcaReportVersion,
-  RcaSummary, RcaUploadDetails, RcaWorkflowInput,
+  RcaSummary, RcaUploadDetails, RcaUploadRights, RcaUploadType, RcaWorkflowInput,
 } from '../types/rca';
 import type { ArrivalTracker, RawRowsPage, RawUpload, RawUploadDetails, RawUploadOptions } from '../types/rawUpload';
 import type { OrgAccessUser, OrgAlias, OrgAssociation, OrgChange, OrgCircle, OrgProject, OrgRemoval, OrgSiteIdMapping, OrganizationCatalog } from '../types/organization';
@@ -256,7 +256,7 @@ export async function changePassword(currentPassword: string, newPassword: strin
 export const fetchUsers = (signal?: AbortSignal) => request<{ users: PortalUser[] }>('/auth/users/', undefined, { signal });
 export const createUser = (user: { username: string; first_name: string; last_name: string; email: string; role: Role }) =>
   send<{ user: PortalUser; temporary_password: string }>('/auth/users/', user);
-export const updateUser = (id: number, changes: { role?: Role; is_active?: boolean; circles?: string[] }) => send<{ user: PortalUser }>(`/auth/users/${id}/`, changes, 'PATCH');
+export const updateUser = (id: number, changes: { role?: Role; is_active?: boolean; circles?: string[]; rca_consolidated?: boolean }) => send<{ user: PortalUser }>(`/auth/users/${id}/`, changes, 'PATCH');
 export const resetUserPassword = (id: number) => send<{ user: PortalUser; temporary_password: string }>(`/auth/users/${id}/reset-password/`);
 export const revokeUserSessions = (id: number) => send<{ sessions_revoked: number }>(`/auth/users/${id}/revoke-sessions/`);
 
@@ -293,8 +293,12 @@ export const updateRcaWorkflow = (id: number, workflow: RcaWorkflowInput) => sen
 export const addRcaComment = (id: number, text: string, evidence: string) => send<RcaRecordDetail>(`/rca/records/${id}/comments/`, { text, evidence });
 export const fetchRcaSummary = (params: URLSearchParams, signal?: AbortSignal) => request<RcaSummary>('/rca/summary/', params, { signal });
 /** The signed-in user's uploads; an Admin may ask for every upload. */
-export const fetchRcaImports = (signal?: AbortSignal, all = false) =>
-  request<{ imports: RcaImportBatch[]; records: number; all: boolean; max_bytes?: number }>('/rca/imports/', all ? new URLSearchParams({ all: '1' }) : undefined, { signal });
+export const fetchRcaImports = (signal?: AbortSignal, all = false, uploadType?: RcaUploadType) => {
+  const params = new URLSearchParams();
+  if (all) params.set('all', '1');
+  if (uploadType) params.set('upload_type', uploadType);
+  return request<{ imports: RcaImportBatch[]; records: number; all: boolean; max_bytes?: number; rights?: RcaUploadRights }>('/rca/imports/', params, { signal });
+};
 export const fetchRcaImport = (id: number, signal?: AbortSignal) => request<RcaImportBatch>(`/rca/imports/${id}/`, undefined, { signal });
 export async function previewRcaImport(file: File, details: RcaUploadDetails) {
   const form = new FormData();

@@ -20,6 +20,16 @@ The daily workbook is cumulative (it repeats the earlier days), so each row is c
   nothing of an earlier date is ever withdrawn.
 Withdrawn and overwritten records stay in the audit trail.
 
+Two upload types (RcaImportBatch.upload_type), both into the same RcaRecord table through this importer:
+- circle: one project, one circle, one reporting date. Rows of another project, circle or date are rejected, and a file
+  holding another date is refused as a whole. Its records are compared only within that project, circle and date.
+- consolidated: several circles and dates. The reporting date is the one entered, or else the latest date in the
+  workbook. Rows of earlier dates are history, as above. Stored records the workbook no longer lists are offered for
+  withdrawal only within the project/circle units it holds on the reporting date. Nothing outside the uploaded scope
+  is ever withdrawn.
+Each reporting date belongs to one daily reporting period (cycles.cycle_for_date), created when first needed; an
+existing period containing the date is reused, so periods never overlap.
+
 Outage minutes are stored as the RCA workbook gives them; the Up-Time Report's figures are never changed here.
 """
 from __future__ import annotations
@@ -39,7 +49,10 @@ SOURCE_FIELDS = ('project_raw', 'circle', 'circle_raw', 'site_id', 'site_name', 
                  'outage_minutes', 'final_bucket', 'final_bucket_key', 'bucket_2', 'bucket_2_key', 'rca_text', 'rca_key')
 CONFLICT_ACTIONS = ('skip', 'overwrite')
 MISSING_ACTIONS = ('keep', 'withdraw')
-PROJECT_SCOPES = {'4G Saturation': {'4G Saturation'}, 'LWE': {'LWE'}, 'both': {'4G Saturation', 'LWE'}}
+def project_scope(scope: str) -> set[str]:
+    """The projects of an upload's scope: one project of the Organization, or "both" for every project."""
+    from apps.organization.services import project_keys
+    return set(project_keys()) if scope == 'both' else {scope}
 MAX_CONFLICT_EXAMPLES = 50
 
 
@@ -53,16 +66,16 @@ def _identity(row: dict) -> tuple:
     return (row['reporting_date'], row['project'], row['site_key'], row.get('occurrence', 1))
 
 
-def _compare(rows: list[dict], *, period: tuple[date, date] | None = None, projects: set[str] | None = None) -> dict:
+def _compare(rows: list[dict], *, units: set[tuple[str, str, str]] | None = None) -> dict:
     """Split the rows into new / restored / unchanged / conflicting against the imported records in the database.
 
-    With a ``period`` and ``projects`` (an upload with report details), also list the stored records of that period
-    and scope that the workbook does not contain ("missing").
+    ``units``: (reporting date, project, circle) combinations the upload answers for. Stored records of exactly those
+    units that the workbook does not contain are listed as "missing" (offered for withdrawal); records of any other
+    circle, project or date never are.
     """
-    existing_qs = RcaRecord.all_objects.filter(source=RcaRecord.Source.IMPORT,
-                                               reporting_date__in={date.fromisoformat(r['reporting_date']) for r in rows})
-    if period:
-        existing_qs = existing_qs | RcaRecord.all_objects.filter(source=RcaRecord.Source.IMPORT, reporting_date__range=period)
+    units = units or set()
+    days = {date.fromisoformat(r['reporting_date']) for r in rows} | {date.fromisoformat(u[0]) for u in units}
+    existing_qs = RcaRecord.all_objects.filter(source=RcaRecord.Source.IMPORT, reporting_date__in=days)
     existing = {(rec.reporting_date.isoformat(), rec.project, rec.site_key, rec.occurrence): rec for rec in existing_qs}
     new, restored, unchanged, conflicts = [], [], [], []
     for row in rows:
@@ -79,13 +92,13 @@ def _compare(rows: list[dict], *, period: tuple[date, date] | None = None, proje
             else:
                 unchanged.append(row)
     missing = []
-    if period and projects:
+    if units:
         listed = {_identity(r) for r in rows}
         missing = [{'record_id': rec.pk, 'site_id': rec.site_id, 'project': rec.project, 'circle': rec.circle,
                     'reporting_date': rec.reporting_date.isoformat(), 'outage_minutes': rec.outage_minutes,
                     'final_bucket': rec.final_bucket, 'source_file': rec.source_file}
                    for key, rec in sorted(existing.items())
-                   if rec.withdrawn_at is None and period[0] <= rec.reporting_date <= period[1] and rec.project in projects and key not in listed]
+                   if rec.withdrawn_at is None and (rec.reporting_date.isoformat(), rec.project, rec.circle) in units and key not in listed]
     return {'new': new, 'restored': restored, 'unchanged': unchanged, 'conflicts': conflicts, 'missing': missing, 'existing': existing}
 
 
@@ -117,20 +130,41 @@ def _period(batch: RcaImportBatch) -> tuple[date, date] | None:
     return (batch.period_start, batch.period_end) if batch.period_start else None
 
 
+def scope_units(batch_or_kind, rows: list[dict], *, day: date | None, project: str = '', circle: str | None = None) -> set[tuple[str, str, str]]:
+    """The (date, project, circle) units an upload answers for (see the module notes). Legacy uploads: none."""
+    kind = getattr(batch_or_kind, 'upload_type', batch_or_kind)
+    if day is None:
+        return set()
+    if kind == RcaImportBatch.UploadType.CIRCLE:
+        return {(day.isoformat(), project, circle)}
+    if kind == RcaImportBatch.UploadType.CONSOLIDATED:
+        return {(r['reporting_date'], r['project'], r['circle']) for r in rows if r['reporting_date'] == day.isoformat()}
+    return set()
+
+
+def _batch_units(batch: RcaImportBatch) -> set[tuple[str, str, str]]:
+    return scope_units(batch, batch.rows, day=batch.period_start, project=batch.project_scope, circle=batch.circle)
+
+
 def preview(path: Path, filename: str, *, user=None, details: dict | None = None) -> RcaImportBatch:
-    """Validate a workbook. ``details``: report_name, period_start, period_end, project_scope, remarks (optional for
-    the command-line style import without report details)."""
+    """Validate a workbook. ``details`` (from the upload form): upload_type, report_name, period_start (the reporting
+    date; may be None for a consolidated upload: the latest date in the workbook), project_scope, circle (circle
+    uploads), remarks. Without details: the command-line style import (a legacy upload)."""
     from . import cycles  # cycles imports this module
     checksum = parser.sha256(path)
     fields = {}
     expect = {}
+    kind = details.get('upload_type', RcaImportBatch.UploadType.LEGACY) if details else RcaImportBatch.UploadType.LEGACY
     if details:
-        start, end = details['period_start'], details['period_end']
-        cycle = cycles.period_cycle(start, end)  # raises if the period overlaps another one
-        fields = {'report_name': details['report_name'], 'period_start': start, 'period_end': end,
-                  'project_scope': details['project_scope'], 'remarks': details.get('remarks', ''), 'cycle': cycle,
+        start = details.get('period_start')
+        fields = {'report_name': details['report_name'], 'period_start': start, 'period_end': start,
+                  'project_scope': details['project_scope'], 'remarks': details.get('remarks', ''), 'upload_type': kind,
+                  'circle': details.get('circle') or None, 'cycle': cycles.containing_cycle(start) if start else None,
                   'file_size': path.stat().st_size}
-        expect = {'period': (start, end), 'projects': PROJECT_SCOPES[details['project_scope']], 'known_sites': _known_sites()}
+        expect = {'period': (start, start) if start else None, 'projects': project_scope(details['project_scope']),
+                  'known_sites': _known_sites()}
+        if kind == RcaImportBatch.UploadType.CIRCLE:
+            expect.update(circle=details['circle'], single_date=True)
     try:
         parsed = parser.parse(path, filename, **expect)
     except parser.ParseError as exc:
@@ -142,7 +176,23 @@ def preview(path: Path, filename: str, *, user=None, details: dict | None = None
     rows, report = parsed['rows'], parsed['report']
     if not rows and not details:
         raise ImportRejected('The workbook has no valid RCA rows to import. Download the issue report for the reasons.')
-    comparison = _compare(rows, period=expect.get('period'), projects=expect.get('projects'))
+    if details and fields['period_start'] is None:
+        # A consolidated workbook without an entered date: its latest date is the reporting date, earlier dates history.
+        latest = max((r['reporting_date'] for r in rows), default=None)
+        if latest:
+            day = date.fromisoformat(latest)
+            fields.update(period_start=day, period_end=day, cycle=cycles.containing_cycle(day))
+            expect['period'] = (day, day)
+            for r in rows:
+                r['earlier_date'] = r['reporting_date'] < latest
+    if details and fields['period_start'] and fields['period_start'] > timezone.localdate():
+        report['file_error'] = f'The workbook has rows dated {fields["period_start"]:%d %b %Y}, in the future; nothing can be imported.'
+    other_dates = report['issue_counts'].get('other_date', 0) + report['issue_counts'].get('after_reporting_period', 0)
+    if kind == RcaImportBatch.UploadType.CIRCLE and other_dates:
+        report['file_error'] = (f'{other_dates} rows are of another date than the reporting date {fields["period_start"]:%d %b %Y}. '
+                                'A circle file holds one reporting date: upload each date separately, or use Upload Consolidated RCA.')
+    units = scope_units(kind, rows, day=fields.get('period_start'), project=fields.get('project_scope', ''), circle=fields.get('circle'))
+    comparison = _compare(rows, units=units)
     previous = RcaImportBatch.objects.filter(checksum_sha256=checksum, status=RcaImportBatch.Status.COMMITTED).first()
     earlier_uploads = RcaImportBatch.objects.filter(status=RcaImportBatch.Status.COMMITTED, period_start=fields.get('period_start'),
                                                     period_end=fields.get('period_end')).count() if details else 0
@@ -174,15 +224,16 @@ def preview(path: Path, filename: str, *, user=None, details: dict | None = None
         'missing_rca_rows': sum(1 for r in rows if r['final_bucket_key'] not in RCA_NOT_APPLICABLE
                                 and not (r['final_bucket_key'] and r['bucket_2_key'] and r['rca_key'])),
     })
-    rejected = bool(details) and not rows
+    rejected = bool(details) and (not rows or bool(report.get('file_error')))
+    error = report.get('file_error') or ('No row passed validation; nothing can be imported.' if rejected else '')
     batch = RcaImportBatch.objects.create(
         original_filename=filename, checksum_sha256=checksum, sheet_name=report['sheet'], imported_by=user,
         report=report, rows=rows, counts={'total': report['rows_read'], 'valid': len(rows), 'rejected': report['rejected_rows']},
         units=sorted({(r['project'], r['circle']) for r in rows}),
         status=RcaImportBatch.Status.REJECTED if rejected else RcaImportBatch.Status.PREVIEWED,
-        error='No row passed validation; nothing can be imported.' if rejected else '', **fields,
+        error=error, **fields,
     )
-    if details:
+    if details and batch.period_start:
         _store(path, batch)
     return batch
 
@@ -201,15 +252,21 @@ def commit(batch: RcaImportBatch, *, user=None, conflict_action: str = '', missi
         raise ImportRejected(f'{rejected} rows were rejected. Confirm importing the {len(batch.rows)} valid rows without them, '
                              'or correct the workbook and upload it again.', 409)
     from . import cycles
+    typed = batch.upload_type in (RcaImportBatch.UploadType.CIRCLE, RcaImportBatch.UploadType.CONSOLIDATED)
     with transaction.atomic():
-        cycle = cycles.period_cycle(*period, create=True, name=batch.report_name, user=user, lock=True) if period else None
-        # Earlier-date rows that add or change records are filed under their own date's period.
-        for day in sorted({r['reporting_date'] for r in batch.rows if r.get('earlier_date')}):
+        if typed:
+            # Daily periods: the reporting date's own (or an existing period containing it), never an overlapping one.
+            name = batch.report_name if batch.upload_type == RcaImportBatch.UploadType.CONSOLIDATED else ''
+            cycle = cycles.cycle_for_date(period[0], user=user, name=name)
+        else:
+            cycle = cycles.period_cycle(*period, create=True, name=batch.report_name, user=user, lock=True) if period else None
+        # Rows of other dates (earlier days of a cumulative workbook) are filed under their own date's period.
+        for day in sorted({r['reporting_date'] for r in batch.rows if r.get('earlier_date') or (typed and r['reporting_date'] != period[0].isoformat())}):
             cycles.cycle_for_date(date.fromisoformat(day), user=user)
         # Periods of these dates are locked so a final report is never built from a half-applied import.
         list(RcaReportingCycle.objects.select_for_update().filter(reporting_date__in={r['reporting_date'] for r in batch.rows}))
         # Compared again inside the transaction: the database may have changed since the preview.
-        comparison = _compare(batch.rows, period=period, projects=PROJECT_SCOPES.get(batch.project_scope) if period else None)
+        comparison = _compare(batch.rows, units=_batch_units(batch) if typed else _legacy_units(batch, period))
         conflicts, missing = comparison['conflicts'], comparison['missing']
         if conflicts and not conflict_action:
             raise ImportRejected(f'{len(conflicts)} rows differ from RCA records already in the database. '
@@ -275,6 +332,14 @@ def commit(batch: RcaImportBatch, *, user=None, conflict_action: str = '', missi
         batch.rows = []  # the rows now live in RcaRecord; the report keeps the validation result
         batch.save()
     return batch
+
+
+def _legacy_units(batch: RcaImportBatch, period: tuple[date, date] | None) -> set[tuple[str, str, str]]:
+    """A legacy upload still awaiting commit: the units it holds within its period (never other circles)."""
+    if not period:
+        return set()
+    return {(r['reporting_date'], r['project'], r['circle']) for r in batch.rows
+            if period[0].isoformat() <= r['reporting_date'] <= period[1].isoformat()}
 
 
 def _by_date(rows: list[dict], comparison: dict, period: tuple[date, date] | None) -> list[dict]:

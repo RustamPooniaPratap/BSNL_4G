@@ -55,12 +55,12 @@ describe('RCA Submissions', () => {
     expect(within(status).getByRole('link', { name: 'Download partial report' })).toHaveAttribute('href', expect.stringContaining('/rca/cycles/4/report.xlsx'));
     const coverage = screen.getByLabelText('Expected coverage');
     const rows = within(coverage).getAllByRole('row');
-    expect(rows[1]).toHaveTextContent('OD4G SaturationData received522');
-    expect(rows[3]).toHaveTextContent('ODLWEPending — no accepted records0');
+    expect(rows[1]).toHaveTextContent('OD4G SaturationNot received—Data received522');
+    expect(rows[3]).toHaveTextContent('ODLWENot received—Pending — no accepted records0');
     expect(within(coverage).getByText(/outside the expected scope: JH LWE \(293\)/)).toBeInTheDocument();
     // The upload itself succeeded, with rejected rows: shown as an upload status, not as completeness.
     const periodUploads = within(screen.getByLabelText('Period uploads')).getAllByRole('row');
-    expect(periodUploads[1]).toHaveTextContent('October 2026 RCA Reportnoc.leadBook1_RCA.xlsx4G + LWE');
+    expect(periodUploads[1]).toHaveTextContent('October 2026 RCA Reportnoc.leadBook1_RCA.xlsxLegacy4G + LWE');  // uploaded before upload types
     expect(periodUploads[1]).toHaveTextContent('600 · 0 · 8 · 2');
     expect(periodUploads[1]).toHaveTextContent('OD 4G, BH LWE');
     // Every upload, failed ones included.

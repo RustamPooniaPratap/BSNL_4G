@@ -47,6 +47,10 @@ export function SourceValue({ value, unclassified, notApplicable }: { value: str
   return <span className="text-muted-foreground italic" title={`Source value: "${value || 'blank'}"`}>Unclassified{value ? ` (${value})` : ''}</span>;
 }
 
+/** Bucket options outside the approved bucketization are still offered (they exist in the records), marked for review. */
+const notApproved = (items: RcaOptions['final_buckets']) =>
+  items.map((o) => (o.approved === false && !o.unclassified ? { ...o, label: `${o.label} (not approved)` } : o));
+
 /** The RCA filters, in the same compact filter card and label style as the dashboard pages. */
 export function RcaFilterBar({ options, params, onChange, onReset, search = false, statusFilter = false, actions, lead }: {
   options: RcaOptions; params: URLSearchParams; onChange: (key: FilterKey, value: string) => void; onReset: () => void;
@@ -85,8 +89,8 @@ export function RcaFilterBar({ options, params, onChange, onReset, search = fals
       {select('project', 'Project', 'All projects', options.projects.map((p) => ({ value: p, label: p })), 'w-36')}
       {select('circle', 'Circle', 'All circles', [...new Map(circles.map((c) => [c.circle, c])).values()]
         .map((c) => ({ value: c.circle, label: `${c.circle} · ${c.circle_raw}` })), 'w-44')}
-      {select('final_bucket', 'Final Bucket', 'All Final Buckets', options.final_buckets, 'w-44')}
-      {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', options.bucket_2, 'w-44')}
+      {select('final_bucket', 'Final Bucket', 'All Final Buckets', notApproved(options.final_buckets), 'w-44')}
+      {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', notApproved(options.bucket_2), 'w-44')}
       {select('category', 'Cause category', 'All categories', [
         ...options.categories, { value: 'unreviewed', label: 'Unreviewed descriptions' },
       ], 'w-48')}

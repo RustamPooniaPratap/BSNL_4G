@@ -33,6 +33,12 @@ export function RequirePage({ children }: { children: ReactNode }) {
   return canOpen(user?.role, location.pathname) ? <>{children}</> : <Unauthorized />;
 }
 
+/** Upload Consolidated RCA: Admins and members of the RCA Consolidated Uploaders group (the server checks every upload). */
+export function RequireRcaConsolidated({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  return user?.rca_upload?.consolidated ? <>{children}</> : <Unauthorized />;
+}
+
 export function Unauthorized() {
   const { user } = useAuth();
   return (

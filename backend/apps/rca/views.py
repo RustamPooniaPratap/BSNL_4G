@@ -28,7 +28,7 @@ from rest_framework.response import Response
 
 from apps.accounts.audit import audit
 from apps.accounts.permissions import CanUploadRca, IsAdminRole, IsPortalUser
-from apps.accounts.roles import ADMIN, role_of
+from apps.accounts.roles import ADMIN, can_upload_circle_rca, can_upload_consolidated_rca, can_upload_rca, role_of
 
 from . import cycles, importer, parser, services
 from .models import (RcaCauseCategory, RcaCauseMapping, RcaComment, RcaEvent, RcaImportBatch, RcaRecord,
@@ -235,10 +235,30 @@ def summary(request):
     return Response(data)
 
 
-# --- Uploads (Admin and NOC Lead) ----------------------------------------------------------------
-# A NOC Lead sees and acts on their own uploads only; an Admin on every upload.
+# --- Uploads -------------------------------------------------------------------------------------
+# Two upload types, checked here on every request whatever the interface shows:
+# - Upload Circle RCA: Admins and NOC Leads for every project and circle; CI users for the project/circle pairs granted
+#   to them (Organization > User Access).
+# - Upload Consolidated RCA: Admins and members of the "RCA Consolidated Uploaders" group only.
+# Users see and act on their own uploads only; an Admin on every upload. Permissions are checked again at commit.
 
-ALLOWED_SCOPES = {'4G Saturation': '4G Saturation', 'LWE': 'LWE', 'both': 'both'}
+UPLOAD_TYPES = (RcaImportBatch.UploadType.CIRCLE, RcaImportBatch.UploadType.CONSOLIDATED)
+
+
+def _may_upload(user, kind: str, project: str = '', circle: str | None = None) -> bool:
+    if kind == RcaImportBatch.UploadType.CONSOLIDATED:
+        return can_upload_consolidated_rca(user)
+    if kind == RcaImportBatch.UploadType.CIRCLE:
+        return can_upload_circle_rca(user, project, circle)
+    return can_upload_rca(user)  # legacy uploads: as before (Admin, NOC Lead)
+
+
+def _rights(user) -> dict:
+    """What the upload page may offer (the server checks every request again)."""
+    from apps.accounts.scope import allowed_pairs
+    pairs = allowed_pairs(user)
+    return {'circle': can_upload_circle_rca(user), 'consolidated': can_upload_consolidated_rca(user),
+            'access': None if pairs is None else [{'project': p, 'circle': c} for p, c in sorted(pairs)]}
 
 
 def _batch(request, batch_id: int) -> RcaImportBatch:
@@ -253,49 +273,76 @@ def _batch_json(batch: RcaImportBatch, *, full: bool = False) -> dict:
 
 
 @api_view(['GET'])
-@permission_classes([CanUploadRca])
+@permission_classes([IsPortalUser])
 def import_list(request):
     """The signed-in user's uploads; an Admin may ask for every upload with ?all=1."""
     qs = RcaImportBatch.objects.select_related('imported_by')
     everyone = _is_admin(request) and request.query_params.get('all') == '1'
     if not everyone:
         qs = qs.filter(imported_by=request.user)
+    kind = request.query_params.get('upload_type')
+    if kind in UPLOAD_TYPES:
+        qs = qs.filter(upload_type=kind)
     return Response({'imports': [_batch_json(b) for b in qs[:100]], 'records': RcaRecord.objects.count(), 'all': everyone,
+                     'rights': _rights(request.user),
                      'max_bytes': settings.MAX_WORKBOOK_BYTES})  # shown on the upload page; the upload itself checks it
 
 
 def _details(data) -> dict:
+    """The upload's details, by type. A circle upload: project, circle and reporting date. A consolidated upload: report
+    name, project scope and optionally the reporting date (otherwise the latest date in the workbook)."""
+    from apps.organization import services as organization
     errors = {}
+    kind = str(data.get('upload_type') or '')
+    if kind not in UPLOAD_TYPES:
+        raise ValidationError({'upload_type': 'Choose Upload Circle RCA or Upload Consolidated RCA.'})
+    raw_start = data.get('period_start') or data.get('reporting_date')
+    start = parser._date(raw_start) if raw_start else None
+    if raw_start and start is None:
+        errors['period_start'] = 'Enter a valid reporting date.'
+    elif start and start > timezone.localdate():
+        errors['period_start'] = 'The reporting date cannot be in the future.'
+    end = parser._date(data.get('period_end')) if data.get('period_end') else start
+    if start and end != start:
+        errors['period_end'] = 'An RCA upload is for one reporting date; periods are daily.'
+    remarks = str(data.get('remarks') or '').strip()[:2000]
+    if kind == RcaImportBatch.UploadType.CIRCLE:
+        project = str(data.get('project') or '')
+        circle = str(data.get('circle') or '').strip().upper()
+        if not raw_start:
+            errors['period_start'] = 'Enter the reporting date.'
+        if project not in organization.project_keys(active_only=True):
+            errors['project'] = 'Choose the project.'
+        elif not circle:
+            errors['circle'] = 'Choose the circle.'
+        elif not organization.is_associated(project, circle):
+            errors['circle'] = f'{circle} is not an active circle of {project} (Administration > Organization).'
+        if errors:
+            raise ValidationError(errors)
+        name = ' '.join(str(data.get('report_name') or '').split())[:200] or f'{circle} {project} RCA {start:%d %b %Y}'
+        return {'upload_type': kind, 'report_name': name, 'period_start': start, 'project_scope': project, 'circle': circle,
+                'remarks': remarks}
     name = ' '.join(str(data.get('report_name') or '').split())[:200]
     if not name:
         errors['report_name'] = 'Enter the report name, e.g. "October 2026 RCA Report".'
-    start = parser._date(data.get('period_start'))
-    end = parser._date(data.get('period_end')) if data.get('period_end') else start
-    if start is None:
-        errors['period_start'] = 'Enter the reporting date (or the first day of the period).'
-    elif end is None:
-        errors['period_end'] = 'Enter a valid last day of the period, or leave it blank for a single date.'
-    elif end < start:
-        errors['period_end'] = 'The period ends before it starts.'
-    elif start > timezone.localdate():
-        errors['period_start'] = 'The reporting period cannot start in the future.'
-    elif (end - start).days > 92:
-        errors['period_end'] = 'A reporting period can span at most three months.'
-    scope = ALLOWED_SCOPES.get(str(data.get('project_scope') or ''))
-    if scope is None:
-        errors['project_scope'] = 'Choose 4G Saturation, LWE or Both.'
+    scope = str(data.get('project_scope') or '')
+    if scope != 'both' and scope not in organization.project_keys(active_only=True):  # "both": every project
+        errors['project_scope'] = 'Choose a project, or every project.'
     if errors:
         raise ValidationError(errors)
-    return {'report_name': name, 'period_start': start, 'period_end': end, 'project_scope': scope,
-            'remarks': str(data.get('remarks') or '').strip()[:2000]}
+    return {'upload_type': kind, 'report_name': name, 'period_start': start, 'project_scope': scope, 'remarks': remarks}
 
 
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
-@permission_classes([CanUploadRca])
+@permission_classes([IsPortalUser])
 def import_preview(request):
-    """Upload the completed RCA workbook with its report details and validate it (nothing is imported yet)."""
+    """Upload a circle or consolidated RCA workbook with its details and validate it (nothing is imported yet)."""
     details = _details(request.data)
+    if not _may_upload(request.user, details['upload_type'], details['project_scope'], details.get('circle')):
+        audit('rca_upload_refused', request, upload_type=details['upload_type'], circle=details.get('circle') or '-')
+        raise PermissionDenied('You may not upload this RCA file: consolidated uploads need the RCA Consolidated Uploaders group, '
+                               'and circle uploads a project and circle granted to your account.')
     upload = _upload(request)
     name = Path(upload.name).name
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=Path(name).suffix.lower())
@@ -309,18 +356,19 @@ def import_preview(request):
         return Response({'error': str(exc), 'details': {}}, status=exc.status)
     finally:
         Path(handle.name).unlink(missing_ok=True)
-    audit('rca_import_previewed', request, batch=batch.pk, file=name, report=details['report_name'], status=batch.status)
+    audit('rca_import_previewed', request, batch=batch.pk, file=name, report=details['report_name'], status=batch.status,
+          upload_type=batch.upload_type, circle=batch.circle or '-')
     return Response(_batch_json(batch, full=True), status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET'])
-@permission_classes([CanUploadRca])
+@permission_classes([IsPortalUser])
 def import_detail(request, batch_id: int):
     return Response(_batch_json(_batch(request, batch_id), full=True))
 
 
 @api_view(['GET'])
-@permission_classes([CanUploadRca])
+@permission_classes([IsPortalUser])
 def import_issues_csv(request, batch_id: int):
     """Every rejected or flagged row, plus differences from stored records, as CSV."""
     batch = _batch(request, batch_id)
@@ -345,9 +393,12 @@ def import_issues_csv(request, batch_id: int):
 
 @api_view(['POST'])
 @parser_classes([JSONParser])
-@permission_classes([CanUploadRca])
+@permission_classes([IsPortalUser])
 def import_commit(request, batch_id: int):
     batch = _batch(request, batch_id)
+    # Checked again: the user's group or project/circle access may have changed since the preview.
+    if not _may_upload(request.user, batch.upload_type, batch.project_scope, batch.circle):
+        raise PermissionDenied('You may no longer upload this RCA file.')
     try:
         batch = importer.commit(batch, user=request.user, conflict_action=request.data.get('conflict_action') or '',
                                 missing_action=request.data.get('missing_action') or '',
@@ -368,7 +419,7 @@ def import_commit(request, batch_id: int):
 
 
 @api_view(['POST'])
-@permission_classes([CanUploadRca])
+@permission_classes([IsPortalUser])
 def import_discard(request, batch_id: int):
     batch = _batch(request, batch_id)
     if batch.status != RcaImportBatch.Status.PREVIEWED:

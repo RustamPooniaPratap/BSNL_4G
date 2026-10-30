@@ -20,7 +20,7 @@ describe('Sidebar order and groups', () => {
     await user.click(within(nav()).getByRole('button', { name: 'Data Entry' }));
     await user.click(within(nav()).getByRole('button', { name: 'CSV Arrival & Follow-up' }));
     expect(links()).toEqual(['Site Portfolio', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance',
-      'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload RCA Data',
+      'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload Circle RCA',
       'Data Source', 'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles', 'Organization']);
     expect(within(nav()).getByText('Data')).toBeInTheDocument();
     expect(within(nav()).getByText('Administration')).toBeInTheDocument();
