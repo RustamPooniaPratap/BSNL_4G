@@ -23,9 +23,20 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.accounts.audit import audit
-from apps.accounts.permissions import IsAdminRole, IsPortalUser
+from apps.accounts.permissions import Can, IsAdminRole
 from apps.accounts.roles import ADMIN, role_of
-from apps.accounts.scope import allowed_pairs, may_use
+from apps.accounts.access import can, pairs_for
+
+UPLOAD = ('csv_upload', 'upload')
+
+
+def allowed_pairs(user):
+    """Pairs of the user's CSV Upload permission (None: every pair)."""
+    return pairs_for(user, *UPLOAD)
+
+
+def may_use(user, project: str, circle: str) -> bool:
+    return can(user, *UPLOAD, project, circle)
 from apps.organization import services as organization
 
 from . import arrivals
@@ -66,12 +77,19 @@ def _batch(request, batch_id: int) -> DataImportBatch:
     return batch
 
 
+def _alert(request, batch_id, name: str, reason: str, details: Details, status: str = 'Failed') -> None:
+    """Upload Failure Alert (Administration › Alert): queued for the worker, never affects the upload's own answer."""
+    from apps.alerts.events import upload_failed
+    upload_failed(kind='raw_csv', batch_id=batch_id, file=name, reason=reason, uploader_id=request.user.pk, project=details.project,
+                  circle=details.circle, date=details.reporting_date.isoformat() if details.reporting_date else '', status=status)
+
+
 def _error(exc: RawUploadRejected) -> Response:
     return Response({'error': str(exc), 'details': {}}, status=exc.status)
 
 
 @api_view(['GET'])
-@permission_classes([IsPortalUser])
+@permission_classes([Can(*UPLOAD)])
 def raw_options(request):
     """What the form may offer this user: the active projects, and per project its active circles within the user's scope
     with their site-master size (a circle without master sites is listed, but nothing can be validated against it)."""
@@ -95,7 +113,7 @@ def raw_options(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsPortalUser])
+@permission_classes([Can(*UPLOAD)])
 def raw_list(request):
     qs = DataImportBatch.objects.select_related('imported_by').filter(kind=DataImportBatch.Kind.RAW_DAILY_CSV)
     if not _is_admin(request):
@@ -133,7 +151,7 @@ def _details(request) -> Details:
 
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
-@permission_classes([IsPortalUser])
+@permission_classes([Can(*UPLOAD)])
 def raw_preview(request):
     details = _details(request)
     upload = request.FILES.get('file')
@@ -152,21 +170,25 @@ def raw_preview(request):
         batch = preview(Path(handle.name), name, details, user=request.user)
     except RawUploadRejected as exc:
         audit('raw_upload_failed', request, file=name, circle=details.circle, project=details.project)
+        failed = DataImportBatch.objects.filter(kind=DataImportBatch.Kind.RAW_DAILY_CSV, imported_by=request.user, original_filename=name).order_by('-id').first()
+        _alert(request, failed.pk if failed and failed.status == DataImportBatch.Status.FAILED else f'refused-{timezone.now().timestamp()}', name, str(exc), details)
         return _error(exc)
     finally:
         Path(handle.name).unlink(missing_ok=True)
     audit('raw_upload_previewed', request, batch=batch.pk, file=name, circle=details.circle, project=details.project, status=batch.status)
+    if batch.status == DataImportBatch.Status.REJECTED:
+        _alert(request, batch.pk, name, batch.error or 'The file did not pass validation.', details, status='Rejected')
     return Response(_batch_json(batch, full=True), status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET'])
-@permission_classes([IsPortalUser])
+@permission_classes([Can(*UPLOAD)])
 def raw_detail(request, batch_id: int):
     return Response(_batch_json(_batch(request, batch_id), full=True))
 
 
 @api_view(['GET'])
-@permission_classes([IsPortalUser])
+@permission_classes([Can(*UPLOAD)])
 def raw_rows(request, batch_id: int):
     try:
         page = int(request.query_params.get('page') or 1)
@@ -176,7 +198,7 @@ def raw_rows(request, batch_id: int):
 
 
 @api_view(['GET'])
-@permission_classes([IsPortalUser])
+@permission_classes([Can(*UPLOAD)])
 def raw_issues_csv(request, batch_id: int):
     batch = _batch(request, batch_id)
     response = HttpResponse('﻿' + validation_csv(batch), content_type='text/csv; charset=utf-8')
@@ -186,7 +208,7 @@ def raw_issues_csv(request, batch_id: int):
 
 @api_view(['POST'])
 @parser_classes([JSONParser])
-@permission_classes([IsPortalUser])
+@permission_classes([Can(*UPLOAD)])
 def raw_commit(request, batch_id: int):
     batch = _batch(request, batch_id)
     if request.data.get('confirm') is not True:
@@ -194,13 +216,17 @@ def raw_commit(request, batch_id: int):
     try:
         batch = commit(batch, user=request.user)
     except RawUploadRejected as exc:
+        batch.refresh_from_db()
+        if batch.status == DataImportBatch.Status.FAILED:
+            _alert(request, batch.pk, batch.original_filename, str(exc),
+                   Details(batch.project, batch.circle, batch.reporting_date, batch.remarks))
         return _error(exc)
     audit('raw_upload_committed', request, batch=batch.pk, circle=batch.circle, project=batch.project, **batch.counts.get('daily', {}))
     return Response(_batch_json(batch, full=True))
 
 
 @api_view(['POST'])
-@permission_classes([IsPortalUser])
+@permission_classes([Can(*UPLOAD)])
 def raw_discard(request, batch_id: int):
     try:
         batch = discard(_batch(request, batch_id))
@@ -235,4 +261,4 @@ def arrival_tracker(request):
         raise ValidationError({'range': 'The range start is after its end.'})
     if start and end and (end - start).days >= arrivals.MAX_RANGE_DAYS:
         raise ValidationError({'range': f'Choose at most {arrivals.MAX_RANGE_DAYS} days.'})
-    return Response(arrivals.tracker(day, allowed_pairs(request.user), start, end))
+    return Response(arrivals.tracker(day, None, start, end))  # Admins only: every pair

@@ -33,7 +33,30 @@ class IsPortalUser(BasePermission):
             return False  # DRF turns this into 401 for unauthenticated requests
         if must_change_password(user):
             raise PasswordChangeRequired()
-        return role_of(user) is not None
+        return is_portal_user(user)
+
+
+def is_portal_user(user) -> bool:
+    """A built-in role (Admin, NOC Lead, CI) or at least one applying assignment."""
+    from .access import has_assignments
+    return role_of(user) is not None or has_assignments(user)
+
+
+def Can(module: str, action: str):  # noqa: N802 - used like a permission class
+    """Portal user with (module, action) on at least one project/circle; the view then limits the data to
+    ``access.pairs_for(user, module, action)``."""
+    from . import catalog
+    assert catalog.is_known(module, action), f'{module}.{action} is not in the permission catalogue'
+
+    class _Can(IsPortalUser):
+        message = f'You do not have the {catalog.MODULES[module]["label"]} {catalog.ACTION_LABELS[action]} permission.'
+
+        def has_permission(self, request, view) -> bool:
+            from .access import can
+            return super().has_permission(request, view) and can(request.user, module, action)
+
+    _Can.__name__ = f'Can_{module}_{action}'
+    return _Can
 
 
 class IsAdminRole(IsPortalUser):

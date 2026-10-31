@@ -43,7 +43,7 @@ export function RcaSummaryPage() {
   const location = useLocation();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const options = useApiQuery('rca-options', (signal) => fetchRcaOptions(signal));
+  const options = useApiQuery('rca-options-summary', (signal) => fetchRcaOptions(signal, true));
   const view = SUMMARY_VIEWS.find((v) => v.path === location.pathname.replace(/\/+$/, ''));
   const query = new URLSearchParams();
   for (const key of FILTER_KEYS) {

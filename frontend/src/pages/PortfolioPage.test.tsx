@@ -295,7 +295,7 @@ describe('navigation', () => {
   it('lists Site Portfolio first, above Overview, and highlights it', () => {
     renderWithWorkbook(<Sidebar />, { url: '/portfolio' });
     const links = within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link').map((a) => a.textContent);
-    expect(links.slice(0, 2)).toEqual(['Site Portfolio', 'Overview']);
+    expect(links.slice(0, 3)).toEqual(['Site Portfolio', 'Master Data', 'Overview']);
     expect(screen.getByRole('link', { name: 'Site Portfolio' })).toHaveAttribute('aria-current', 'page');
   });
 

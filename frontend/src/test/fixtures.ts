@@ -44,7 +44,12 @@ export const summary: SummaryResponse = {
     sites_total: 7, sites_in_scope: 5, sites_reported: 4, sites_missing: 1, coverage_pct: 80,
     daily_uptime_pct: 75, daily_outage_minutes: 1440, sites_without_outage: 3, sites_down_full_day: 1,
     mtd_uptime_pct: 93.0676, mtd_outage_minutes: 2000, sites_below_60_mtd: 2, sites_at_or_above_98_5_mtd: 3,
-    out_of_range_values: 0,
+    sites_with_mtd_value: 5, sites_not_meeting_sla_mtd: 2, out_of_range_values: 0,
+  },
+  outage_comparison: {
+    day: { current: 1440, previous: 1800, period: '03 Oct', previous_period: '02 Oct', change_pct: -20, direction: 'down', note: '' },
+    mtd: { current: 2000, previous: 1600, period: '01 Oct – 03 Oct', previous_period: '01 Sep – 03 Sep', change_pct: 25, direction: 'up', note: '' },
+    month: { current: null, previous: 9000, period: 'Oct 2026', previous_period: 'Sep 2026', change_pct: null, direction: null, note: 'October is not complete yet.' },
   },
   filters: { report_type: null, circle: null, scope: 'on_air' },
   source,

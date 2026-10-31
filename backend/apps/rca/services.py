@@ -54,10 +54,17 @@ def with_category(qs: QuerySet) -> QuerySet:
                        category_name=Subquery(mapping.values('category__name')[:1]))
 
 
-def filtered(params) -> QuerySet:
-    """Records matching the query parameters (date / date_from / date_to, project, circle, buckets, category, q)."""
+def in_scope(pairs) -> QuerySet:
+    """Records of the given project/circle pairs (None: every record; see accounts.access)."""
+    from apps.accounts.access import pairs_q
     # order_by() clears Meta.ordering, which would otherwise leak into DISTINCT / GROUP BY queries.
-    qs = with_category(RcaRecord.objects.order_by())
+    return RcaRecord.objects.order_by().filter(pairs_q(pairs))
+
+
+def filtered(params, pairs=None) -> QuerySet:
+    """Records matching the query parameters (date / date_from / date_to, project, circle, buckets, category, q),
+    within ``pairs`` (the user's permitted project/circle pairs; None: all)."""
+    qs = with_category(in_scope(pairs))
     day = _date(params.get('date'), 'date')
     start, end = _date(params.get('date_from'), 'date_from'), _date(params.get('date_to'), 'date_to')
     if day:
@@ -112,8 +119,8 @@ def _variants(qs: QuerySet, key: str, label: str) -> dict[str, list[str]]:
     return {k: sorted(v) for k, v in groups.items()}
 
 
-def options() -> dict:
-    qs = RcaRecord.objects.order_by()
+def options(pairs=None) -> dict:
+    qs = in_scope(pairs)
     # Values present in the records (the filters only offer what can match), each flagged against the approved
     # classification: a Final Bucket by its name, a Bucket - 2 if it is an approved sub-bucket of some Final Bucket.
     approved_children = {taxonomy.match_key(c) for children in taxonomy.APPROVED.values() for c in children}
@@ -189,8 +196,8 @@ def record_json(rec: RcaRecord, *, full: bool = False) -> dict:
     return data
 
 
-def register(params) -> dict:
-    qs = filtered(params).select_related('workflow')
+def register(params, pairs=None) -> dict:
+    qs = filtered(params, pairs).select_related('workflow')
     ordering = ORDERINGS.get(params.get('ordering') or 'outage_desc', ORDERINGS['outage_desc'])
     try:
         page = max(1, int(params.get('page') or 1))
@@ -214,8 +221,8 @@ def _population() -> dict[tuple[str, str], int] | None:
         return None
 
 
-def summary(params) -> dict:
-    qs = filtered(params)
+def summary(params, pairs=None) -> dict:
+    qs = filtered(params, pairs)
     totals = qs.aggregate(records=Count('id'), minutes=Sum('outage_minutes'),
                           with_minutes=Count('id', filter=Q(outage_minutes__isnull=False)))
     sites = qs.values('project', 'site_key').distinct().count()

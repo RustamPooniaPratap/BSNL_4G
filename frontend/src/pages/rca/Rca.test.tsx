@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RequireAdmin } from '../../components/auth/Guards';
 import { Sidebar } from '../../components/Sidebar';
 import * as api from '../../services/api';
-import { CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
+import { CI_PERMISSIONS, CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
 import type { AuthUser } from '../../types';
 import type { RcaBreakdown, RcaCauses, RcaOptions, RcaPage, RcaRecord, RcaRecordDetail, RcaSummary } from '../../types/rca';
 import { RcaMappingPage } from './RcaMappingPage';
@@ -88,7 +88,7 @@ const SUMMARY: RcaSummary = {
   top_records: [REC],
 };
 
-const NOC_LEAD: AuthUser = { username: 'noc.lead', name: 'NOC Lead', role: 'noc_lead', role_label: 'NOC Lead', must_change_password: false };
+const NOC_LEAD: AuthUser = { username: 'noc.lead', name: 'NOC Lead', role: 'noc_lead', role_label: 'NOC Lead', must_change_password: false, permissions: CI_PERMISSIONS };
 const Location = () => { const l = useLocation(); return <p data-testid="location">{l.pathname + l.search}</p>; };
 const bars = (name: string) => within(screen.getByRole('list', { name })).getAllByRole('listitem').map((li) => li.textContent);
 
@@ -306,7 +306,7 @@ describe('RCA cause mapping', () => {
 
 describe('RCA in the sidebar', () => {
   it('lists RCA as its own section; a CI sees the RCA Register (and circle upload when granted), a NOC Lead the circle upload, an Admin every RCA page but Cause Mapping', async () => {
-    const view = renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: { ...CI_USER, rca_upload: { circle: false, consolidated: false } } }) });
+    const view = renderWithWorkbook(<Sidebar />, { url: '/rca', auth: authValue({ user: { ...CI_USER, permissions: { ...CI_PERMISSIONS, rca_upload: [] }, rca_upload: { circle: false, consolidated: false } } }) });
     const nav = () => screen.getByRole('navigation', { name: 'Main' });
     expect(within(nav()).getByText('RCA')).toHaveClass('uppercase');  // a section heading, like Data
     expect(within(nav()).queryByRole('button', { name: 'RCA' })).not.toBeInTheDocument();

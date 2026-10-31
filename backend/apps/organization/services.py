@@ -63,14 +63,16 @@ def catalog() -> dict:
     }
 
 
-def merge_filter_options(options: dict) -> dict:
+def merge_filter_options(options: dict, pairs: set[tuple[str, str]] | None = None) -> dict:
     """Dashboard filter options (built from the data) plus every active association, so a circle set up in the
     Organization is selectable for its projects before it has data. ``has_data`` tells them apart; nothing is counted
     for a circle without data. A circle with records stays listed for historical reporting even when its association
-    is inactive or removed; ``configured_for`` lists the projects it is actively associated with."""
+    is inactive or removed; ``configured_for`` lists the projects it is actively associated with. With ``pairs`` (a
+    restricted user), only those projects and circles are added."""
     active: dict[str, set[str]] = {}
     for project, circle in associations(active_only=True):
-        active.setdefault(circle, set()).add(project)
+        if pairs is None or (project, circle) in pairs:
+            active.setdefault(circle, set()).add(project)
     circles = {c['value']: {**c, 'has_data': True, 'data_report_types': c['report_types'], 'configured_for': sorted(active.get(c['value'], ()))}
                for c in options['circles']}
     for code, projects in active.items():
@@ -81,6 +83,8 @@ def merge_filter_options(options: dict) -> dict:
                              'site_count': 0, 'has_data': False, 'configured_for': sorted(projects)}
     types = {t['value']: {**t, 'has_data': True} for t in options['report_types']}
     for key in project_keys(active_only=True):
+        if pairs is not None and not any(p == key for p, _ in pairs):
+            continue
         types.setdefault(key, {'value': key, 'label': f'{key} (no data yet)', 'site_count': 0, 'has_data': False})
     order = {k: i for i, k in enumerate(project_keys())}
     return {**options, 'circles': [circles[c] for c in sorted(circles)],
@@ -180,7 +184,7 @@ def usage_by_pair() -> dict[tuple[str, str], dict]:
     from apps.rca.models import RcaRecord, RcaRequiredSubmission
     from apps.uptimedb.models import DataImportBatch, EscalationSite, SiteDailyPerformance, SiteMonthlyPerformance, UptimeSite
 
-    from .models import UserCircleAccess
+    from apps.accounts.models import AccessAssignment
 
     out: dict[tuple[str, str], dict] = {}
 
@@ -196,8 +200,8 @@ def usage_by_pair() -> dict[tuple[str, str], dict]:
     add(RcaRecord.objects.order_by().values('project', 'circle').annotate(n=Count('id')), 'rca')
     add(RcaRequiredSubmission.objects.order_by().values('project', 'circle').annotate(n=Count('id')), 'rca_expected')
     add(EscalationSite.objects.order_by().values('project', 'circle').annotate(n=Count('id')), 'escalation')
-    add(UserCircleAccess.objects.order_by().values('project_circle__project__key', 'project_circle__circle__code').annotate(n=Count('id')),
-        'users', 'project_circle__project__key', 'project_circle__circle__code')
+    add(AccessAssignment.objects.filter(project_circle__isnull=False).order_by().values('project__key', 'project_circle__circle__code')
+        .annotate(n=Count('user', distinct=True)), 'users', 'project__key', 'project_circle__circle__code')
     return out
 
 

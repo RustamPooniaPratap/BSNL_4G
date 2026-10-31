@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { AuthUser, Role } from '../types';
+import type { AuthUser } from '../types';
 
 /** Who is signed in. The server decides the role; the UI only uses it to choose what to show. */
 export interface AuthContextValue {
@@ -24,11 +24,42 @@ export function useAuth(): AuthContextValue {
   return value;
 }
 
-/** Pages each role may open. Admin-only pages are refused by the backend as well. */
-export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/ci-ie', '/teams/top', '/workbook', '/data/database', '/admin/users', '/admin/organization', '/admin/organization/circles', '/admin/organization/mapping', '/admin/organization/access', '/admin/organization/code-mapping', '/admin/organization/history', '/rca/summary', '/rca/summary/breakdown', '/rca/summary/root-causes', '/rca/summary/circles', '/rca/summary/trends', '/rca/submissions', '/rca/mappings'];
-/** Admin-only pages a NOC Lead may open as well (their own RCA uploads; the API limits them to their own). */
-export const NOC_LEAD_PATHS: string[] = [];
+/** Pages that stay with the Admin role (the backend refuses their APIs to everyone else). */
+export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/ci-ie', '/teams/top', '/workbook', '/data/database', '/admin/users', '/admin/users/roles', '/admin/users/assignments', '/admin/users/history', '/admin/organization', '/admin/organization/circles', '/admin/organization/mapping', '/admin/organization/access', '/admin/organization/code-mapping', '/admin/organization/history', '/rca/submissions', '/rca/mappings', '/admin/alerts/email', '/admin/alerts/automations', '/admin/alerts/history'];
 
-/** A NOC Lead opens what a CI opens, plus uploading RCA data. */
-export const canOpen = (role: Role | null | undefined, path: string) =>
-  role === 'admin' || ((role === 'ci' || role === 'noc_lead') && !ADMIN_ONLY_PATHS.includes(path)) || (role === 'noc_lead' && NOC_LEAD_PATHS.includes(path));
+/**
+ * The permission ('module.action', see Users & Roles › Roles & Permissions) each other page needs. A user opens the page
+ * when they hold it on at least one project/circle; the API then limits the data to those pairs.
+ */
+const PAGE_PERMISSIONS: Record<string, string> = {
+  '/': 'dashboard.view', '/portfolio': 'dashboard.view', '/thresholds': 'dashboard.view', '/thresholds/buckets': 'dashboard.view',
+  '/data-source': 'dashboard.view', '/master-data': 'master_data.view',
+  '/data/upload-csv': 'csv_upload.upload', '/data/add-row': 'csv_upload.upload', '/data/new-site': 'csv_upload.upload',
+  '/rca': 'rca_register.view', '/rca/import': 'rca_upload.upload', '/rca/summary': 'rca_summary.view',
+};
+const PREFIXES = ['/master-data', '/rca/summary'];
+
+export function pagePermission(path: string): string | undefined {
+  return PAGE_PERMISSIONS[path] ?? PAGE_PERMISSIONS[PREFIXES.find((p) => path.startsWith(`${p}/`)) ?? ''];
+}
+
+/** Whether the user holds ``permission`` ('module.action') on at least one project/circle. */
+export function hasPermission(user: AuthUser | null | undefined, permission: string): boolean {
+  const [module, action] = permission.split('.');
+  return user?.role === 'admin' || !!user?.permissions?.[module]?.includes(action);
+}
+
+/** Admin: every page. Others: the pages their permissions allow (never the Admin-only ones). */
+export function canOpen(user: AuthUser | null | undefined, path: string): boolean {
+  if (!user?.role) return false;
+  if (user.role === 'admin') return true;
+  if (ADMIN_ONLY_PATHS.includes(path)) return false;
+  if (path === '/rca/import/consolidated') return !!user.rca_upload?.consolidated;
+  const needed = pagePermission(path);
+  return needed === undefined || hasPermission(user, needed);
+}
+
+/** The first page the user may open (for users without the dashboard, e.g. an upload-only role). */
+export function homePath(user: AuthUser | null | undefined): string | null {
+  return ['/', '/rca/import', '/data/upload-csv', '/rca', '/master-data', '/rca/summary', '/rca/import/consolidated'].find((p) => canOpen(user, p)) ?? null;
+}

@@ -65,12 +65,23 @@ describe('DashboardPage', () => {
   it('renders KPIs from the summary endpoint for the latest date by default', async () => {
     renderPage();
     const kpis = await screen.findByRole('region', { name: 'Key indicators' });
+    // Five cards in order: MTD uptime (unchanged), Not meeting SLA, Unique sites down, Below 60% MTD, Outage minutes.
+    expect(within(kpis).getAllByRole('group').filter((g) => g.dataset.slot === 'card').map((g) => g.getAttribute('aria-label')))
+      .toEqual(['MTD uptime', 'Not meeting SLA', 'Unique sites down', 'Below 60% MTD', 'Outage minutes']);
     expect(within(kpis).getByText('93.07%')).toBeInTheDocument();
-    expect(within(kpis).getByText('75.00%')).toBeInTheDocument();
-    // Reporting coverage was removed: five cards remain.
-    expect(within(kpis).queryByText('Reporting coverage')).not.toBeInTheDocument();
-    expect(within(kpis).queryByText('80.0%')).not.toBeInTheDocument();
-    expect(kpis.querySelectorAll('[data-slot="card"]')).toHaveLength(5);
+    const card = (name: string) => within(kpis).getByRole('group', { name });
+    expect(card('Not meeting SLA')).toHaveTextContent('240.0%');  // 2 of 5 sites with MTD data
+    expect(card('Unique sites down')).toHaveTextContent('125.0%');  // 1 down all day of 4 reported
+    expect(card('Below 60% MTD')).toHaveTextContent('240.0%');
+    expect(within(kpis).queryByText('Daily uptime')).not.toBeInTheDocument();  // replaced
+    // Outage minutes: MTD by default (more minutes than the same days of September: red, up); Day: fewer (green, down).
+    const outage = card('Outage minutes');
+    expect(outage).toHaveTextContent('+25%vs 01 Sep – 03 Sep');
+    expect(within(outage).getByText('+25%').className).toContain('text-destructive');
+    await userEvent.click(within(outage).getByRole('button', { name: 'Day' }));
+    expect(within(outage).getByText('-20%').className).toContain('text-emerald-700');
+    await userEvent.click(within(outage).getByRole('button', { name: 'Month' }));
+    expect(outage).toHaveTextContent('October is not complete yet.');  // no misleading change
 
     const params = lastParams(mocked.fetchSummary);
     expect(params.get('reporting_date')).toBe('2026-10-03');

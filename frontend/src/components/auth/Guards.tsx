@@ -4,7 +4,7 @@ import { ShieldAlert } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { canOpen, useAuth } from '../../context/auth';
+import { canOpen, homePath, useAuth } from '../../context/auth';
 
 /**
  * Pages need a signed-in user; a temporary password must be replaced first.
@@ -22,15 +22,17 @@ export function RequireAuth({ children, allowPasswordChange = false }: { childre
 /** Admin-only pages: other roles see an explanation instead (direct URLs included). */
 export function RequireAdmin({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const location = useLocation();
-  return canOpen(user?.role, location.pathname) && user?.role === 'admin' ? <>{children}</> : <Unauthorized />;
+  return user?.role === 'admin' ? <>{children}</> : <Unauthorized />;
 }
 
-/** Pages open to more than one role (e.g. RCA upload for Admins and NOC Leads): the role's page list decides. */
+/** Pages opened through a permission (context/auth: canOpen). The overview sends a user without the dashboard to the
+ * first page they may open, e.g. an upload-only role to its upload page. */
 export function RequirePage({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const location = useLocation();
-  return canOpen(user?.role, location.pathname) ? <>{children}</> : <Unauthorized />;
+  if (canOpen(user, location.pathname)) return <>{children}</>;
+  const home = location.pathname === '/' ? homePath(user) : null;
+  return home ? <Navigate to={home} replace /> : <Unauthorized />;
 }
 
 /** Upload Consolidated RCA: Admins and members of the RCA Consolidated Uploaders group (the server checks every upload). */

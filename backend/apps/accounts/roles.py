@@ -46,20 +46,15 @@ def can_upload_consolidated_rca(user) -> bool:
     role = role_of(user)
     if role == ADMIN:
         return True
-    return role is not None and user.groups.filter(name=RCA_CONSOLIDATED_GROUP).exists()
+    from .permissions import is_portal_user
+    return is_portal_user(user) and user.groups.filter(name=RCA_CONSOLIDATED_GROUP).exists()
 
 
 def can_upload_circle_rca(user, project: str | None = None, circle: str | None = None) -> bool:
-    """Admins and NOC Leads for every project and circle; a CI user only for the project/circle pairs granted to them
-    (Organization > User Access). Without a project and circle: whether the user may upload any circle file."""
-    from .scope import allowed_pairs
-    role = role_of(user)
-    if role in (ADMIN, NOC_LEAD):
-        return True
-    if role != CI:
-        return False
-    pairs = allowed_pairs(user) or set()
-    return bool(pairs) if project is None else (project, (circle or '').upper()) in pairs
+    """The RCA Upload permission (Admins and NOC Leads everywhere; others on their assigned project/circle pairs).
+    Without a project and circle: whether the user may upload any circle file."""
+    from .access import can
+    return can(user, 'rca_upload', 'upload', project, circle)
 
 
 def set_rca_consolidated(user, allowed: bool) -> None:
@@ -71,10 +66,13 @@ def set_rca_consolidated(user, allowed: bool) -> None:
 
 
 def set_role(user, role: str) -> None:
-    """Put the user in exactly one portal role group (other, non-portal groups are kept)."""
-    if role not in ROLES:
+    """Put the user in exactly one portal role group (other, non-portal groups are kept). ``member``: no built-in role
+    (the user's rights come from Access Assignments only)."""
+    if role not in ROLES and role != 'member':
         raise ValueError(f'Unknown role: {role}')
     portal_groups = Group.objects.filter(name__in=GROUP_NAMES)
     user.groups.remove(*portal_groups)
+    if role == 'member':
+        return
     group, _ = Group.objects.get_or_create(name=ROLES[role])
     user.groups.add(group)

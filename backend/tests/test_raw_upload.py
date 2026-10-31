@@ -260,8 +260,7 @@ class PermissionTests(RawUploadTestCase):
         self.assertEqual(self.upload([row('UVOR001', '99')]).status_code, 403)  # another circle, even with a valid file
         self.client.force_login(self.ci_none)
         self.assertEqual(self.upload([row('UVOR001', '99')]).status_code, 403)  # no circle assigned: nothing
-        options = self.client.get(reverse('raw-upload-options')).json()
-        self.assertEqual((options['assigned_circles'], options['projects'][0]['circles']), ([], []))
+        self.assertEqual(self.client.get(reverse('raw-upload-options')).status_code, 403)  # no CSV Upload permission anywhere
         self.client.force_login(self.ci_od)
         options = self.client.get(reverse('raw-upload-options')).json()
         self.assertEqual((options['assigned_circles'], options['projects'][0]['circles']), (['OD'], ['OD']))

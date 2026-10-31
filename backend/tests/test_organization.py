@@ -1,6 +1,5 @@
 """Organization (Administration > Organization): projects, global circles, associations, circle code mapping, project/circle
 user access, change history, and how uploads, imports, exports and RCA use them. Isolated test data only (SQLite)."""
-import importlib
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -8,7 +7,6 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pandas as pd
-from django.apps import apps as django_apps
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
@@ -18,7 +16,8 @@ from apps.accounts.models import AccountProfile
 from apps.accounts.scope import allowed_pairs, forget_profile, may_use, set_circles, set_pairs
 from apps.dashboard import report_export
 from apps.organization import services
-from apps.organization.models import Circle, CircleAlias, OrganizationChange, Project, ProjectCircle, UserCircleAccess
+from apps.accounts.models import AccessAssignment
+from apps.organization.models import Circle, CircleAlias, OrganizationChange, Project, ProjectCircle
 from apps.rca.models import RcaRecord
 from apps.uptimedb.models import DataImportBatch, SiteDailyPerformance, SiteMonthlyPerformance, UptimeSite
 from apps.uptimedb.raw.resolvers import RESOLVERS, FourGResolver
@@ -56,7 +55,7 @@ class MasterDataTests(OrgTestCase):
         self.assertTrue(OrganizationChange.objects.filter(action='initialised', actor_name='system').exists())
 
     def test_seeding_creates_no_sites_data_or_access(self):
-        self.assertEqual((UptimeSite.objects.count(), SiteDailyPerformance.objects.count(), UserCircleAccess.objects.count()), (0, 0, 0))
+        self.assertEqual((UptimeSite.objects.count(), SiteDailyPerformance.objects.count(), AccessAssignment.objects.count()), (0, 0, 0))
 
     def test_project_circle_associations_are_unique(self):
         mp, lwe = Circle.objects.get(code='MP'), Project.objects.get(key='LWE')
@@ -335,24 +334,21 @@ class AccessTests(OrgTestCase):
     def test_grants_must_be_associations(self):
         response = self.post('org-access-user', {'pairs': [{'project': '4G Saturation', 'circle': 'BH'}]}, self.ci.pk, method='put')
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(UserCircleAccess.objects.count(), 0)
+        self.assertEqual(AccessAssignment.objects.count(), 0)
 
-    def test_legacy_circle_assignments_migrate_without_broadening(self):
-        AccountProfile.objects.update_or_create(user=self.ci, defaults={'circles': ['RJ', 'MP']})
-        importlib.import_module('apps.organization.migrations.0002_initial_organization').forwards(django_apps, None)
+    def test_legacy_circle_assignments_grant_nothing_until_reviewed(self):
+        AccountProfile.objects.update_or_create(user=self.ci, defaults={'circles': ['MP']})
         forget_profile(self.ci)
-        # RJ belongs to one project: converted to the same access. MP (two projects) stays as it was, flagged for review.
-        self.assertEqual(sorted(UserCircleAccess.objects.filter(user=self.ci).values_list('project_circle__project__key', 'project_circle__circle__code')),
-                         [('4G Saturation', 'RJ')])
-        self.assertEqual(AccountProfile.objects.get(user=self.ci).circles, ['MP'])
-        self.assertEqual(allowed_pairs(self.ci), {('4G Saturation', 'RJ'), ('4G Saturation', 'MP'), ('LWE', 'MP')})
-        self.assertFalse(may_use(self.ci, 'LWE', 'RJ'))
+        # A circle without a project cannot be mapped safely: it stays restricted (no access) and is listed for review.
+        self.assertEqual(allowed_pairs(self.ci), set())
+        self.assertFalse(may_use(self.ci, 'LWE', 'MP'))
         access = {u['username']: u for u in self.client.get(reverse('org-access')).json()['users']}
         self.assertEqual((access['org-ci']['legacy_circles'], access['org-ci']['needs_review']), (['MP'], True))
         # Reviewing it replaces the legacy assignment with explicit project grants.
         self.post('org-access-user', {'pairs': [{'project': 'LWE', 'circle': 'MP'}], 'reason': 'Reviewed'}, self.ci.pk, method='put')
         forget_profile(self.ci)  # the change was made through the API, on another copy of the user
         self.assertEqual(allowed_pairs(self.ci), {('LWE', 'MP')})
+        self.assertEqual(AccountProfile.objects.get(user=self.ci).circles, [])
 
     def test_exports_filter_by_project_and_circle_together(self):
         sites = pd.DataFrame({'report_type': ['4G Saturation', 'LWE', 'LWE'], 'circle': ['MP', 'MP', 'OD']})

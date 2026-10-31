@@ -40,7 +40,7 @@ class AuthTestCase(TestCase):
     def setUp(self):
         cache.clear()  # login throttles
         self.admin = portal_user('asha.admin', 'admin')
-        self.ci = portal_user('ravi.ci', 'ci')
+        self.ci = portal_user('ravi.ci', 'ci', all_circles=True)  # CI rights come from assignments
         self.client = Client(enforce_csrf_checks=True)
 
     def csrf(self, client=None):
@@ -74,9 +74,13 @@ class SignInTests(AuthTestCase):
         before = self.client.session.session_key
         response = self.sign_in('asha.admin')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()['user'], {'username': 'asha.admin', 'name': '', 'role': 'admin', 'role_label': 'Admin',
-                                                   'must_change_password': False, 'circles': None, 'access': None,
-                                                   'rca_upload': {'circle': True, 'consolidated': True}})
+        user = response.json()['user']
+        self.assertEqual({k: v for k, v in user.items() if k not in ('permissions', 'scopes')},
+                         {'username': 'asha.admin', 'name': '', 'role': 'admin', 'role_label': 'Admin',
+                          'must_change_password': False, 'circles': None, 'access': None,
+                          'rca_upload': {'circle': True, 'consolidated': True}})
+        self.assertEqual(user['permissions']['dashboard'], ['export', 'view'])
+        self.assertTrue(all(v is None for v in user['scopes'].values()))  # an Admin is not limited
         self.assertNotEqual(self.client.session.session_key, before)
         self.assertTrue(response.cookies['sessionid']['httponly'])
         for name in DASHBOARD + ADMIN_ONLY_GET:
@@ -160,7 +164,7 @@ class CiRoleTests(AuthTestCase):
 
 class TemporaryPasswordTests(AuthTestCase):
     def test_a_temporary_password_must_be_changed_before_using_the_portal(self):
-        portal_user('new.ci', 'ci', must_change=True)
+        portal_user('new.ci', 'ci', must_change=True, all_circles=True)
         response = self.sign_in('new.ci')
         self.assertTrue(response.json()['user']['must_change_password'])
         blocked = self.client.get(reverse('dashboard-summary'))

@@ -27,7 +27,8 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.accounts.audit import audit
-from apps.accounts.permissions import CanUploadRca, IsAdminRole, IsPortalUser
+from apps.accounts.access import can, pairs_for
+from apps.accounts.permissions import Can, CanUploadRca, IsAdminRole, IsPortalUser
 from apps.accounts.roles import ADMIN, can_upload_circle_rca, can_upload_consolidated_rca, can_upload_rca, role_of
 
 from . import cycles, importer, parser, services
@@ -43,9 +44,10 @@ def _is_admin(request) -> bool:
     return role_of(request.user) == ADMIN
 
 
-def _record(record_id: int) -> RcaRecord:
+def _record(record_id: int, request=None, action: str = 'view') -> RcaRecord:
+    """The record, if it lies inside the user's RCA Register ``action`` scope (otherwise "not found": nothing is revealed)."""
     rec = services.with_category(RcaRecord.objects.select_related('workflow', 'created_by')).filter(pk=record_id).first()
-    if rec is None:
+    if rec is None or (request is not None and not can(request.user, 'rca_register', action, rec.project, rec.circle)):
         raise NotFound('No such RCA record.')
     return rec
 
@@ -55,7 +57,11 @@ def _record(record_id: int) -> RcaRecord:
 @api_view(['GET'])
 @permission_classes([IsPortalUser])
 def options(request):
-    return Response(services.options())
+    """Filter options of the register (RCA Register View) or the summary (RCA Summary View), from the records in scope."""
+    module = 'rca_summary' if request.query_params.get('for') == 'summary' else 'rca_register'
+    if not can(request.user, module, 'view'):
+        raise PermissionDenied('You do not have access to RCA records.')
+    return Response(services.options(pairs_for(request.user, module, 'view')))
 
 
 @api_view(['GET', 'POST'])
@@ -63,8 +69,14 @@ def options(request):
 @permission_classes([IsPortalUser])
 def records(request):
     if request.method == 'GET':
-        return Response(services.register(request.query_params))
+        if not can(request.user, 'rca_register', 'view'):
+            raise PermissionDenied('You do not have the RCA Register View permission.')
+        return Response(services.register(request.query_params, pairs_for(request.user, 'rca_register', 'view')))
+    if not can(request.user, 'rca_register', 'create'):
+        raise PermissionDenied('You do not have the RCA Register Create permission.')
     fields = _manual_fields(request.data)
+    if not can(request.user, 'rca_register', 'create', fields['project'], fields['circle']):
+        raise PermissionDenied(f'You may not record RCA for {fields["circle"]} under {fields["project"]}.')
     with transaction.atomic():
         rec = RcaRecord.objects.create(**fields, source=RcaRecord.Source.MANUAL, created_by=request.user)
         RcaEvent.objects.create(record=rec, user=request.user, action='recorded', changes={})
@@ -79,7 +91,7 @@ def records(request):
 @parser_classes([JSONParser])
 @permission_classes([IsPortalUser])
 def record_detail(request, record_id: int):
-    rec = _record(record_id)
+    rec = _record(record_id, request, 'edit' if request.method == 'PATCH' else 'view')
     if request.method == 'PATCH':
         if rec.source != RcaRecord.Source.MANUAL:
             return Response({'error': 'Imported RCA facts are kept as in the source workbook. Re-import a corrected workbook to change them.',
@@ -148,7 +160,7 @@ def _plain(value):
 @permission_classes([IsPortalUser])
 def record_workflow(request, record_id: int):
     """Follow-up of one record. CI may move it up to Action Completed; review, verification and closure are Admin's."""
-    rec = _record(record_id)
+    rec = _record(record_id, request, 'edit')
     workflow = getattr(rec, 'workflow', None) or RcaWorkflow(record=rec)
     admin = _is_admin(request)
     data = request.data
@@ -205,7 +217,7 @@ def record_workflow(request, record_id: int):
 @parser_classes([JSONParser])
 @permission_classes([IsPortalUser])
 def record_comments(request, record_id: int):
-    rec = _record(record_id)
+    rec = _record(record_id, request, 'edit')
     text = str(request.data.get('text') or '').strip()
     if not text:
         raise ValidationError({'text': 'Write a comment.'})
@@ -217,9 +229,12 @@ def record_comments(request, record_id: int):
 # --- Summary -------------------------------------------------------------------------------------
 
 @api_view(['GET'])
-@permission_classes([IsAdminRole])
+@permission_classes([Can('rca_summary', 'view')])
 def summary(request):
-    data = services.summary(request.query_params)
+    data = services.summary(request.query_params, pairs_for(request.user, 'rca_summary', 'view'))
+    if not _is_admin(request):  # reporting periods cover every circle: Admins only
+        data['cycle'] = None
+        return Response(data)
     # The reporting period matching the filtered dates (or the latest period), for its coverage and its report.
     params = request.query_params
     day = services._date(params.get('date'), 'date')
@@ -245,6 +260,15 @@ def summary(request):
 UPLOAD_TYPES = (RcaImportBatch.UploadType.CIRCLE, RcaImportBatch.UploadType.CONSOLIDATED)
 
 
+def _alert(request, batch_id, name: str, reason: str, details: dict, status: str = 'Failed') -> None:
+    """Upload Failure Alert (Administration › Alert): queued for the worker, never affects the upload's own answer."""
+    from apps.alerts.events import upload_failed
+    start = details.get('period_start')
+    upload_failed(kind='rca', batch_id=batch_id, file=name, reason=reason, uploader_id=request.user.pk,
+                  project=details.get('project_scope', '') if details.get('project_scope') != 'both' else '', circle=details.get('circle') or '',
+                  date=start.isoformat() if start else '', status=status)
+
+
 def _may_upload(user, kind: str, project: str = '', circle: str | None = None) -> bool:
     if kind == RcaImportBatch.UploadType.CONSOLIDATED:
         return can_upload_consolidated_rca(user)
@@ -255,10 +279,15 @@ def _may_upload(user, kind: str, project: str = '', circle: str | None = None) -
 
 def _rights(user) -> dict:
     """What the upload page may offer (the server checks every request again)."""
-    from apps.accounts.scope import allowed_pairs
-    pairs = allowed_pairs(user)
+    pairs = pairs_for(user, 'rca_upload', 'upload')
     return {'circle': can_upload_circle_rca(user), 'consolidated': can_upload_consolidated_rca(user),
             'access': None if pairs is None else [{'project': p, 'circle': c} for p, c in sorted(pairs)]}
+
+
+def _record_count(request) -> int | None:
+    """Accepted RCA records the user may see in the register (None without RCA Register View: uploading gives no access)."""
+    pairs = pairs_for(request.user, 'rca_register', 'view')
+    return services.in_scope(pairs).count() if pairs is None or pairs else None
 
 
 def _batch(request, batch_id: int) -> RcaImportBatch:
@@ -283,7 +312,7 @@ def import_list(request):
     kind = request.query_params.get('upload_type')
     if kind in UPLOAD_TYPES:
         qs = qs.filter(upload_type=kind)
-    return Response({'imports': [_batch_json(b) for b in qs[:100]], 'records': RcaRecord.objects.count(), 'all': everyone,
+    return Response({'imports': [_batch_json(b) for b in qs[:100]], 'records': _record_count(request), 'all': everyone,
                      'rights': _rights(request.user),
                      'max_bytes': settings.MAX_WORKBOOK_BYTES})  # shown on the upload page; the upload itself checks it
 
@@ -353,11 +382,15 @@ def import_preview(request):
         batch = importer.preview(Path(handle.name), name, user=request.user, details=details)
     except (importer.ImportRejected, cycles.CycleError) as exc:
         audit('rca_upload_failed', request, file=name, report=details['report_name'])
+        failed = RcaImportBatch.objects.filter(imported_by=request.user, original_filename=name).order_by('-id').first()
+        _alert(request, failed.pk if failed and failed.status == RcaImportBatch.Status.FAILED else f'refused-{timezone.now().timestamp()}', name, str(exc), details)
         return Response({'error': str(exc), 'details': {}}, status=exc.status)
     finally:
         Path(handle.name).unlink(missing_ok=True)
     audit('rca_import_previewed', request, batch=batch.pk, file=name, report=details['report_name'], status=batch.status,
           upload_type=batch.upload_type, circle=batch.circle or '-')
+    if batch.status == RcaImportBatch.Status.REJECTED:
+        _alert(request, batch.pk, name, batch.error or 'The workbook did not pass validation.', details, status='Rejected')
     return Response(_batch_json(batch, full=True), status=status.HTTP_201_CREATED)
 
 
@@ -414,7 +447,7 @@ def import_commit(request, batch_id: int):
     for f in finals:
         audit('rca_final_report_generated', request, cycle=f.cycle_id, version=f.version, automatic=True)
     final = next((f for f in finals if f.cycle_id == batch.cycle_id), finals[0] if finals else None)
-    return Response({**_batch_json(batch, full=True), 'records': RcaRecord.objects.count(),
+    return Response({**_batch_json(batch, full=True), 'records': _record_count(request),
                      'final_report': cycles.report_json(final) if final else None})
 
 

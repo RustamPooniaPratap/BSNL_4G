@@ -13,6 +13,7 @@ from rest_framework.response import Response
 
 from apps.accounts.audit import audit
 from apps.accounts.permissions import IsAdminRole, IsPortalUser
+from apps.accounts.roles import ADMIN, role_of
 
 from . import datasource, importer
 from .models import DataImportBatch
@@ -58,7 +59,8 @@ def _saved(upload) -> Path:
 @permission_classes([IsAdminRole])
 def import_list(request):
     return Response({'imports': [_batch_json(b) for b in DataImportBatch.objects.select_related('imported_by').filter(kind=DataImportBatch.Kind.MASTER_WORKBOOK)[:50]],
-                     'database': datasource.completeness()})
+                     # Database-wide counts (every project and circle): Admins only.
+                     'database': datasource.completeness() if role_of(request.user) == ADMIN else None})
 
 
 @api_view(['POST'])

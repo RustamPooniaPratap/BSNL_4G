@@ -1,0 +1,235 @@
+"""Master Data API: read-only, paginated, filtered and sorted on the server; exports of the filtered records.
+
+- Every portal user may open it. Admins and NOC Leads see every record; a CI user only the project/circle pairs granted
+  to them (accounts.scope). Phone numbers (``Column.contact``) are returned to Admins only.
+- Always the PostgreSQL tables (it is the database explorer); the dashboard's Excel/PostgreSQL choice is not involved.
+"""
+from __future__ import annotations
+
+import calendar
+import csv
+import io
+from datetime import date, datetime
+
+from django.db.models import Q, QuerySet
+from django.http import HttpResponse, StreamingHttpResponse
+from openpyxl import Workbook
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.response import Response
+
+from apps.accounts.permissions import Can
+from apps.accounts.roles import ADMIN, role_of
+from apps.accounts.access import pairs_for, pairs_q
+from apps.dashboard.metrics import WEEKS
+from apps.rca import taxonomy
+
+from .datasets import DATASETS, Column, Dataset
+
+PAGE_SIZES = (25, 50, 100, 200)
+XLSX_MAX_ROWS = 200_000  # larger exports: CSV (streamed)
+PERIODS = ('daily', 'weekly', 'monthly', 'overall')
+
+
+def _dataset(key: str) -> Dataset:
+    if key not in DATASETS:
+        raise NotFound('No such dataset.')
+    return DATASETS[key]
+
+
+def _columns(request, ds: Dataset) -> list[Column]:
+    admin = role_of(request.user) == ADMIN
+    return [c for c in ds.columns if admin or not c.contact]
+
+
+def _date(value: str | None, name: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValidationError({name: 'Give the date as YYYY-MM-DD.'}) from exc
+
+
+def _int(value: str | None, name: str, low: int, high: int) -> int | None:
+    if not value:
+        return None
+    if not value.isdigit() or not low <= int(value) <= high:
+        raise ValidationError({name: f'Give a number from {low} to {high}.'})
+    return int(value)
+
+
+def scoped(request, ds: Dataset, action: str = 'view') -> QuerySet:
+    """The dataset's records inside the project/circle pairs of the user's Master Data permission (accounts.access)."""
+    return ds.queryset().filter(pairs_q(pairs_for(request.user, 'master_data', action), ds.project, ds.circle))
+
+
+def period_range(ds: Dataset, params) -> tuple[date | None, date | None]:
+    """First and last day selected by the period view (None: open)."""
+    period = params.get('period') or 'overall'
+    if period not in PERIODS:
+        raise ValidationError({'period': f'Choose one of {", ".join(PERIODS)}.'})
+    year = _int(params.get('year'), 'year', 2000, 2100)
+    month = _int(params.get('month'), 'month', 1, 12)
+    if period == 'daily' and year and month:
+        day = _date(params.get('date'), 'date')
+        last = calendar.monthrange(year, month)[1]
+        return (day, day) if day else (date(year, month, 1), date(year, month, last))
+    if period == 'weekly' and year and month:
+        week = _int(params.get('week'), 'week', 1, len(WEEKS))
+        last = calendar.monthrange(year, month)[1]
+        _, first_day, last_day = WEEKS[(week or 1) - 1]
+        return date(year, month, first_day), date(year, month, min(last_day, last))
+    if period == 'monthly' and year:
+        start = _int(params.get('month_from'), 'month_from', 1, 12) or 1
+        end = _int(params.get('month_to'), 'month_to', 1, 12) or 12
+        return date(year, start, 1), date(year, end, calendar.monthrange(year, end)[1])
+    return _date(params.get('date_from'), 'date_from'), _date(params.get('date_to'), 'date_to')
+
+
+def filtered(request, ds: Dataset, action: str = 'view') -> QuerySet:
+    p = request.query_params
+    qs = scoped(request, ds, action)
+    for key, path in (('project', ds.project), ('circle', ds.circle)):
+        if p.get(key):
+            qs = qs.filter(**{path: p[key]})
+    for key, path in (('site_id', ds.site_id), ('site_name', ds.site_name)):
+        if path and p.get(key):
+            qs = qs.filter(**{f'{path}__icontains': p[key].strip()})
+    for choice in ds.choices:
+        value = p.get(choice.key)
+        if value:
+            qs = qs.filter(**{choice.field: value in ('true', 'True') if choice.key == 'on_air' else value})
+    time_field = ds.date or ds.month
+    if time_field:
+        start, end = period_range(ds, p)
+        if start:
+            qs = qs.filter(**{f'{time_field}__gte': start.replace(day=1) if ds.month else start})
+        if end:
+            qs = qs.filter(**{f'{time_field}__lte': end})
+    if p.get('q'):
+        q = Q()
+        for f in ds.search:
+            q |= Q(**{f'{f}__icontains': p['q'].strip()})
+        qs = qs.filter(q)
+    return qs
+
+
+def _ordering(request, ds: Dataset, columns: list[Column]) -> list[str]:
+    sort = request.query_params.get('sort') or ds.default_sort
+    desc = sort.startswith('-')
+    col = next((c for c in columns if c.key == sort.lstrip('-')), None)
+    path = col.field if col else sort.lstrip('-')
+    if not col and path != 'id':
+        raise ValidationError({'sort': 'Unknown column.'})
+    return [f'{"-" if desc else ""}{path}', 'id']
+
+
+def _rows(qs: QuerySet, ds: Dataset, columns: list[Column]) -> list[dict]:
+    paths = [c.field for c in columns]
+    out = []
+    for values in qs.values_list('id', *paths):
+        row = {'_id': values[0]}
+        for c, v in zip(columns, values[1:]):
+            row[c.key] = v.isoformat() if isinstance(v, (date, datetime)) else v
+        if ds.key == 'rca' and 'final_bucket' in row and 'bucket_2' in row:  # the approved bucketization (apps.rca.taxonomy), never a stored guess
+            row['classification'] = taxonomy.STATUS_LABELS[taxonomy.resolve(row['final_bucket'], row['bucket_2']).status]
+        out.append(row)
+    return out
+
+
+def _column_json(ds: Dataset, columns: list[Column]) -> list[dict]:
+    out = [{'key': c.key, 'label': c.label, 'kind': c.kind, 'hidden': c.hidden} for c in columns]
+    if ds.key == 'rca':
+        out.append({'key': 'classification', 'label': 'Approved classification', 'kind': 'text', 'hidden': True, 'sortable': False})
+    return out
+
+
+@api_view(['GET'])
+@permission_classes([Can('master_data', 'view')])
+def datasets(request):
+    return Response({'datasets': [{'key': d.key, 'label': d.label, 'description': d.description, 'time': bool(d.date or d.month),
+                                   'columns': _column_json(d, _columns(request, d)),
+                                   'filters': {'site': bool(d.site_id), 'choices': [{'key': c.key, 'label': c.label} for c in d.choices]}}
+                                  for d in DATASETS.values()],
+                     'page_sizes': PAGE_SIZES, 'weeks': [{'value': i + 1, 'label': f'{w[0]} (days {w[1]}–{w[2] if w[2] < 31 else "end"})'}
+                                                         for i, w in enumerate(WEEKS)]})
+
+
+@api_view(['GET'])
+@permission_classes([Can('master_data', 'view')])
+def records(request, key: str):
+    ds = _dataset(key)
+    columns = _columns(request, ds)
+    qs = filtered(request, ds).order_by(*_ordering(request, ds, columns))
+    size = _int(request.query_params.get('page_size'), 'page_size', 1, max(PAGE_SIZES)) or PAGE_SIZES[1]
+    page = _int(request.query_params.get('page'), 'page', 1, 10**7) or 1
+    total = qs.count()
+    start = (page - 1) * size
+    return Response({'total': total, 'page': page, 'page_size': size, 'pages': max(1, -(-total // size)),
+                     'rows': _rows(qs[start:start + size], ds, columns)})
+
+
+@api_view(['GET'])
+@permission_classes([Can('master_data', 'view')])
+def options(request, key: str):
+    """Filter options from the records the user may see (projects, circles, years and months, choices)."""
+    ds = _dataset(key)
+    qs = scoped(request, ds).order_by()
+    out = {'projects': sorted(v for v in qs.values_list(ds.project, flat=True).distinct() if v)}
+    project = request.query_params.get('project')
+    circles_qs = qs.filter(**{ds.project: project}) if project else qs
+    out['circles'] = sorted(v for v in circles_qs.values_list(ds.circle, flat=True).distinct() if v)
+    time_field = ds.date or ds.month
+    if time_field:
+        months = sorted({(d.year, d.month) for d in qs.dates(time_field, 'month')})
+        out['months'] = [{'year': y, 'month': m} for y, m in months]
+        out['dates'] = [d.isoformat() for d in qs.dates(time_field, 'day')] if ds.date else []
+    out['choices'] = {c.key: sorted({str(v) for v in qs.values_list(c.field, flat=True).distinct() if v not in (None, '')})[:500]
+                      for c in ds.choices}
+    return Response(out)
+
+
+@api_view(['GET'])
+@permission_classes([Can('master_data', 'export')])
+def export(request, key: str):
+    """The filtered records, sorted as shown, with the chosen columns (all if none): CSV (streamed) or Excel."""
+    ds = _dataset(key)
+    allowed = _columns(request, ds)
+    wanted = [k for k in (request.query_params.get('columns') or '').split(',') if k]
+    columns = [c for c in allowed if not wanted or c.key in wanted]
+    qs = filtered(request, ds, 'export').order_by(*_ordering(request, ds, allowed))
+    stamp = datetime.now().strftime('%Y%m%d-%H%M')
+    if (request.query_params.get('file') or 'csv') == 'xlsx':
+        if qs.count() > XLSX_MAX_ROWS:
+            raise ValidationError({'file': f'More than {XLSX_MAX_ROWS:,} records: narrow the filters or export CSV.'})
+        book = Workbook(write_only=True)
+        sheet = book.create_sheet(ds.label[:31])
+        sheet.append([c.label for c in columns])
+        for chunk in _chunks(qs, ds, columns):
+            for row in chunk:
+                sheet.append([row[c.key] for c in columns])
+        buf = io.BytesIO()
+        book.save(buf)
+        response = HttpResponse(buf.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = f'attachment; filename="{ds.key}_{stamp}.xlsx"'
+        return response
+
+    def lines():
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow([c.label for c in columns])
+        yield '﻿' + out.getvalue()
+        for chunk in _chunks(qs, ds, columns):
+            out.seek(0)
+            out.truncate()
+            writer.writerows([row[c.key] for c in columns] for row in chunk)
+            yield out.getvalue()
+    response = StreamingHttpResponse(lines(), content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="{ds.key}_{stamp}.csv"'
+    return response
+
+
+def _chunks(qs: QuerySet, ds: Dataset, columns: list[Column], size: int = 5000):
+    for start in range(0, qs.count(), size):
+        yield _rows(qs[start:start + size], ds, columns)

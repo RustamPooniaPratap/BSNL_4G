@@ -161,7 +161,7 @@ describe('roles in the interface', () => {
     await user.click(within(nav).getByRole('button', { name: 'Data Management' }));
     await user.click(within(nav).getByRole('button', { name: 'Data Entry' }));
     const links = within(nav).getAllByRole('link').map((a) => a.textContent);
-    expect(links).toEqual(['Site Portfolio', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'RCA Register',
+    expect(links).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'RCA Register', 'Upload Circle RCA',
       'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site']);
     expect(within(nav).queryByText('CSV Arrival & Follow-up')).not.toBeInTheDocument();
     expect(within(nav).queryByText('Administration')).not.toBeInTheDocument();
@@ -214,7 +214,7 @@ describe('change password', () => {
 });
 
 describe('user management', () => {
-  it('creates a CI and shows the temporary password once', async () => {
+  it('creates a user with no built-in role by default and shows the temporary password once', async () => {
     const user = userEvent.setup();
     const created = { id: 7, username: 'meena.ci', name: '', email: '', role: 'ci', is_active: true, is_superuser: false,
       must_change_password: true, last_login: null, date_joined: '2026-10-23T10:00:00' };
@@ -234,42 +234,48 @@ describe('user management', () => {
     await user.click(screen.getByRole('button', { name: /Create user/ }));
     expect(await screen.findByTestId('temporary-password')).toHaveTextContent('Tmp-ABCdef123');
     const [, init] = fetchMock.mock.calls.find(([u, i]) => String(u).endsWith('/auth/users/') && (i as RequestInit)?.method === 'POST')!;
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ username: 'meena.ci', first_name: '', last_name: '', email: '', role: 'ci' });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ username: 'meena.ci', first_name: '', last_name: '', email: '', role: 'member' });
     expect(await screen.findByRole('row', { name: 'meena.ci' })).toHaveTextContent('Temporary password');
     await user.click(screen.getByRole('button', { name: 'Done, hide it' }));
     expect(screen.queryByTestId('temporary-password')).not.toBeInTheDocument();
   });
 
-  it('grants a CI user projects and circles from the Organization, one project at a time', async () => {
+  it('assigns a role on several circles of one project from the Organization, nothing else', async () => {
     const user = userEvent.setup();
-    const ci = { id: 9, username: 'odisha.ci', name: '', email: '', role: 'ci', circles: [] as string[], access: [] as { project: string; circle: string }[],
+    const ci = { id: 9, username: 'odisha.ci', name: '', email: '', role: 'member', circles: [] as string[], assignments: [] as unknown[],
       legacy_circles: [] as string[], is_active: true, is_superuser: false, must_change_password: false, last_login: null, date_joined: '2026-10-23T10:00:00' };
     const admin = { ...ci, id: 1, username: 'asha.admin', role: 'admin' };
     const catalog = {
       projects: [{ key: '4G Saturation', code: '4G', name: '4G Saturation', is_active: true }, { key: 'LWE', code: 'LWE', name: 'LWE', is_active: true }],
-      circles: [{ code: 'OD', name: 'Odisha', is_active: true }],
-      associations: [{ project: '4G Saturation', circle: 'OD', is_active: true }, { project: 'LWE', circle: 'OD', is_active: true }],
+      circles: [{ code: 'OD', name: 'Odisha', is_active: true }, { code: 'RJ', name: 'Rajasthan', is_active: true }],
+      associations: [{ project: '4G Saturation', circle: 'OD', is_active: true }, { project: '4G Saturation', circle: 'RJ', is_active: true }, { project: 'LWE', circle: 'OD', is_active: true }],
     };
+    const role = { id: 4, name: 'IE', description: '', system: false, system_key: null, is_active: true, editable: true, assignable: true, global: false,
+      permissions: [{ module: 'rca_upload', action: 'upload' }], users: [], created_at: '', updated_at: '' };
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith('/auth/csrf/')) return json({ csrf_token: 't' });
       if (url.endsWith('/organization/catalog/')) return json(catalog);
-      if (url.endsWith('/organization/access/9/')) {
-        ci.access = JSON.parse((init as RequestInit).body as string).pairs;
-        return json({ user: { ...ci, pairs: ci.access, limited: true, needs_review: false } });
+      if (url.endsWith('/auth/access/roles/')) return json({ roles: [role] });
+      if (url.endsWith('/auth/access/catalog/')) return json({ modules: [], admin_only: [] });
+      if (url.endsWith('/auth/access/assignments/')) {
+        if ((init as RequestInit | undefined)?.method === 'POST') return json({ assignments: [{ id: 1, role: 'IE' }] }, 201);
+        return json({ assignments: [] });
       }
       return json({ users: [admin, ci] });
     });
-    renderWithWorkbook(<UsersPage />, { url: '/admin/users' });
-    const row = await screen.findByRole('row', { name: 'odisha.ci' });
-    expect(row).toHaveTextContent('None assigned');
-    expect(screen.getByRole('row', { name: 'asha.admin' })).toHaveTextContent('All projects and circles');
-    await user.click(within(row).getByRole('button', { name: 'Edit circles of odisha.ci' }));
-    await user.click(await within(row).findByRole('checkbox', { name: 'OD under 4G Saturation' }));
-    expect(within(row).getByRole('checkbox', { name: 'OD under LWE' })).not.toBeChecked();  // OD LWE is a separate grant
-    await user.click(within(row).getByRole('button', { name: 'Save access' }));
-    const [, init] = fetchMock.mock.calls.find(([u, i]) => String(u).endsWith('/organization/access/9/') && (i as RequestInit)?.method === 'PUT')!;
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ pairs: [{ project: '4G Saturation', circle: 'OD' }], reason: '' });
-    expect(await screen.findByText('odisha.ci can now use OD (4G Saturation).')).toBeInTheDocument();
+    renderWithWorkbook(<UsersPage />, { url: '/admin/users/assignments?user=9' });
+    await user.click((await screen.findAllByRole('combobox', { name: /Project/ }))[0]);  // the form's (the preview has one too)
+    await user.click(await screen.findByRole('option', { name: '4G Saturation' }));
+    await user.click(screen.getByRole('combobox', { name: /Role/ }));
+    await user.click(await screen.findByRole('option', { name: 'IE' }));
+    await user.click(screen.getByRole('checkbox', { name: 'OD under 4G Saturation' }));
+    await user.click(screen.getByRole('checkbox', { name: 'RJ under 4G Saturation' }));
+    expect(screen.queryByRole('checkbox', { name: 'OD under LWE' })).not.toBeInTheDocument();  // OD under LWE is a separate project
+    await user.click(screen.getByRole('button', { name: /Save assignment/ }));
+    const [, init] = fetchMock.mock.calls.find(([u, i]) => String(u).endsWith('/auth/access/assignments/') && (i as RequestInit)?.method === 'POST')!;
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ user: 9, role: 4, project: '4G Saturation', scope: 'circles', circles: ['OD', 'RJ'],
+      status: 'active', valid_until: null });
+    expect(await screen.findByText('odisha.ci: IE on OD, RJ (4G Saturation).')).toBeInTheDocument();
   });
 });

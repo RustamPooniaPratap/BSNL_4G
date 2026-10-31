@@ -1,60 +1,54 @@
-"""Which projects and circles a user may upload raw daily data for and export.
+"""Project/circle scope helpers kept for the existing callers (Organization › User Access, Users & Roles circles).
 
-- Admin and NOC Lead: everything (``None`` = not limited).
-- CI: the project/circle pairs an Admin granted (organization.UserCircleAccess), e.g. MP under 4G Saturation only.
-  Access to a circle under one project never gives access to the same circle under another project.
-- Legacy circle-only assignments (AccountProfile.circles, from before project-specific access) keep the access they
-  always gave, the circle under every project, until an Admin reviews them in Organization > User Access. The
-  migration converted those whose circle belongs to exactly one project; the others are flagged for review.
-- A CI user with nothing granted gets an empty set (no upload or export), never unrestricted access.
-- No portal role: nothing.
+The source of truth is ``AccessAssignment`` (see ``access`` for the rules). "Granted pairs" are a user's circle
+assignments with the built-in CI role, which is what Organization › User Access edits; Users & Roles › Access
+Assignments edits every assignment, with any role. Both write the same table.
 
-Every raw-upload and export endpoint checks this on the server; the frontend only uses it to choose what to show.
+Legacy circle-only assignments (``AccountProfile.circles``, from before project-specific access) grant nothing: a circle
+with no project cannot be mapped safely, so it is listed for review until an Admin assigns the projects explicitly.
 """
 from __future__ import annotations
 
+from . import access
 from .models import AccountProfile
-from .roles import ADMIN, CI, NOC_LEAD, role_of
 
 Pair = tuple[str, str]
 
 
 def forget_profile(user) -> None:
-    """Drop the cached profile (Django keeps a reverse one-to-one in ``_state.fields_cache``) so the next read sees changes."""
+    """Drop the cached profile and grants so the next read sees changes."""
     user._state.fields_cache.pop('portal_profile', None)
     user.__dict__.pop('portal_profile', None)
+    access.forget(user)
 
 
 def legacy_circles(user) -> list[str]:
-    """Circle-only assignments still waiting for review (they apply to every project)."""
+    """Circle-only assignments waiting for review (they grant nothing)."""
     profile = getattr(user, 'portal_profile', None)
     return sorted({str(c).upper() for c in (profile.circles if profile else [])})
 
 
+def ci_role():
+    from .models import Role
+    return Role.objects.get(system_key='ci')
+
+
 def granted_pairs(user) -> list[Pair]:
-    """The explicit project/circle grants of the user."""
-    from apps.organization.models import UserCircleAccess
-    rows = UserCircleAccess.objects.filter(user=user).values_list('project_circle__project__key', 'project_circle__circle__code')
+    """The user's circle assignments with the built-in CI role (active or not)."""
+    from .models import AccessAssignment
+    rows = AccessAssignment.objects.filter(user=user, role__system_key='ci', project_circle__isnull=False).values_list(
+        'project__key', 'project_circle__circle__code')
     return sorted(set(rows))
 
 
 def allowed_pairs(user) -> set[Pair] | None:
-    """None: every project and circle. Otherwise the (project, circle) pairs the user may use (possibly none)."""
-    role = role_of(user)
-    if role in (ADMIN, NOC_LEAD):
+    """None: every project and circle (Admin, NOC Lead). Otherwise every pair any applying assignment covers."""
+    if access.global_permissions(user):
         return None
-    if role != CI:
-        return set()
-    pairs = set(granted_pairs(user))
-    legacy = legacy_circles(user)
-    if legacy:
-        from apps.organization.services import project_keys
-        pairs |= {(p, c) for c in legacy for p in project_keys()}
-    return pairs
+    return {(g.project, g.circle) for g in access.grants(user)}
 
 
 def allowed_circles(user) -> set[str] | None:
-    """Circles with access under at least one project (for display; checks use ``may_use``)."""
     pairs = allowed_pairs(user)
     return None if pairs is None else {c for _, c in pairs}
 
@@ -65,38 +59,43 @@ def may_use(user, project: str, circle: str) -> bool:
 
 
 def assigned_circles(user) -> list[str]:
-    """Circles of the user's grants and legacy assignments (shown on Users & Roles)."""
     return sorted({c for _, c in granted_pairs(user)} | set(legacy_circles(user)))
 
 
 def set_pairs(user, pairs, *, actor=None, reason: str = '') -> tuple[list[Pair], list[Pair]]:
-    """Replace the user's grants with ``pairs`` (each an existing association) and clear legacy assignments, which the
-    explicit grants now replace. Returns (added, removed); the change is recorded in the organization history."""
-    from apps.organization.models import ProjectCircle, UserCircleAccess
+    """Replace the user's CI-role circle assignments with ``pairs`` (each an existing association) and clear legacy
+    circle-only assignments. Other assignments are kept. Returns (added, removed); both histories record the change."""
+    from apps.organization.models import ProjectCircle
     from apps.organization.services import record
+
+    from .models import AccessAssignment
+    from .services import log
 
     wanted = sorted(set(pairs))
     links = {(pc.project.key, pc.circle.code): pc for pc in ProjectCircle.objects.select_related('project', 'circle')}
     missing = [p for p in wanted if p not in links]
     if missing:
         raise ValueError('Not a project/circle association: ' + ', '.join(f'{c} under {p}' for p, c in missing))
+    role = ci_role()
     before, legacy = granted_pairs(user), legacy_circles(user)
     added, removed = [p for p in wanted if p not in before], [p for p in before if p not in wanted]
-    UserCircleAccess.objects.filter(user=user, project_circle__in=[links[p] for p in removed]).delete()
+    AccessAssignment.objects.filter(user=user, role=role, project_circle__in=[links[p] for p in removed]).delete()
     for p in added:
-        UserCircleAccess.objects.create(user=user, project_circle=links[p], granted_by=actor if getattr(actor, 'pk', None) else None)
+        AccessAssignment.objects.create(user=user, role=role, project=links[p].project, project_circle=links[p],
+                                        granted_by=actor if getattr(actor, 'pk', None) else None)
     if legacy:
         AccountProfile.objects.filter(user=user).update(circles=[])
     forget_profile(user)
     if added or removed or legacy:
         record('user_access', user, 'access_changed', actor=actor, reason=reason, label=user.get_username(),
                previous={'pairs': [list(p) for p in before], 'legacy_circles': legacy}, new={'pairs': [list(p) for p in wanted], 'legacy_circles': []})
+        log(actor, 'assignments_replaced', user=user, scope='CI role: ' + (', '.join(f'{c} ({p})' for p, c in wanted) or 'none'),
+            details={'added': [list(p) for p in added], 'removed': [list(p) for p in removed], 'legacy_cleared': legacy, 'reason': reason})
     return added, removed
 
 
 def set_circles(user, circles, *, actor=None, reason: str = '') -> None:
-    """Circle-only form (Users & Roles, older API clients): grants each circle under every project it is associated
-    with today, as explicit grants. A project associated with the circle later is not granted automatically."""
+    """Circle-only form (older API clients): each circle under every project it is associated with today."""
     from apps.organization.services import associations
     wanted = {c.upper() for c in circles}
     set_pairs(user, [(p, c) for p, c in associations(active_only=False) if c in wanted], actor=actor, reason=reason)

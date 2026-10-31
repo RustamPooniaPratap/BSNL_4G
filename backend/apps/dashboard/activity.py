@@ -105,10 +105,12 @@ def _month_start(value: date, back: int = 0) -> date:
     return date(year, (month - 1) % 12 + 1, 1)
 
 
-def monthly_activity(month: date, report_type: str | None = None, circle: str | None = None) -> dict:
-    """Sites that went On-Air / started O&M in ``month`` and the month before, for the filter."""
+def monthly_activity(month: date, report_type: str | None = None, circle: str | None = None, pairs=None) -> dict:
+    """Sites that went On-Air / started O&M in ``month`` and the month before, for the filter (and, when ``pairs`` is
+    given, only sites of those project/circle pairs)."""
     data = _load()
-    records = [r for r in data['records'] if (not report_type or r['report_type'] == report_type) and (not circle or r['circle'] == circle)]
+    records = [r for r in data['records'] if (not report_type or r['report_type'] == report_type) and (not circle or r['circle'] == circle)
+               and (pairs is None or (r['report_type'], r['circle']) in pairs)]
     this, last = _month_start(month), _month_start(month, 1)
 
     def period(start: date, kind: str) -> dict:

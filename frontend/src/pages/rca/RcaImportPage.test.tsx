@@ -4,7 +4,7 @@ import { Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RequirePage, RequireRcaConsolidated } from '../../components/auth/Guards';
 import * as api from '../../services/api';
-import { CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
+import { CI_PERMISSIONS, CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
 import type { AuthUser } from '../../types';
 import type { RcaImportBatch, RcaImportReport } from '../../types/rca';
 import { RcaImportPage } from './RcaImportPage';
@@ -18,7 +18,7 @@ const m = vi.mocked(api);
 /** Each workflow step as "label: state" (from the indicator's data-state). */
 const steps = () => within(screen.getByRole('list', { name: 'Upload progress' })).getAllByRole('listitem')
   .map((li) => `${li.textContent!.replace(/\s*\(.*\)$/, '').replace(/^\d/, '')}: ${li.getAttribute('data-state')}`);
-const NOC: AuthUser = { username: 'noc.lead', name: 'NOC Lead', role: 'noc_lead', role_label: 'NOC Lead', must_change_password: false };
+const NOC: AuthUser = { username: 'noc.lead', name: 'NOC Lead', role: 'noc_lead', role_label: 'NOC Lead', must_change_password: false, permissions: CI_PERMISSIONS };
 
 const REPORT: RcaImportReport = {
   filename: 'Oct_RCA.xlsx', sheet: 'Sheet1', rows_read: 6, valid_rows: 5, rejected_rows: 1, blank_rows: 0, unknown_columns: [], dates: { '2026-10-21': 5 },

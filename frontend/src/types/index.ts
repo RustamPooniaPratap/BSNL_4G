@@ -96,6 +96,10 @@ export interface SummaryMetrics {
   mtd_outage_minutes: number;
   sites_below_60_mtd: number;
   sites_at_or_above_98_5_mtd: number;
+  /** Sites with an MTD uptime value (denominator of the MTD threshold shares). */
+  sites_with_mtd_value?: number;
+  /** MTD uptime below the 98.5% SLA. */
+  sites_not_meeting_sla_mtd?: number;
   out_of_range_values: number;
 }
 
@@ -103,6 +107,8 @@ export interface SummaryResponse {
   reporting_date: string;
   /** Sites converted with the previous month's O&M Start flag (On-Air has no history); null without that column. */
   previous_month_conversion?: { label: string; sites_converted: number } | null;
+  /** Outage minutes against the previous comparable period (day, month to date, full month). */
+  outage_comparison?: Record<OutagePeriod, OutageChange>;
   mtd_window: { start: string; end: string; days_reported: number; days_missing: string[] };
   metrics: SummaryMetrics;
   filters: AppliedFilters;
@@ -682,7 +688,8 @@ export interface EmailResult {
 
 // --- Accounts ------------------------------------------------------------------------------
 
-export type Role = 'admin' | 'noc_lead' | 'ci';
+/** Built-in account roles; 'member': no built-in role, rights from Access Assignments only. */
+export type Role = 'admin' | 'noc_lead' | 'ci' | 'member';
 
 /** The signed-in user, from /auth/me/ (the role is decided by the server). */
 export interface AuthUser {
@@ -697,6 +704,10 @@ export interface AuthUser {
   access?: { project: string; circle: string }[] | null;
   /** RCA uploads this user may make (the server checks every upload again). */
   rca_upload?: { circle: boolean; consolidated: boolean };
+  /** module -> actions the user has on at least one project/circle (Users & Roles › Roles & Permissions). */
+  permissions?: Record<string, string[]>;
+  /** 'module.action' -> project/circle pairs (null: every project and circle). */
+  scopes?: Record<string, { project: string; circle: string }[] | null>;
 }
 
 /** An account as listed for Admins. Passwords are never returned, except a new temporary one once. */
@@ -714,11 +725,45 @@ export interface PortalUser {
   legacy_circles?: string[];
   /** Member of the RCA Consolidated Uploaders group (Admins may upload consolidated RCA without it). */
   rca_consolidated?: boolean;
+  /** Role assignments on projects and circles (Users & Roles › Access Assignments). */
+  assignments?: AccessAssignment[];
   is_active: boolean;
   is_superuser: boolean;
   must_change_password: boolean;
   last_login: string | null;
   date_joined: string;
+}
+
+// --- Roles, permissions and access assignments ------------------------------------------------
+
+export interface PermissionCatalog {
+  modules: { key: string; label: string; description: string; actions: { key: string; label: string; description: string }[] }[];
+  /** Pages that stay with the Admin role (never grantable). */
+  admin_only: string[];
+}
+export interface ModulePermission { module: string; action: string }
+export interface AccessRole {
+  id: number; name: string; description: string; system: boolean; system_key: string | null; is_active: boolean;
+  /** Built-in roles cannot be edited; Admin and NOC Lead are account roles (not assignable). */
+  editable: boolean; assignable: boolean; global: boolean;
+  permissions: ModulePermission[]; users: string[]; created_at: string; updated_at: string;
+}
+export interface AccessAssignment {
+  id: number; user_id: number; username: string; role_id: number; role: string; project: string;
+  /** null: the entire project. */
+  circle: string | null; scope: 'project' | 'circle'; status: 'active' | 'inactive'; valid_until: string | null;
+  /** False when inactive, expired, or its role, project or association is inactive (``problem`` says why). */
+  applies: boolean; problem: string | null; granted_by: string | null; updated_at: string;
+}
+export interface AccessPreview {
+  user: string; is_active: boolean; project: string; circle: string; module: string; module_label: string;
+  actions: { action: string; label: string; description: string; allowed: boolean; granted_by: { assignment: number | null; role: string; scope: string }[] }[];
+  not_applying: { assignment: number; role: string; scope: string; reason: string }[];
+}
+export interface AccessEvent { id: number; at: string; actor: string; action: string; user: string; scope: string; details: Record<string, unknown> }
+export interface EffectiveAccess {
+  user: string; role: Role | null; is_active: boolean; permissions: Record<string, string[]>;
+  scopes: Record<string, { project: string; circle: string }[] | null>; assignments: AccessAssignment[];
 }
 
 // --- PostgreSQL import and dashboard data source ---------------------------------------------
@@ -821,4 +866,11 @@ export interface OmHeadsResponse {
   source: string | null;
   heads: { report_type: string; circle: string; circle_in_sheet: string; om_head: string | null }[];
   message: string | null;
+}
+
+export type OutagePeriod = 'day' | 'mtd' | 'month';
+/** ``direction``: down = fewer outage minutes (improvement); null when there is nothing to compare. */
+export interface OutageChange {
+  current: number | null; previous: number | null; period: string; previous_period: string;
+  change_pct: number | null; direction: 'up' | 'down' | 'same' | null; note: string;
 }

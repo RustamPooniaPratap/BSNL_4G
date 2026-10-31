@@ -58,6 +58,8 @@ INSTALLED_APPS = [
     'apps.uptimedb',
     'apps.rca',
     'apps.organization',
+    'apps.masterdata',
+    'apps.alerts',
 ]
 
 MIDDLEWARE = [

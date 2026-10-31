@@ -1,5 +1,5 @@
 """The organization: projects, one global record per circle, which circles each project covers, source-specific
-circle code aliases, project/circle user access and the history of changes to all of them.
+circle code aliases and the history of changes to all of them.
 
 Identity of the data tables: site, daily, monthly, upload and RCA records store the project ``key`` (e.g.
 "4G Saturation") and the circle ``code`` (e.g. "MP") as text. Both are therefore fixed once created; names,
@@ -97,17 +97,6 @@ class CircleAlias(models.Model):
 
     def __str__(self):
         return f'{self.source}: {self.raw_code} -> {self.circle.code}'
-
-
-class UserCircleAccess(models.Model):
-    """A user may work with one project's data of one circle (CI users; Admins and NOC Leads are not limited)."""
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='circle_access')
-    project_circle = models.ForeignKey(ProjectCircle, on_delete=models.PROTECT, related_name='user_access')
-    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        constraints = [models.UniqueConstraint(fields=['user', 'project_circle'], name='org_user_access_unique')]
 
 
 class OrganizationChange(models.Model):

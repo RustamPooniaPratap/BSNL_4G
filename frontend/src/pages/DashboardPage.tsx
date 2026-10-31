@@ -145,7 +145,7 @@ export function DashboardPage() {
       {summary.error ? (
         <Alert variant="destructive"><AlertTriangle /><AlertTitle>Key indicators unavailable</AlertTitle><AlertDescription>{summary.error.message}</AlertDescription></Alert>
       ) : (
-        <KpiCards summary={summary.data} loading={summary.loading} scopeLabel={scopeLabel} onShowBelow60={() => navigate(bucketsLink(searchParams, { bucket: 'lt_60' }))} />
+        <KpiCards summary={summary.data} loading={summary.loading} onShowBelow60={() => navigate(bucketsLink(searchParams, { bucket: 'lt_60' }))} />
       )}
 
       {showPeriod && <PeriodKpi period={period.data} loading={period.loading} error={period.error} />}

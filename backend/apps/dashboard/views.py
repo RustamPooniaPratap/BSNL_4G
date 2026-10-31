@@ -8,7 +8,8 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
-from apps.accounts.permissions import AdminForWrites, IsAdminRole
+from apps.accounts.access import pairs_for
+from apps.accounts.permissions import AdminForWrites, Can, IsAdminRole
 from apps.common.exceptions import ServiceUnavailable
 
 from . import metrics, report_export, store
@@ -19,13 +20,18 @@ from .upload import UploadRejected, accept_upload
 from .workbook import SHEET_NAME, SHEET_ROLES, WorkbookError, get_dataset
 
 
-def _dataset():
-    """The dataset of the active source (Excel workbook or PostgreSQL), the same for every endpoint."""
+def _dataset(request, action: str = 'view'):
+    """The dataset of the active source (Excel workbook or PostgreSQL), the same for every endpoint, limited to the
+    project/circle pairs on which the user has the Dashboard permission (accounts.access): KPIs, charts, tables,
+    searches, filter options and exports never include other circles."""
     from apps.uptimedb.datasource import current_dataset
+
+    from .scope import restrict
     try:
-        return current_dataset()
+        dataset = current_dataset()
     except WorkbookError as exc:
         raise ServiceUnavailable(str(exc), error_code=exc.code) from exc
+    return restrict(dataset, pairs_for(request.user, 'dashboard', action))
 
 
 def _validated(serializer_class, request, dataset) -> dict:
@@ -51,23 +57,27 @@ def _applied(params: dict) -> dict:
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def filters_view(request):
     from apps.organization.services import merge_filter_options
-    dataset = _dataset()
-    return Response({**merge_filter_options(metrics.filter_options(dataset)), 'source': _source(dataset)})
+    dataset = _dataset(request)
+    return Response({**merge_filter_options(metrics.filter_options(dataset), pairs_for(request.user, 'dashboard', 'view')),
+                     'source': _source(dataset)})
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def summary_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(SnapshotSerializer, request, dataset)
     result = metrics.summary(dataset, params['selection'], params['reporting_date'])
     return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def trends_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(TrendSerializer, request, dataset)
     result = metrics.trend(dataset, params['selection'], params['start_date'], params['end_date'])
     return Response({
@@ -79,16 +89,18 @@ def trends_view(request):
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def breakdowns_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(SnapshotSerializer, request, dataset)
     result = metrics.breakdown(dataset, params['selection'], params['reporting_date'])
     return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def records_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(RecordsSerializer, request, dataset)
     table = metrics.site_table(dataset, params['selection'], params['reporting_date'])
     table = metrics.search_sites(table, params['search'], params['bucket'] or None, params['bucket_basis'])
@@ -115,8 +127,9 @@ def records_view(request):
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def record_detail_view(request, site_id):
-    dataset = _dataset()
+    dataset = _dataset(request)
     report_type = request.query_params.get('report_type') or None
     matches = (dataset.sites['site_id'] == site_id).to_numpy()
     if report_type:
@@ -133,8 +146,9 @@ def record_detail_view(request, site_id):
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def source_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     sites = dataset.sites
     latest = dataset.latest_date
     expected = [d for d in dataset.dates if latest and d <= latest]
@@ -158,17 +172,19 @@ def source_view(request):
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def alerts_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     items = metrics.alerts(dataset, timezone.localdate())
     counts = {level: sum(1 for a in items if a['severity'] == level) for level in metrics.SEVERITY_RANK}
     return Response({'alerts': items, 'counts': counts, 'source': _source(dataset)})
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def period_view(request):
     """KPI for the trend period selected in the filter bar."""
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(PeriodSerializer, request, dataset)
     result = metrics.period_summary(dataset, params['selection'], dates=params['dates'],
                                     month_keys=params['month_keys'], label=params['label'])
@@ -176,8 +192,9 @@ def period_view(request):
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def thresholds_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(SnapshotSerializer, request, dataset)
     result = metrics.threshold_analysis(dataset, params['selection'], params['reporting_date'],
                                         period=request.query_params.get('period') or None,
@@ -186,8 +203,9 @@ def thresholds_view(request):
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def monthly_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(MonthlySerializer, request, dataset)
     result = metrics.monthly(dataset, params['selection'], params['reporting_date'], params['months'])
     return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
@@ -196,7 +214,7 @@ def monthly_view(request):
 @api_view(['GET'])
 @permission_classes([IsAdminRole])  # Team performance: Admins only
 def teams_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(TeamSerializer, request, dataset)
     result = metrics.team_performance(dataset, params['selection'], params['reporting_date'], params['group'])
     return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
@@ -206,7 +224,7 @@ def teams_view(request):
 @api_view(['GET'])
 @permission_classes([IsAdminRole])  # CI & IE Performance is part of Team performance: Admins only
 def team_monthly_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(TeamMonthlySerializer, request, dataset)
     try:
         result = metrics.team_monthly_nsla(dataset, params['selection'], params['reporting_date'], params['group'],
@@ -219,7 +237,7 @@ def team_monthly_view(request):
 @api_view(['GET'])
 @permission_classes([IsAdminRole])  # Circle-wise Top Performers is part of Team performance: Admins only
 def team_top_view(request):
-    dataset = _dataset()
+    dataset = _dataset(request)
     params = _validated(TeamMonthlySerializer, request, dataset)
     try:
         result = metrics.circle_top_performers(dataset, params['selection'], params['reporting_date'],
@@ -234,7 +252,7 @@ def team_top_view(request):
 def workbook_view(request):
     """GET: the active Master workbook. POST: upload a new one (form field "file")."""
     if request.method == 'GET':
-        return Response(_workbook_status())
+        return Response(_workbook_status(request=request))
 
     uploaded = request.FILES.get('file')
     if not uploaded:
@@ -251,17 +269,17 @@ def workbook_view(request):
         )
     # The workbook is replaced either way; the status describes whichever source the dashboard uses.
     from apps.uptimedb.datasource import EXCEL, active_source
-    return Response({'status': 'accepted', **_workbook_status(dataset if active_source() == EXCEL else None)},
+    return Response({'status': 'accepted', **_workbook_status(dataset if active_source() == EXCEL else None, request=request)},
                     status=status.HTTP_201_CREATED)
 
 
-def _workbook_status(dataset=None) -> dict:
+def _workbook_status(dataset=None, request=None) -> dict:
     """The data behind the dashboard: the active source's dataset (Excel workbook or PostgreSQL)."""
     from apps.uptimedb.datasource import active_source
     source = active_source()
     if dataset is None:
         try:
-            dataset = _dataset()
+            dataset = _dataset(request)  # a restricted user's counts cover their circles only
         except ServiceUnavailable as exc:
             return {'active': None, 'message': str(exc.detail), 'code': exc.error_code, 'data_source': source}
     sites = dataset.sites
@@ -310,6 +328,7 @@ def _record(row: dict) -> dict:
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def conversion_activity_view(request):
     """Sites that went On-Air / started O&M this month and last month, from the escalation matrix's dates.
 
@@ -325,29 +344,32 @@ def conversion_activity_view(request):
         return Response({'error': f'"{raw}" is not a month (YYYY-MM).', 'details': {}}, status=400)
     if month is None:
         try:
-            from apps.uptimedb.datasource import current_dataset
-            month = current_dataset().dates[0]
+            month = _dataset(request).dates[0]
         except Exception:  # no Master data: fall back to today's month
             month = _date.today()
     try:
-        return Response(monthly_activity(month, request.query_params.get('report_type') or None, request.query_params.get('circle') or None))
+        return Response(monthly_activity(month, request.query_params.get('report_type') or None, request.query_params.get('circle') or None,
+                                         pairs=pairs_for(request.user, 'dashboard', 'view')))
     except ActivityUnavailable as exc:
         return Response({'error': str(exc), 'details': {}}, status=404)
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'view')])
 def om_heads_view(request):
     """O&M Head per circle from the reference sheet in Data/reference (not part of the Master workbook)."""
     from .reference import om_heads
-    return Response(om_heads())
+    data, pairs = om_heads(), pairs_for(request.user, 'dashboard', 'view')
+    if pairs is not None:  # the heads of the user's circles only
+        data = {**data, 'heads': [h for h in data['heads'] if (h.get('report_type'), str(h.get('circle', '')).upper()) in pairs]}
+    return Response(data)
 
 
 # --- Excel downloads (Daily Uptime Report, Full Consolidated Report) ---------------------------------------------
 
 def _export_scope(request, dataset, selection):
     """The selected project/circle, limited on the server to the project/circle pairs the user may use (accounts.scope)."""
-    from apps.accounts.scope import allowed_pairs
-    return report_export.resolve_scope(dataset, selection.report_type, selection.circle, allowed_pairs(request.user))
+    return report_export.resolve_scope(dataset, selection.report_type, selection.circle, pairs_for(request.user, 'dashboard', 'export'))
 
 
 def _source_label(dataset) -> str:
@@ -368,10 +390,11 @@ def _export_error(exc: report_export.ExportError):
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'export')])
 def export_daily_view(request):
     """Daily Uptime Report (.xlsx) for one date, project and circle, from the active source."""
     from apps.accounts.audit import audit
-    dataset = _dataset()
+    dataset = _dataset(request, 'export')
     params = _validated(DailyExportSerializer, request, dataset)
     try:
         scope = _export_scope(request, dataset, params['selection'])
@@ -383,10 +406,11 @@ def export_daily_view(request):
 
 
 @api_view(['GET'])
+@permission_classes([Can('dashboard', 'export')])
 def export_consolidated_view(request):
     """Full Consolidated Report (.xlsx, 13 sheets): the month to the reporting date, for the project and circle."""
     from apps.accounts.audit import audit
-    dataset = _dataset()
+    dataset = _dataset(request, 'export')
     params = _validated(SnapshotSerializer, request, dataset)
     try:
         scope = _export_scope(request, dataset, params['selection'])

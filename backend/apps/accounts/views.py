@@ -28,19 +28,32 @@ from .models import must_change_password, set_must_change_password
 from .permissions import IsAdminRole, IsSignedIn
 from .roles import (ADMIN, CI, NOC_LEAD, RCA_CONSOLIDATED_GROUP, ROLES, can_upload_circle_rca, can_upload_consolidated_rca, role_of,
                     set_rca_consolidated, set_role)
+from . import access
 from .scope import allowed_circles, allowed_pairs, assigned_circles, granted_pairs, legacy_circles, set_circles
+from .services import log
 from .throttles import LoginIPThrottle, LoginUserThrottle
 
 User = get_user_model()
 GENERIC_LOGIN_ERROR = 'Invalid login ID or password.'
 
 
+MEMBER = 'member'  # no built-in role: rights from assignments only
+
+
+def account_role(user) -> str | None:
+    return role_of(user) or (MEMBER if access.has_assignments(user) else None)
+
+
 def me_payload(user) -> dict:
+    role = account_role(user)
     return {
         'username': user.get_username(),
         'name': user.get_full_name(),
-        'role': role_of(user),
-        'role_label': ROLES.get(role_of(user) or '', 'No role'),
+        'role': role,
+        'role_label': ROLES.get(role or '', 'Assigned access' if role == MEMBER else 'No role'),
+        # module -> actions the user has on at least one project/circle, and 'module.action' -> pairs (null = all).
+        'permissions': access.permissions(user),
+        'scopes': access.scopes(user),
         'must_change_password': must_change_password(user),
         # Circles for raw daily uploads and exports: null = every circle (Admin, NOC Lead).
         'circles': None if allowed_circles(user) is None else sorted(allowed_circles(user)),
@@ -216,11 +229,17 @@ def user_payload(user) -> dict:
         'circles': assigned_circles(user),
         'access': [{'project': p, 'circle': c} for p, c in granted_pairs(user)],
         'legacy_circles': legacy_circles(user),
+        'assignments': assignments_of(user),
         # Member of the RCA Consolidated Uploaders group (Admins may upload consolidated RCA without it).
         'rca_consolidated': user.groups.filter(name=RCA_CONSOLIDATED_GROUP).exists(),
         'last_login': user.last_login.isoformat(timespec='seconds') if user.last_login else None,
         'date_joined': user.date_joined.isoformat(timespec='seconds'),
     }
+
+
+def assignments_of(user) -> list[dict]:
+    from .access_views import assignments_of as rows
+    return rows(user)
 
 
 def _group_role(user) -> str | None:
@@ -245,7 +264,8 @@ class CreateUserSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
     last_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
     email = serializers.EmailField(required=False, allow_blank=True, default='')
-    role = serializers.ChoiceField(choices=list(ROLES))
+    # admin / noc_lead / ci, or member: no built-in role, rights from Access Assignments only.
+    role = serializers.ChoiceField(choices=[*ROLES, MEMBER])
     circles = serializers.ListField(child=serializers.CharField(max_length=20), required=False, default=list)
 
     def validate_circles(self, value):
@@ -258,7 +278,10 @@ class CreateUserSerializer(serializers.Serializer):
 
 
 class UpdateUserSerializer(serializers.Serializer):
-    role = serializers.ChoiceField(choices=list(ROLES), required=False)
+    role = serializers.ChoiceField(choices=[*ROLES, MEMBER], required=False)
+    first_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
     is_active = serializers.BooleanField(required=False)
     # Circles a CI user uploads raw daily data for (ignored for Admin and NOC Lead, who are not limited).
     circles = serializers.ListField(child=serializers.CharField(max_length=20), required=False)
@@ -290,6 +313,7 @@ class UsersView(APIView):
             set_must_change_password(user, True)
             if v['circles']:
                 set_circles(user, v['circles'], actor=request.user)
+            log(request.user, 'user_created', user=user, details={'role': v['role'], 'email_set': bool(v['email'])})
         audit('user_created', request, user_id=user.pk, login_id=user.username, role=v['role'])
         # The temporary password is returned once, to the Admin who created it; it is never logged or stored in clear.
         return Response({'user': user_payload(user), 'temporary_password': password}, status=status.HTTP_201_CREATED)
@@ -312,21 +336,32 @@ class UserDetailView(APIView):
         data = UpdateUserSerializer(data=request.data)
         data.is_valid(raise_exception=True)
         v = data.validated_data
-        if user.pk == request.user.pk and (('role' in v and v['role'] != role_of(user)) or v.get('is_active') is False):
+        if user.pk == request.user.pk and (('role' in v and v['role'] != account_role(user)) or v.get('is_active') is False):
             raise PermissionDenied('You cannot change your own role or deactivate your own account.')
-        if 'role' in v and v['role'] != _group_role(user):
+        profile = {k: v[k] for k in ('first_name', 'last_name', 'email') if k in v and v[k] != getattr(user, k)}
+        if profile:
+            for k, value in profile.items():
+                setattr(user, k, value)
+            user.save(update_fields=list(profile))
+            log(request.user, 'user_updated', user=user, details={'fields': sorted(profile)})
+        if 'role' in v and v['role'] != (_group_role(user) or MEMBER):
+            before = _group_role(user) or MEMBER
             set_role(user, v['role'])
+            access.forget(user)
+            log(request.user, 'account_role_changed', user=user, details={'from': before, 'to': v['role']})
             audit('role_changed', request, user_id=user.pk, login_id=user.username, role=v['role'])
         if 'circles' in v and (sorted(set(v['circles'])) != assigned_circles(user) or legacy_circles(user)):
             set_circles(user, v['circles'], actor=request.user)
             audit('circles_changed', request, user_id=user.pk, login_id=user.username, circles=','.join(sorted(set(v['circles']))))
         if 'rca_consolidated' in v and v['rca_consolidated'] != user.groups.filter(name=RCA_CONSOLIDATED_GROUP).exists():
             set_rca_consolidated(user, v['rca_consolidated'])
+            log(request.user, 'rca_consolidated_changed', user=user, details={'allowed': v['rca_consolidated']})
             audit('rca_consolidated_changed', request, user_id=user.pk, login_id=user.username, allowed=v['rca_consolidated'])
         if 'is_active' in v and v['is_active'] != user.is_active:
             user.is_active = v['is_active']
             user.save(update_fields=['is_active'])
             revoked = revoke_sessions(user) if not user.is_active else 0
+            log(request.user, 'user_activated' if user.is_active else 'user_deactivated', user=user, details={'sessions_revoked': revoked})
             audit('user_activated' if user.is_active else 'user_deactivated', request, user_id=user.pk, login_id=user.username,
                   sessions_revoked=revoked)
         return Response({'user': user_payload(user)})
@@ -345,6 +380,7 @@ class ResetPasswordView(APIView):
             user.save(update_fields=['password'])
             set_must_change_password(user, True)
         revoked = revoke_sessions(user)
+        log(request.user, 'password_reset', user=user, details={'sessions_revoked': revoked})  # never the password itself
         audit('password_reset', request, user_id=user.pk, login_id=user.username, sessions_revoked=revoked)
         return Response({'user': user_payload(user), 'temporary_password': password})
 

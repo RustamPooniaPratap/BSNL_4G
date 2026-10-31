@@ -19,9 +19,11 @@ describe('Sidebar order and groups', () => {
     await user.click(within(nav()).getByRole('button', { name: 'Data Management' }));
     await user.click(within(nav()).getByRole('button', { name: 'Data Entry' }));
     await user.click(within(nav()).getByRole('button', { name: 'CSV Arrival & Follow-up' }));
-    expect(links()).toEqual(['Site Portfolio', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance',
+    await user.click(within(nav()).getByRole('button', { name: 'Alert' }));
+    expect(links()).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance',
       'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload Circle RCA',
-      'Data Source', 'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles', 'Organization']);
+      'Data Source', 'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles', 'Organization',
+      'Email Setup', 'Automations', 'Email History']);
     expect(within(nav()).getByText('Data')).toBeInTheDocument();
     expect(within(nav()).getByText('Administration')).toBeInTheDocument();
   });
@@ -47,9 +49,10 @@ describe('Sidebar order and groups', () => {
     expect(within(nav()).queryByRole('link', { name: 'Code Mapping' })).not.toBeInTheDocument();  // tabs are inside the page
   });
 
-  it('shows no Organization entry to a CI user', () => {
+  it('shows no Organization or Alert entry to a CI user', () => {
     renderWithWorkbook(<Sidebar />, { url: '/portfolio', auth: authValue({ user: CI_USER }) });
     expect(within(nav()).queryByRole('link', { name: 'Organization' })).not.toBeInTheDocument();
+    expect(within(nav()).queryByRole('button', { name: 'Alert' })).not.toBeInTheDocument();
   });
 
   it('shows no RCA Summary pages to a CI user', () => {
@@ -103,9 +106,9 @@ describe('Sidebar order and groups', () => {
     await user.click(within(nav()).getByRole('button', { name: 'Data Management' }));
     await user.click(within(nav()).getByRole('button', { name: 'CSV Arrival & Follow-up' }));
     const href = (name: string) => within(nav()).getByRole('link', { name }).getAttribute('href');
-    expect(Object.fromEntries(['Site Portfolio', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance', 'Data Source',
+    expect(Object.fromEntries(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance', 'Data Source',
       'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles'].map((n) => [n, href(n)]))).toEqual({
-      'Site Portfolio': '/portfolio', Overview: '/', '4G Saturation': '/?report_type=4G+Saturation', LWE: '/?report_type=LWE',
+      'Site Portfolio': '/portfolio', 'Master Data': '/master-data', Overview: '/', '4G Saturation': '/?report_type=4G+Saturation', LWE: '/?report_type=LWE',
       'Threshold Analysis': '/thresholds', 'Team Performance': '/teams', 'Data Source': '/workbook', 'Data Source & Quality': '/data-source',
       'Add Row': '/data/add-row', 'Upload CSV': '/data/upload-csv', 'Add Site': '/data/new-site',
       'CSV Arrival Tracking': '/daily-ingestion', 'Users & Roles': '/admin/users',

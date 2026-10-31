@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   BriefcaseBusiness, ChevronRight, ClipboardPen, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
-  LayoutDashboard, MapPinPlus, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy, Table2, ListTree, MapPinned, ChartLine, Building2,
+  LayoutDashboard, MapPinPlus, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy, Table2, ListTree, MapPinned, ChartLine, Building2, TableProperties, BellRing, Mail, Workflow, History,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { canOpen, useAuth } from '../context/auth';
@@ -39,6 +39,7 @@ const page = (to: string, label: string, icon: Icon): NavItem => ({ to, label, i
 
 const entries: NavEntry[] = [
   { kind: 'link', item: page('/portfolio', 'Site Portfolio', BriefcaseBusiness) },
+  { kind: 'link', item: { ...page('/master-data', 'Master Data', TableProperties), isActive: (p) => p === '/master-data' || p.startsWith('/master-data/') } },
   {
     kind: 'group', id: 'overview', label: 'Overview', icon: LayoutDashboard, defaultOpen: true,
     link: { to: '/', label: 'Overview', icon: LayoutDashboard, isActive: (p, q) => p === '/' && !q.get('report_type') },
@@ -77,7 +78,7 @@ const entries: NavEntry[] = [
   {
     kind: 'group', id: 'rca-upload', label: 'Upload RCA Data', icon: FileUp, defaultOpen: true,
     items: [
-      { ...page('/rca/import', 'Upload Circle RCA', FileUp), show: (u) => (u?.rca_upload ? u.rca_upload.circle : u?.role !== 'ci') },
+      page('/rca/import', 'Upload Circle RCA', FileUp),
       { ...page('/rca/import/consolidated', 'Upload Consolidated RCA', Layers3), show: (u) => !!u?.rca_upload?.consolidated },
     ],
   },
@@ -91,8 +92,12 @@ const entries: NavEntry[] = [
     items: [page('/data/add-row', 'Add Row', ClipboardPen), page('/data/upload-csv', 'Upload CSV', Sheet), page('/data/new-site', 'Add Site', MapPinPlus)],
   },
   { kind: 'group', id: 'csv-arrival', label: 'CSV Arrival & Follow-up', icon: Inbox, items: [page('/daily-ingestion', 'CSV Arrival Tracking', Inbox)] },
-  { kind: 'section', heading: 'Administration', items: [page('/admin/users', 'Users & Roles', UserCog),
+  { kind: 'section', heading: 'Administration', items: [{ ...page('/admin/users', 'Users & Roles', UserCog), isActive: (p) => p === '/admin/users' || p.startsWith('/admin/users/') },
     { ...page('/admin/organization', 'Organization', Building2), isActive: (p) => p === '/admin/organization' || p.startsWith('/admin/organization/') }] },
+  {
+    kind: 'group', id: 'alert', label: 'Alert', icon: BellRing,
+    items: [page('/admin/alerts/email', 'Email Setup', Mail), page('/admin/alerts/automations', 'Automations', Workflow), page('/admin/alerts/history', 'Email History', History)],
+  },
 ];
 
 const groupIsActive = (entry: Extract<NavEntry, { kind: 'group' }>, pathname: string, params: URLSearchParams) =>
@@ -103,7 +108,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const params = new URLSearchParams(location.search);
   const { user } = useAuth();
   // Only the pages the role may open are listed (the pages and the API check the role as well).
-  const allowed = (item: NavItem) => canOpen(user?.role, item.to.split('?')[0]) && (!item.show || item.show(user));
+  const allowed = (item: NavItem) => canOpen(user, item.to.split('?')[0]) && (!item.show || item.show(user));
   const filtered = entries.flatMap((entry): NavEntry[] => {
     if (entry.kind === 'heading') return [entry];
     if (entry.kind === 'link') return allowed(entry.item) ? [entry] : [];

@@ -60,7 +60,7 @@ class RcaTestCase(TestCase):
         override.enable()
         self.addCleanup(override.disable)
         self.admin = portal_user('rca-admin', 'admin')
-        self.ci = portal_user('rca-ci', 'ci')
+        self.ci = portal_user('rca-ci', 'ci', all_circles=True)
 
     def path(self, name='rca.xlsx', **kwargs) -> Path:
         return workbook(Path(self.tmp.name) / name, **kwargs)
@@ -342,7 +342,7 @@ class ApiTests(RcaTestCase):
         self.assertEqual(created.json()['source'], 'manual')
         self.assertEqual(self.client.post(reverse('rca-records'), {**body, 'circle': 'XX', 'rca_text': ''},
                                           content_type='application/json').json()['details'].keys() >= {'circle', 'rca_text'}, True)
-        other = portal_user('other-ci', 'ci')
+        other = portal_user('other-ci', 'ci', all_circles=True)
         self.client.force_login(other)
         self.assertEqual(self.client.patch(reverse('rca-record', args=[rid]), {'outage_minutes': 40}, content_type='application/json').status_code, 403)
         self.client.force_login(self.admin)

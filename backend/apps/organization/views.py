@@ -19,7 +19,7 @@ from rest_framework.response import Response
 
 from apps.accounts.audit import audit
 from apps.accounts.permissions import IsAdminRole, IsPortalUser
-from apps.accounts.roles import CI, ROLES, role_of
+from apps.accounts.roles import ADMIN, CI, NOC_LEAD, ROLES, role_of
 from apps.accounts.scope import granted_pairs, legacy_circles, set_pairs
 
 from . import services
@@ -400,7 +400,7 @@ def _access_json(user) -> dict:
     legacy = legacy_circles(user)
     return {'id': user.pk, 'username': user.get_username(), 'name': user.get_full_name(), 'role': role,
             'role_label': ROLES.get(role or '', 'No role'), 'is_active': user.is_active,
-            'limited': role == CI, 'pairs': [{'project': p, 'circle': c} for p, c in granted_pairs(user)],
+            'limited': role not in (ADMIN, NOC_LEAD), 'pairs': [{'project': p, 'circle': c} for p, c in granted_pairs(user)],
             'legacy_circles': legacy, 'needs_review': bool(legacy)}
 
 

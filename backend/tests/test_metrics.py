@@ -1,6 +1,6 @@
 """Business-rule tests. Expected values are worked out by hand from DEFAULT_SITES."""
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -70,6 +70,23 @@ class SummaryTests(MetricsTestCase):
         self.assertEqual(m['sites_missing'], 1)
         self.assertEqual(m['coverage_pct'], 80.0)
         self.assertEqual(m['daily_uptime_pct'], 75.0)  # missing site is not counted as 100%
+
+    def test_overview_kpis_sla_sites_down_and_outage_comparison(self):
+        result = metrics.summary(self.ds, Selection(None, None, 'on_air'), OCT3)
+        m = result['metrics']
+        # SLA: sites with an MTD value below 98.5%, the complement of the 98.5% bucket over the same population.
+        self.assertEqual(m['sites_not_meeting_sla_mtd'], m['sites_with_mtd_value'] - m['sites_at_or_above_98_5_mtd'])
+        self.assertGreaterEqual(m['sites_not_meeting_sla_mtd'], m['sites_below_60_mtd'])
+        c = result['outage_comparison']
+        day = c['day']  # 3 Oct against 2 Oct
+        self.assertEqual((day['period'], day['previous_period']), ('03 Oct', '02 Oct'))
+        expected = metrics.period_summary(self.ds, Selection(None, None, 'on_air'), dates=[OCT3 - timedelta(days=1)], label='')['outage_minutes']
+        self.assertEqual(day['previous'], expected)
+        self.assertEqual(day['direction'], None if day['current'] is None else
+                         'same' if day['current'] == expected else 'down' if day['current'] < expected else 'up')
+        self.assertIsNone(c['month']['change_pct'])  # October is not complete: no direction, no %
+        self.assertIsNone(c['month']['direction'])
+        self.assertTrue(c['month']['note'])
 
     def test_circle_filter_spans_report_types_after_alias_normalisation(self):
         m = metrics.summary(self.ds, Selection(None, 'MP', 'all'), OCT1)['metrics']

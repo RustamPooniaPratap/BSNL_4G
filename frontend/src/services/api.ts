@@ -31,12 +31,21 @@ import type {
   ImportBatch,
   PortalUser,
   Role,
+  AccessAssignment,
+  AccessEvent,
+  AccessPreview,
+  AccessRole,
+  EffectiveAccess,
+  ModulePermission,
+  PermissionCatalog,
 } from '../types';
 import type {
   RcaCauses, RcaCycleDetail, RcaCycleList, RcaImportBatch, RcaOptions, RcaPage, RcaRecordDetail, RcaRecordInput, RcaReportVersion,
   RcaSummary, RcaUploadDetails, RcaUploadRights, RcaUploadType, RcaWorkflowInput,
 } from '../types/rca';
 import type { ArrivalTracker, RawRowsPage, RawUpload, RawUploadDetails, RawUploadOptions } from '../types/rawUpload';
+import type { MasterDatasets, MasterOptions, MasterPage } from '../types/masterData';
+import type { AlertAccount, AlertAutomation, AlertAutomationInput, AlertHistory, AlertMessage, AlertOptions, AlertPreview, AlertWorker } from '../types/alerts';
 import type { OrgAccessUser, OrgAlias, OrgAssociation, OrgChange, OrgCircle, OrgProject, OrgRemoval, OrgSiteIdMapping, OrganizationCatalog } from '../types/organization';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
@@ -118,6 +127,7 @@ async function request<T>(path: string, params?: URLSearchParams, init?: Request
     if (response.status === 403 && error.details.code === 'password_change_required') notify('password_change_required');
     throw error;
   }
+  if (response.status === 204) return undefined as T;  // No Content (e.g. a deletion)
   return response.json() as Promise<T>;
 }
 
@@ -256,7 +266,25 @@ export async function changePassword(currentPassword: string, newPassword: strin
 export const fetchUsers = (signal?: AbortSignal) => request<{ users: PortalUser[] }>('/auth/users/', undefined, { signal });
 export const createUser = (user: { username: string; first_name: string; last_name: string; email: string; role: Role }) =>
   send<{ user: PortalUser; temporary_password: string }>('/auth/users/', user);
-export const updateUser = (id: number, changes: { role?: Role; is_active?: boolean; circles?: string[]; rca_consolidated?: boolean }) => send<{ user: PortalUser }>(`/auth/users/${id}/`, changes, 'PATCH');
+export const updateUser = (id: number, changes: { role?: Role; is_active?: boolean; circles?: string[]; rca_consolidated?: boolean; first_name?: string; last_name?: string; email?: string }) =>
+  send<{ user: PortalUser }>(`/auth/users/${id}/`, changes, 'PATCH');
+export const fetchEffectiveAccess = (id: number, signal?: AbortSignal) => request<EffectiveAccess>(`/auth/users/${id}/effective/`, undefined, { signal });
+export const fetchPermissionCatalog = (signal?: AbortSignal) => request<PermissionCatalog>('/auth/access/catalog/', undefined, { signal });
+export const fetchAccessRoles = (signal?: AbortSignal) => request<{ roles: AccessRole[] }>('/auth/access/roles/', undefined, { signal });
+export const createAccessRole = (role: { name: string; description: string; permissions: ModulePermission[] }) => send<{ role: AccessRole }>('/auth/access/roles/', role);
+export const updateAccessRole = (id: number, changes: Partial<{ name: string; description: string; permissions: ModulePermission[]; is_active: boolean }>) =>
+  send<{ role: AccessRole }>(`/auth/access/roles/${id}/`, changes, 'PATCH');
+export const deleteAccessRole = (id: number) => send<void>(`/auth/access/roles/${id}/`, undefined, 'DELETE');
+export const cloneAccessRole = (id: number, name: string) => send<{ role: AccessRole }>(`/auth/access/roles/${id}/clone/`, { name });
+export const fetchAccessAssignments = (signal?: AbortSignal) => request<{ assignments: AccessAssignment[] }>('/auth/access/assignments/', undefined, { signal });
+export const createAccessAssignment = (body: { user: number; role: number; project: string; scope: 'project' | 'circles'; circles: string[]; status: string; valid_until: string | null }) =>
+  send<{ assignments: AccessAssignment[] }>('/auth/access/assignments/', body);
+export const updateAccessAssignment = (id: number, changes: Partial<{ role: number; status: string; valid_until: string | null }>) =>
+  send<{ assignment: AccessAssignment }>(`/auth/access/assignments/${id}/`, changes, 'PATCH');
+export const deleteAccessAssignment = (id: number) => send<void>(`/auth/access/assignments/${id}/`, undefined, 'DELETE');
+export const fetchAccessPreview = (params: URLSearchParams, signal?: AbortSignal) => request<AccessPreview>('/auth/access/preview/', params, { signal });
+export const fetchAccessHistory = (params: URLSearchParams, signal?: AbortSignal) =>
+  request<{ events: AccessEvent[]; actions: string[] }>('/auth/access/history/', params, { signal });
 export const resetUserPassword = (id: number) => send<{ user: PortalUser; temporary_password: string }>(`/auth/users/${id}/reset-password/`);
 export const revokeUserSessions = (id: number) => send<{ sessions_revoked: number }>(`/auth/users/${id}/revoke-sessions/`);
 
@@ -285,7 +313,9 @@ export const fetchOmHeads = (signal?: AbortSignal) => request<OmHeadsResponse>('
 
 // --- RCA register ------------------------------------------------------------------------------
 
-export const fetchRcaOptions = (signal?: AbortSignal) => request<RcaOptions>('/rca/options/', undefined, { signal });
+/** ``summary``: the options of the RCA Summary pages (RCA Summary permission) instead of the register's. */
+export const fetchRcaOptions = (signal?: AbortSignal, summary = false) =>
+  request<RcaOptions>('/rca/options/', summary ? new URLSearchParams({ for: 'summary' }) : undefined, { signal });
 export const fetchRcaRecords = (params: URLSearchParams, signal?: AbortSignal) => request<RcaPage>('/rca/records/', params, { signal });
 export const fetchRcaRecord = (id: number, signal?: AbortSignal) => request<RcaRecordDetail>(`/rca/records/${id}/`, undefined, { signal });
 export const createRcaRecord = (record: RcaRecordInput) => send<RcaRecordDetail>('/rca/records/', { ...record });
@@ -398,3 +428,35 @@ export const fetchOrgAccess = (signal?: AbortSignal) => request<{ users: OrgAcce
 export const setOrgAccess = (userId: number, pairs: { project: string; circle: string }[], reason = '') =>
   send<{ user: OrgAccessUser }>(`/organization/access/${userId}/`, { pairs, reason }, 'PUT');
 export const fetchOrgHistory = (signal?: AbortSignal) => request<{ changes: OrgChange[] }>('/organization/history/', undefined, { signal });
+
+// --- Master Data (database explorer) ----------------------------------------------------------
+export const fetchMasterDatasets = (signal?: AbortSignal) => request<MasterDatasets>('/master-data/datasets/', undefined, { signal });
+export const fetchMasterOptions = (key: string, params: URLSearchParams, signal?: AbortSignal) =>
+  request<MasterOptions>(`/master-data/${key}/options/`, params, { signal });
+export const fetchMasterRecords = (key: string, params: URLSearchParams, signal?: AbortSignal) =>
+  request<MasterPage>(`/master-data/${key}/records/`, params, { signal });
+/** Download link of the filtered records (the browser sends the session cookie). */
+export const masterExportUrl = (key: string, params: URLSearchParams) => `${API_BASE_URL}/master-data/${key}/export/?${params}`;
+
+// --- Alert & Email Automation (Administration › Alert) ----------------------------------------
+export const fetchAlertAccount = (signal?: AbortSignal) => request<{ account: AlertAccount | null; worker: AlertWorker }>('/alerts/account/', undefined, { signal });
+export const saveAlertAccount = (body: Record<string, unknown>) => send<{ account: AlertAccount; worker: AlertWorker }>('/alerts/account/', body, 'PUT');
+export const testAlertAccount = (to = '') => send<{ ok: boolean; message: string; account: AlertAccount }>('/alerts/account/test/', { to });
+export const activateAlertAccount = (active: boolean) => send<{ account: AlertAccount }>('/alerts/account/activate/', { active });
+export const fetchAlertOptions = (signal?: AbortSignal) => request<AlertOptions>('/alerts/options/', undefined, { signal });
+export const fetchAlertAutomations = (signal?: AbortSignal) => request<{ automations: AlertAutomation[] }>('/alerts/automations/', undefined, { signal });
+export const saveAlertAutomation = (id: number | null, body: AlertAutomationInput) =>
+  send<{ automation: AlertAutomation }>(id ? `/alerts/automations/${id}/` : '/alerts/automations/', { ...body }, id ? 'PUT' : 'POST');
+export const deleteAlertAutomation = (id: number) => request<void>(`/alerts/automations/${id}/`, undefined, { method: 'DELETE' }).catch((e) => { if (e instanceof SyntaxError) return; throw e; });
+export const enableAlertAutomation = (id: number, enabled: boolean) => send<{ automation: AlertAutomation }>(`/alerts/automations/${id}/enable/`, { enabled });
+export const runAlertAutomation = (id: number) => send<{ execution: number; worker: AlertWorker }>(`/alerts/automations/${id}/run/`);
+export const previewAlertAutomation = (body: AlertAutomationInput) => send<AlertPreview>('/alerts/automations/preview/', { ...body });
+export async function uploadAlertFile(file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  return request<{ id: number; name: string; size: number }>('/alerts/files/', undefined, { method: 'POST', body: form });
+}
+export const fetchAlertHistory = (params: URLSearchParams, signal?: AbortSignal) => request<AlertHistory>('/alerts/history/', params, { signal });
+export const fetchAlertMessage = (id: number, signal?: AbortSignal) => request<{ message: AlertMessage }>(`/alerts/history/${id}/`, undefined, { signal });
+export const retryAlertMessage = (id: number) => send<{ message: AlertMessage }>(`/alerts/history/${id}/retry/`);
+export const resendAlertMessage = (id: number) => send<{ message: AlertMessage }>(`/alerts/history/${id}/resend/`);

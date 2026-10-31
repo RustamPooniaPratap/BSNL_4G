@@ -291,7 +291,7 @@ describe('Sidebar', () => {
     renderWithWorkbook(<Sidebar />, { url: '/thresholds' });
     const links = within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link').map((a) => a.textContent);
     // On its page the Threshold Analysis group is open, showing its subpage.
-    expect(links.slice(3, 7)).toEqual(['LWE', 'Threshold Analysis', 'Uptime Buckets & Site Details', 'Team Performance']);
+    expect(links.slice(4, 8)).toEqual(['LWE', 'Threshold Analysis', 'Uptime Buckets & Site Details', 'Team Performance']);
     expect(screen.getByRole('link', { name: 'Threshold Analysis' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('link', { name: 'Overview' })).not.toHaveAttribute('aria-current');
   });

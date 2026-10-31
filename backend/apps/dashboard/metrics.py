@@ -163,10 +163,54 @@ def summary(ds: Dataset, selection: Selection, day: date) -> dict:
             'mtd_outage_minutes': round(mtd_outage, 2),
             'sites_below_60_mtd': buckets['lt_60'],
             'sites_at_or_above_98_5_mtd': buckets['gte_98_5'],
+            # Sites with an MTD uptime value: the denominator of the MTD threshold shares (as in Threshold Analysis).
+            'sites_with_mtd_value': sum(buckets.values()),
+            # SLA = 98.5% MTD uptime: sites with a value below it.
+            'sites_not_meeting_sla_mtd': sum(buckets.values()) - buckets['gte_98_5'],
             'out_of_range_values': int((reported & ((daily < 0) | (daily > MINUTES_PER_DAY))).sum()),
         },
         'previous_month_conversion': previous_month_conversion(ds, base),
+        'outage_comparison': outage_comparison(ds, selection, day, daily_outage if reported.any() else None,
+                                               outage_total(mtd_block), [ds.dates[c] for c in mtd_cols]),
     }
+
+
+def _outage_change(current: float | None, previous: float | None, period: str, previous_period: str, note: str = '') -> dict:
+    """Outage minutes against the previous comparable period. No direction or % without both values (or from 0)."""
+    diff = None if current is None or previous is None else round(current - previous, 2)
+    return {
+        'current': current, 'previous': previous, 'period': period, 'previous_period': previous_period,
+        'change_pct': round(100.0 * diff / previous, 1) if diff is not None and previous else None,
+        # Fewer outage minutes is an improvement.
+        'direction': None if diff is None else 'same' if abs(diff) < 0.005 else 'down' if diff < 0 else 'up',
+        'note': note if diff is None else '',
+    }
+
+
+def outage_comparison(ds: Dataset, selection: Selection, day: date, daily: float | None, mtd: float | None,
+                      mtd_dates: list[date]) -> dict:
+    """Day: the previous calendar day. MTD: the same elapsed dates of the previous month, only when every one of them is
+    reported. Month: the previous full month, only once the reporting month is complete. Earlier months come from the
+    source's daily and monthly columns (period_summary); nothing is estimated."""
+    fmt = lambda d: d.strftime('%d %b')  # noqa: E731
+    prev_day = day - timedelta(days=1)
+    p = period_summary(ds, selection, dates=[prev_day], label='')
+    # A previous period counts only when sites of this selection reported in it (sites_reported), not other projects.
+    out = {'day': _outage_change(daily, p['outage_minutes'] if p['sites_reported'] else None, fmt(day), fmt(prev_day),
+                                 f'No data on {fmt(day)}.' if daily is None else f'No data on {fmt(prev_day)}.')}
+    prev_last = ds.dates[0] - timedelta(days=1)
+    prev_dates = [prev_last.replace(day=d.day) for d in mtd_dates if d.day <= prev_last.day]
+    p = period_summary(ds, selection, dates=prev_dates, label='') if prev_dates else None
+    complete = bool(p) and p['sites_reported'] > 0 and len(prev_dates) == len(mtd_dates) and p['days_reported'] == len(prev_dates)
+    span = f'{fmt(mtd_dates[0])} – {fmt(mtd_dates[-1])}' if mtd_dates else ''
+    out['mtd'] = _outage_change(mtd, p['outage_minutes'] if complete else None, span,
+                         f'{fmt(prev_dates[0])} – {fmt(prev_dates[-1])}' if prev_dates else prev_last.strftime('%b'),
+                         'No data in this month to date.' if mtd is None else f'{prev_last:%B} has no data for every one of these dates.')
+    month_done = day.day == calendar.monthrange(day.year, day.month)[1] and len(mtd_dates) == day.day
+    p = period_summary(ds, selection, month_keys=[prev_last.strftime('%Y-%m')], label='')
+    out['month'] = _outage_change(mtd if month_done else None, p['outage_minutes'] if p['months'] and p['sites_reported'] else None, f'{day:%b %Y}', f'{prev_last:%b %Y}',
+                           f'{day:%B} is not complete yet.' if not month_done else f'No data for {prev_last:%B}.')
+    return out
 
 
 def previous_month_conversion(ds: Dataset, base: np.ndarray) -> dict | None:
