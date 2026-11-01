@@ -171,3 +171,52 @@ class SourceAndErrorApiTests(DashboardApiTestCase):
                 data = self.get('dashboard-summary', 500)
         self.assertEqual(data['error'], 'An unexpected server error occurred.')
         self.assertNotIn('secret detail', str(data))
+
+
+class TeamSitesApiTests(DashboardApiTestCase):
+    """CI & IE Performance > Site Details: one person's sites (name + project + circle), restricted on the server."""
+
+    def sites(self, **params):
+        body = self.get('dashboard-records', page_size=100, scope='all', **params)
+        return sorted(r['site_id'] for r in body['records'])
+
+    def team(self, name='CI East', project='4G Saturation', circle='MP', group='ci'):
+        return {'team_group': group, 'team': name, 'team_project': project, 'team_circle': circle}
+
+    def test_normal_site_details_are_unchanged(self):
+        self.assertEqual(self.sites(), ['LWEBH01', 'LWEMP01', 'LWEOD01', 'UVMP001', 'UVMP002', 'UVMP003', 'UVRJ001'])
+
+    def test_only_the_persons_sites_and_the_same_name_elsewhere_is_another_person(self):
+        # "CI East" is named on 4G MP, LWE MP and LWE BH sites: only the 4G MP ones belong to this row of the NSLA table.
+        self.assertEqual(self.sites(**self.team()), ['UVMP001', 'UVMP003'])
+        self.assertEqual(self.sites(**self.team(project='LWE')), ['LWEMP01'])
+        self.assertEqual(self.sites(**self.team(group='ie', name='IE MP')), ['UVMP001', 'UVMP002', 'UVMP003'])
+
+    def test_page_filters_narrow_but_never_widen_the_persons_sites(self):
+        self.assertEqual(self.sites(**self.team(), circle='RJ'), [])  # another circle: nothing of this person
+        self.assertEqual(self.sites(**self.team(), report_type='LWE'), [])
+        self.assertEqual(self.sites(**self.team(), search='UVMP001'), ['UVMP001'])
+        breakdown = self.get('dashboard-breakdowns', scope='all', **self.team())
+        everything = self.get('dashboard-breakdowns', scope='all')
+        self.assertNotEqual(breakdown, everything)  # the bucket chart is limited the same way
+
+    def test_nsla_lists_only_sites_below_98_5_mtd(self):
+        rows = self.get('dashboard-records', page_size=100, scope='all', below_sla='true', **self.team())['records']
+        self.assertTrue(rows and all(r['mtd_uptime_pct'] is not None and r['mtd_uptime_pct'] < 98.5 for r in rows))
+        all_rows = self.get('dashboard-records', page_size=100, scope='all', **self.team())['records']
+        self.assertEqual(len(rows), sum(1 for r in all_rows if r['mtd_uptime_pct'] is not None and r['mtd_uptime_pct'] < 98.5))
+
+    def test_an_incomplete_person_is_refused(self):
+        self.get('dashboard-records', 400, team_group='ci', team='CI East')
+        self.get('dashboard-records', 400, team_group='boss', team='CI East', team_project='4G Saturation', team_circle='MP')
+
+    def test_the_link_matches_the_nsla_table_row(self):
+        table = self.get('dashboard-teams-monthly', scope='all', group='ci')
+        mtd = table['months'][-1]['key']
+        for row in table['rows']:
+            if row['name'] == 'Unassigned':
+                continue
+            person = self.team(name=row['name'], project=row['report_type'], circle=row['circle'])
+            self.assertEqual(len(self.sites(**person)), row['sites_in_scope'], row)
+            nsla = self.get('dashboard-records', page_size=100, scope='all', below_sla='true', **person)['count']
+            self.assertEqual(nsla, (row['months'][mtd] or {}).get('nsla_sites', 0), row)

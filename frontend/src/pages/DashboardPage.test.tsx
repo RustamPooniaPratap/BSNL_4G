@@ -71,7 +71,10 @@ describe('DashboardPage', () => {
     expect(within(kpis).getByText('93.07%')).toBeInTheDocument();
     const card = (name: string) => within(kpis).getByRole('group', { name });
     expect(card('Not meeting SLA')).toHaveTextContent('240.0%');  // 2 of 5 sites with MTD data
-    expect(card('Unique sites down')).toHaveTextContent('125.0%');  // 1 down all day of 4 reported
+    // USD: distinct active sites with outage > 0 at least once in the selected reporting period, of every active site.
+    expect(await within(kpis).findByText('Outage > 0 at least once · 01 Oct – 03 Oct · of 5 active sites')).toBeInTheDocument();
+    expect(card('Unique sites down')).toHaveTextContent('360.0%');
+    expect(lastParams(mocked.fetchPeriod).get('scope')).toBe('on_air');  // the same filters as every KPI
     expect(card('Below 60% MTD')).toHaveTextContent('240.0%');
     expect(within(kpis).queryByText('Daily uptime')).not.toBeInTheDocument();  // replaced
     // Outage minutes: MTD by default (more minutes than the same days of September: red, up); Day: fewer (green, down).
@@ -363,7 +366,7 @@ describe('Trend period KPI', () => {
     renderPage();
     await screen.findByRole('region', { name: 'Key indicators' });
     expect(screen.queryByRole('region', { name: 'Trend period indicators' })).not.toBeInTheDocument();
-    expect(mocked.fetchPeriod).not.toHaveBeenCalled();
+    expect(mocked.fetchPeriod).toHaveBeenCalled();  // its data only: Unique sites down counts over the reporting period
   });
 
   it('shows the period figures on the 4G Saturation and LWE pages', async () => {

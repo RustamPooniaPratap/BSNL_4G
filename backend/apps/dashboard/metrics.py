@@ -597,6 +597,7 @@ def period_summary(ds: Dataset, selection: Selection, *, dates: list[date] | Non
     rows = np.flatnonzero(scope_mask(ds, selection))
     outage = np.zeros(len(rows))
     site_days = np.zeros(len(rows))
+    down = np.zeros(len(rows), dtype=bool)  # outage > 0 on at least one reported day of the period
     current_key = ds.dates[0].strftime('%Y-%m')
     cols: list[int] = []
     months_used = 0
@@ -607,6 +608,7 @@ def period_summary(ds: Dataset, selection: Selection, *, dates: list[date] | Non
                 reported = ~np.isnan(values)
                 outage[reported] += values[reported]
                 site_days[reported] += month['days']
+                down[reported] |= values[reported] > 0  # a month's total > 0: down at least once in it
                 months_used += bool(reported.any())
         if current_key in month_keys:
             cols = [ds.position(d) for d in ds.reported_dates]
@@ -625,6 +627,7 @@ def period_summary(ds: Dataset, selection: Selection, *, dates: list[date] | Non
     for block in blocks:
         outage += np.nansum(block, axis=1)
         site_days += (~np.isnan(block)).sum(axis=1)
+        down |= (np.nan_to_num(block, nan=0.0) > 0).any(axis=1)  # a missing value is neither down nor up
     if cols:
         months_used += month_keys is not None
     reported_dates.sort()
@@ -647,7 +650,18 @@ def period_summary(ds: Dataset, selection: Selection, *, dates: list[date] | Non
         'sites_at_or_above_98_5': int((ids == 'gte_98_5').sum()),
         # Every bucket, by each site's own uptime over the period (sites without a value are in none).
         'buckets': bucket_counts(ids),
+        'unique_sites_down': unique_sites_down(ds, rows, down),
     }
+
+
+def unique_sites_down(ds: Dataset, rows: np.ndarray, down: np.ndarray) -> dict:
+    """USD: distinct active sites of the selection with outage > 0 at least once in the period, each site once (a row
+    is one site of one project, so 4G and LWE sites never merge). Active = On-Air = Yes, the site master's only
+    activity flag; inactive sites are left out of the count and the denominator. The denominator is every eligible
+    site of the site master, not only those with values; a missing value never counts as outage."""
+    eligible = ds.sites['on_air'].to_numpy(dtype=bool)[rows]
+    count, total = int((down & eligible).sum()), int(eligible.sum())
+    return {'count': count, 'eligible_sites': total, 'pct': round(100.0 * count / total, 2) if total else None}
 
 
 def month_options(ds: Dataset) -> list[dict]:

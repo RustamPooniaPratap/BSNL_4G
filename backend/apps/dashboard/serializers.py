@@ -175,6 +175,8 @@ class RecordsSerializer(SnapshotSerializer):
     # Sites assigned to one CI or IE ("Unassigned" selects sites without a name).
     ci_name = serializers.CharField(required=False, allow_blank=True, default='', max_length=120, trim_whitespace=True)
     ie_name = serializers.CharField(required=False, allow_blank=True, default='', max_length=120, trim_whitespace=True)
+    # NSLA only: sites whose MTD uptime is below 98.5% (sites without a value are not NSLA).
+    below_sla = serializers.BooleanField(required=False, default=False)
 
 
 class TeamSerializer(SnapshotSerializer):

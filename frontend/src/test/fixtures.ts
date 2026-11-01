@@ -297,6 +297,7 @@ export const thresholds: ThresholdResponse = asThresholdResponse({
 export const period: PeriodSummary = {
   label: '01 Oct – 03 Oct', kind: 'dates', days_reported: 3, months: null, first_date: '2026-10-01', last_date: '2026-10-03',
   sites_in_scope: 5, sites_reported: 5, uptime_pct: 94.1, outage_minutes: 2880, sites_below_60: 1, sites_at_or_above_98_5: 3,
+  unique_sites_down: { count: 3, eligible_sites: 5, pct: 60 },
   filters: { report_type: null, circle: null, scope: 'on_air' }, source,
 };
 

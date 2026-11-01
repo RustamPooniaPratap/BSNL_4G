@@ -296,3 +296,62 @@ class SameDaysComparisonTests(SimpleTestCase):
         ds = self.load(september=SEPTEMBER, september_as_uptime=True)
         self.assertEqual(ds.daily_history, ())
         self.assertIn('history_not_minutes', {w['code'] for w in ds.warnings})
+
+
+# (project, circle, site, name, On-Air, O&M Start, outage minutes on 1-3 Oct); None = no value reported that day.
+USD_SITES = [
+    ('4G Satu.', 'MP', 'UVMP101', 'One minute', 'Yes', 'Yes', [1, 0, 0]),         # 1 minute once: counted
+    ('4G Satu.', 'MP', 'UVMP102', 'Many days', 'Yes', 'Yes', [100, 200, 300]),    # down on every day: counted once
+    ('4G Satu.', 'MP', 'UVMP103', 'One bad day', 'Yes', None, [0, 0, 5]),         # up on most days: counted
+    ('4G Satu.', 'MP', 'UVMP104', 'Always up', 'Yes', 'Yes', [0, 0, 0]),          # never down: not counted
+    ('4G Satu.', 'MP', 'UVMP105', 'Not reported', 'Yes', None, [None, None, None]),  # missing is not zero and not down
+    ('4G Satu.', 'MP', 'UVMP106', 'Inactive', None, 'Yes', [500, 500, 500]),      # not On-Air: out of count and denominator
+    ('4G Satu.', 'RJ', 'UVRJ101', 'Rajasthan', 'Yes', 'Yes', [0, 30, 0]),
+    ('LWE', 'MP', 'LWEMP101', 'LWE one', 'Yes', 'Yes', [10, 0, 0]),
+]
+
+
+class UniqueSitesDownTests(SimpleTestCase):
+    """USD: distinct active sites with outage > 0 at least once in the period, over every active site of the selection."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._tmp = tempfile.TemporaryDirectory()
+        path = write_workbook(Path(cls._tmp.name) / 'usd.xlsx', USD_SITES)
+        workbook.clear_cache()
+        with override_settings(MASTER_WORKBOOK_PATH=str(path)):
+            cls.ds = workbook.get_dataset()
+
+    @classmethod
+    def tearDownClass(cls):
+        workbook.clear_cache()
+        cls._tmp.cleanup()
+        super().tearDownClass()
+
+    def usd(self, selection=Selection(), days=(1, 2, 3)):
+        dates = [date(2026, 10, d) for d in days]
+        return metrics.period_summary(self.ds, selection, dates=dates, label='')['unique_sites_down']
+
+    def test_counts_each_site_once_and_only_active_sites(self):
+        # 4G MP: UVMP101, 102, 103 down; 104 up; 105 unreported; 106 inactive (excluded from both values).
+        self.assertEqual(self.usd(Selection('4G Saturation', 'MP', 'all')), {'count': 3, 'eligible_sites': 5, 'pct': 60.0})
+        self.assertEqual(self.usd(Selection('4G Saturation', 'MP')), {'count': 3, 'eligible_sites': 5, 'pct': 60.0})
+
+    def test_projects_and_circles_are_separate_and_never_double_counted(self):
+        self.assertEqual(self.usd(Selection('LWE', 'MP'))['count'], 1)
+        self.assertEqual(self.usd(Selection('4G Saturation', 'RJ'))['count'], 1)
+        everything = self.usd()
+        self.assertEqual(everything, {'count': 5, 'eligible_sites': 7, 'pct': 71.43})  # 3 + 1 (RJ) + 1 (LWE MP)
+
+    def test_om_start_scope_uses_the_same_population_for_count_and_denominator(self):
+        # O&M Start = Yes and active: UVMP101, 102, 104 (+ RJ, LWE); UVMP103 and 105 have no O&M Start.
+        self.assertEqual(self.usd(Selection('4G Saturation', 'MP', 'om_start')), {'count': 2, 'eligible_sites': 3, 'pct': 66.67})
+
+    def test_the_reporting_period_decides_without_summing_daily_counts(self):
+        self.assertEqual(self.usd(Selection('4G Saturation', 'MP'), days=(1,))['count'], 2)   # 101, 102
+        self.assertEqual(self.usd(Selection('4G Saturation', 'MP'), days=(3,))['count'], 2)   # 102, 103
+        self.assertEqual(self.usd(Selection('4G Saturation', 'MP'), days=(1, 2, 3))['count'], 3)  # not 2 + 1 + 2
+
+    def test_no_eligible_site_gives_no_percentage(self):
+        self.assertEqual(self.usd(Selection('LWE', 'RJ')), {'count': 0, 'eligible_sites': 0, 'pct': None})

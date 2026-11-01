@@ -31,7 +31,22 @@ def _dataset(request, action: str = 'view'):
         dataset = current_dataset()
     except WorkbookError as exc:
         raise ServiceUnavailable(str(exc), error_code=exc.code) from exc
-    return restrict(dataset, pairs_for(request.user, 'dashboard', action))
+    dataset = restrict(dataset, pairs_for(request.user, 'dashboard', action))
+    return _team(request, dataset)
+
+
+def _team(request, dataset):
+    """CI / IE Performance > Site Details: with team_group, team, team_project and team_circle, only that person's sites
+    (inside what the user may see). Applied on the server, so the URL cannot widen it; absent: unchanged."""
+    p = request.query_params
+    if not any(p.get(k) for k in ('team_group', 'team', 'team_project', 'team_circle')):
+        return dataset
+    group, name = p.get('team_group', ''), p.get('team', '').strip()
+    project, circle = p.get('team_project', ''), p.get('team_circle', '').strip().upper()
+    if group not in ('ci', 'ie') or not name or not project or not circle:
+        raise ValidationError({'team': 'A CI / IE filter needs team_group (ci or ie), team, team_project and team_circle.'})
+    from .scope import restrict_team
+    return restrict_team(dataset, group, name, project, circle)
 
 
 def _validated(serializer_class, request, dataset) -> dict:
@@ -105,6 +120,8 @@ def records_view(request):
     table = metrics.site_table(dataset, params['selection'], params['reporting_date'])
     table = metrics.search_sites(table, params['search'], params['bucket'] or None, params['bucket_basis'])
     table = metrics.filter_team(table, params['ci_name'], params['ie_name'])
+    if params['below_sla']:  # NSLA: MTD uptime below 98.5% (the penalty buckets, as on CI & IE Performance)
+        table = table[table['bucket'].isin(metrics.PENALTY_BUCKETS)]
     table = metrics.sort_sites(table, params['sort'], params['direction'] == 'desc')
 
     page, page_size, count = params['page'], params['page_size'], len(table)
@@ -120,7 +137,7 @@ def records_view(request):
         'records': [_record(row) for row in rows.to_dict('records')],
         'filters': {**_applied(params), 'search': params['search'], 'bucket': params['bucket'] or None,
                     'ci_name': params['ci_name'] or None, 'ie_name': params['ie_name'] or None,
-                    'bucket_basis': params['bucket_basis'],
+                    'bucket_basis': params['bucket_basis'], 'below_sla': params['below_sla'],
                     'sort': params['sort'], 'direction': params['direction']},
         'source': _source(dataset),
     })

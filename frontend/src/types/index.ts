@@ -648,6 +648,8 @@ export interface PeriodSummary {
   sites_at_or_above_98_5: number;
   /** Sites in each bucket by their own uptime over the period. */
   buckets?: Record<BucketId, number>;
+  /** USD: distinct active (On-Air) sites with outage > 0 at least once in the period, of every active site of the selection. */
+  unique_sites_down?: { count: number; eligible_sites: number; pct: number | null };
   filters: AppliedFilters;
   source: SourceInfo;
 }

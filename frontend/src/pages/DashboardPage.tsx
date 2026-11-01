@@ -46,9 +46,10 @@ export function DashboardPage() {
   const breakdown = useApiQuery(snapshotKey, (signal) => fetchBreakdowns(filters!.snapshotParams, signal));
   const monthly = useApiQuery(filters ? `${version}|monthly|${filters.monthlyParams}` : null, (signal) => fetchMonthly(filters!.monthlyParams, signal));
   const trend = useApiQuery(trendKey, (signal) => fetchTrends(filters!.trendParams, signal));
-  // The trend period card is shown on the 4G Saturation and LWE pages (a report type is selected), not the Overview.
+  // The trend period card is shown on the 4G Saturation and LWE pages (a report type is selected), not the Overview; the
+  // period itself is always loaded: the Unique sites down KPI counts sites over the selected reporting period.
   const showPeriod = Boolean(filters?.reportType);
-  const period = useApiQuery(showPeriod ? `${version}|period|${filters!.periodParams}` : null, (signal) => fetchPeriod(filters!.periodParams, signal));
+  const period = useApiQuery(filters ? `${version}|period|${filters.periodParams}` : null, (signal) => fetchPeriod(filters!.periodParams, signal));
 
   // Bucket drill-downs (alerts, Site Portfolio, Threshold Analysis: /?bucket=lt_60…) now open the buckets page,
   // with every parameter kept, so existing links keep working.
@@ -145,7 +146,7 @@ export function DashboardPage() {
       {summary.error ? (
         <Alert variant="destructive"><AlertTriangle /><AlertTitle>Key indicators unavailable</AlertTitle><AlertDescription>{summary.error.message}</AlertDescription></Alert>
       ) : (
-        <KpiCards summary={summary.data} loading={summary.loading} onShowBelow60={() => navigate(bucketsLink(searchParams, { bucket: 'lt_60' }))} />
+        <KpiCards summary={summary.data} period={period.data} loading={summary.loading || period.loading} onShowBelow60={() => navigate(bucketsLink(searchParams, { bucket: 'lt_60' }))} />
       )}
 
       {showPeriod && <PeriodKpi period={period.data} loading={period.loading} error={period.error} />}

@@ -4,10 +4,12 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { formatMinutes, formatNumber, formatPct, formatShortDate } from '../../lib/format';
-import type { OutagePeriod, SummaryResponse } from '../../types';
+import type { OutagePeriod, PeriodSummary, SummaryResponse } from '../../types';
 
 interface KpiCardsProps {
   summary: SummaryResponse | null;
+  /** The selected reporting period (trend period filter): the Unique sites down KPI counts over it. */
+  period?: PeriodSummary | null;
   loading: boolean;
   onShowBelow60: () => void;
 }
@@ -19,7 +21,7 @@ const share = (count: number | undefined, of: number | undefined) => (count != n
  * The five Overview KPIs (Overall, 4G Saturation and LWE all use this component with the page's filters). Every value
  * comes from /api/dashboard/summary/ for the active data source; nothing is computed or estimated here.
  */
-export function KpiCards({ summary, loading, onShowBelow60 }: KpiCardsProps) {
+export function KpiCards({ summary, period, loading, onShowBelow60 }: KpiCardsProps) {
   if (!summary) {
     return (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5" aria-busy="true">
@@ -30,8 +32,8 @@ export function KpiCards({ summary, loading, onShowBelow60 }: KpiCardsProps) {
 
   const m = summary.metrics;
   const mtd = summary.mtd_window;
-  const day = formatShortDate(summary.reporting_date);
   const withValue = m.sites_with_mtd_value;
+  const usd = period?.unique_sites_down;
 
   return (
     <section aria-label="Key indicators" className={cn('grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5', loading && 'opacity-60')}>
@@ -45,9 +47,9 @@ export function KpiCards({ summary, loading, onShowBelow60 }: KpiCardsProps) {
       <Kpi icon={<ShieldAlert />} label="Not meeting SLA" value={formatNumber(m.sites_not_meeting_sla_mtd ?? null)}
         share={share(m.sites_not_meeting_sla_mtd, withValue)} tone={m.sites_not_meeting_sla_mtd ? 'warning' : undefined}
         detail={`MTD uptime below 98.5% · of ${formatNumber(withValue ?? null)} sites with MTD data`} />
-      <Kpi icon={<WifiOff />} label="Unique sites down" value={formatNumber(m.sites_down_full_day)}
-        share={share(m.sites_down_full_day, m.sites_reported)} tone={m.sites_down_full_day ? 'critical' : undefined}
-        detail={`Down all day (1,440 min) on ${day} · of ${formatNumber(m.sites_reported)} sites reported`} />
+      <Kpi icon={<WifiOff />} label="Unique sites down" value={usd ? formatNumber(usd.count) : '…'} share={usd?.pct ?? null}
+        tone={usd?.count ? 'critical' : undefined}
+        detail={usd ? `Outage > 0 at least once · ${period!.label} · of ${formatNumber(usd.eligible_sites)} active sites` : 'Loading the reporting period…'} />
       <Kpi icon={<AlertOctagon />} label="Below 60% MTD" value={formatNumber(m.sites_below_60_mtd)}
         share={share(m.sites_below_60_mtd, withValue)} tone={m.sites_below_60_mtd ? 'critical' : undefined}
         detail={`of ${formatNumber(withValue ?? null)} sites with MTD data`}

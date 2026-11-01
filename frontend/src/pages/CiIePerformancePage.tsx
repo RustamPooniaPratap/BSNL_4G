@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown, Database, FileUp, Info, Search } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -14,7 +14,7 @@ import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { useDashboardFilters } from '../hooks/useDashboardFilters';
 import { formatDate, formatNumber, formatPct } from '../lib/format';
-import { UNASSIGNED } from '../lib/teams';
+import { teamSitesLink, UNASSIGNED } from '../lib/teams';
 import { fetchFilterOptions, fetchTeamMonthly } from '../services/api';
 import type { NslaValue, TeamGroup, TeamMonthlyResponse, TeamMonthlyRow } from '../types';
 
@@ -35,6 +35,7 @@ export function CiIePerformancePage() {
   // NSLA is the O&M Start penalty threshold, so this page starts on the O&M Start scope (as Threshold Analysis).
   const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data, { defaultScope: 'om_start' });
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const group: TeamGroup = searchParams.get('group') === 'ie' ? 'ie' : 'ci';
   const month = searchParams.get('month') ?? '';
   const setParam = (key: string, value: string | null) => setSearchParams((current) => {
@@ -125,14 +126,18 @@ export function CiIePerformancePage() {
         </Alert>
       ) : (
         <NslaTable key={group} data={result.data} loading={result.loading} error={result.error} group={group}
-          initialSearch={searchParams.get('q') ?? ''} />
+          initialSearch={searchParams.get('q') ?? ''}
+          sitesLink={(r) => teamSitesLink(group, r, { scope: filters.scope, back: `${location.pathname}${location.search}`,
+            month: result.data?.reporting_month && result.data.reporting_month !== latest ? result.data.reporting_month : undefined })} />
       )}
     </div>
   );
 }
 
-function NslaTable({ data, loading, error, group, initialSearch = '' }: {
+function NslaTable({ data, loading, error, group, initialSearch = '', sitesLink }: {
   data: TeamMonthlyResponse | null; loading: boolean; error: Error | null; group: TeamGroup; initialSearch?: string;
+  /** The person's assigned sites on Uptime Buckets & Site Details. */
+  sitesLink: (row: TeamMonthlyRow) => string;
 }) {
   const [search, setSearch] = useState(initialSearch);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'name', desc: false });
@@ -208,7 +213,12 @@ function NslaTable({ data, loading, error, group, initialSearch = '' }: {
             <tbody>
               {rows.map((r) => (
                 <tr key={`${r.report_type}|${r.circle}|${r.name}`} className="hover:bg-muted/40 [&_td]:border-b [&_th]:border-b">
-                  <th scope="row" className={cn(sticky, 'max-w-56 truncate px-2.5 py-1.5 text-left font-medium', r.name === UNASSIGNED && 'text-muted-foreground italic')} title={r.name}>{r.name}</th>
+                  <th scope="row" className={cn(sticky, 'max-w-56 truncate px-2.5 py-1.5 text-left font-medium', r.name === UNASSIGNED && 'text-muted-foreground italic')} title={r.name}>
+                    {r.name === UNASSIGNED ? r.name : (
+                      <Link to={sitesLink(r)} className="text-primary underline-offset-4 hover:underline focus-visible:underline"
+                        aria-label={`Sites of ${r.name} (${projectLabel(r.report_type)} ${r.circle})`}>{r.name}</Link>
+                    )}
+                  </th>
                   <td className="px-2.5 py-1.5">{r.circle}</td>
                   <td className="px-2.5 py-1.5">{projectLabel(r.report_type)}</td>
                   <td className="px-2.5 py-1.5 text-right">{formatNumber(r.sites_in_scope)}</td>
