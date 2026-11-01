@@ -103,9 +103,9 @@ def global_permissions(user) -> set[tuple[str, str]]:
 
 def global_permissions_of(role: str | None) -> set[tuple[str, str]]:
     if role == ADMIN:
-        return {(m, a) for m, spec in catalog.MODULES.items() for a in spec['actions']}
+        return {(m, a) for m, spec in catalog.modules().items() for a in spec['actions']}
     if role == NOC_LEAD:
-        return set(catalog.NOC_LEAD_PERMISSIONS)
+        return catalog.noc_lead_permissions()
     return set()
 
 
@@ -178,7 +178,8 @@ def explain(user, project: str, circle: str, module: str) -> dict:
             blocked.append({'assignment': a.pk, 'role': a.role.name, 'scope': 'Entire project' if a.project_circle_id is None else f'Circle {circle}',
                             'reason': problem})
     actions = []
-    for key, description in catalog.MODULES[module]['actions'].items():
+    spec = catalog.modules()[module]
+    for key, description in spec['actions'].items():
         via = []
         if (module, key) in by_global:
             via.append({'assignment': None, 'role': catalog_role_label(role), 'scope': 'Every project and circle (built-in role)'})
@@ -187,7 +188,7 @@ def explain(user, project: str, circle: str, module: str) -> dict:
         actions.append({'action': key, 'label': catalog.ACTION_LABELS[key], 'description': description, 'allowed': bool(via) and user.is_active,
                         'granted_by': via})
     return {'user': user.get_username(), 'is_active': user.is_active, 'project': project, 'circle': circle, 'module': module,
-            'module_label': catalog.MODULES[module]['label'], 'actions': actions, 'not_applying': blocked}
+            'module_label': spec['label'], 'actions': actions, 'not_applying': blocked}
 
 
 def catalog_role_label(role: str | None) -> str:

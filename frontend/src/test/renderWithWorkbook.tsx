@@ -22,7 +22,7 @@ export function workbookValue(overrides: Partial<WorkbookContextValue> = {}): Wo
 
 export const ADMIN_USER: AuthUser = { username: 'asha.admin', name: 'Asha', role: 'admin', role_label: 'Admin', must_change_password: false };
 /** The built-in CI role's permissions (accounts.catalog.CI_PERMISSIONS), held on the user's assigned circles. */
-export const CI_PERMISSIONS = { csv_upload: ['upload'], dashboard: ['export', 'view'], master_data: ['export', 'view'], rca_register: ['create', 'edit', 'view'], rca_upload: ['upload'] };
+export const CI_PERMISSIONS = { csv_upload: ['upload'], dashboard: ['export', 'view'], data_uptime_sites: ['export', 'view'], data_uptime_daily: ['export', 'view'], data_uptime_monthly: ['export', 'view'], data_escalation: ['export', 'view'], data_rca: ['export', 'view'], rca_register: ['create', 'edit', 'view'], rca_upload: ['upload'] };
 export const CI_USER: AuthUser = { username: 'ravi.ci', name: 'Ravi', role: 'ci', role_label: 'CI', must_change_password: false, permissions: CI_PERMISSIONS };
 
 export function authValue(overrides: Partial<AuthContextValue> = {}): AuthContextValue {

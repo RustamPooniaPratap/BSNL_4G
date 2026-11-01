@@ -136,7 +136,19 @@ export interface RcaBreakdown {
   not_mapped: { records: number; values: { final_bucket: string; records: number }[] };
   records: number;
   empty: boolean;
+  /**
+   * Site Master and daily performance per circle (not RCA records): active sites, Unique Sites Down (outage > 0 at least
+   * once) and NSLA sites (period uptime below 98.5%), for the reporting-date filter. null: no dashboard data.
+   * usd_sites / nsla_sites are null when no day of the period has performance data.
+   */
+  sites?: {
+    period: { label: string; first: string | null; last: string | null; days_reported: number };
+    rows: Record<string, RcaSiteMetrics>;
+    total: RcaSiteMetrics;
+  } | null;
 }
+
+export interface RcaSiteMetrics { total_sites: number; usd_sites: number | null; nsla_sites: number | null; days_reported: number }
 
 export interface RcaSummary {
   breakdown: RcaBreakdown;

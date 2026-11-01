@@ -11,7 +11,24 @@ export interface MasterDataset {
   time: boolean;
   columns: MasterColumn[];
   filters: { site: boolean; choices: { key: string; label: string }[] };
+  /** What this user may do here (Users & Roles › Data Panel · dataset); the server checks every request again. No delete. */
+  permissions: MasterPermissions;
 }
+
+export interface MasterPermissions {
+  view: boolean; add: boolean; edit: boolean; export: boolean;
+  /** Columns that can be changed on existing rows / filled in on new rows; required on new rows. */
+  editable: string[]; addable: string[]; required: string[];
+}
+
+/** One Data Panel save: changed cells of existing rows and new rows, written together or not at all. */
+export interface MasterSaveRequest {
+  changes: { id: number; values: Record<string, string> }[];
+  additions: { values: Record<string, string> }[];
+}
+export interface MasterSaveResult { saved: true; updated: number; added: number; ids: number[] }
+/** 400 details: errors per row id (changes) or new-row index (additions), per column ('_row' for the whole row). */
+export interface MasterSaveErrors { changes: Record<string, Record<string, string>>; additions: Record<string, Record<string, string>> }
 
 export interface MasterDatasets { datasets: MasterDataset[]; page_sizes: number[]; weeks: { value: number; label: string }[] }
 

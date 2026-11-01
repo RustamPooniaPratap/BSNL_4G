@@ -20,7 +20,7 @@ from django.db.models import Count, Max, OuterRef, Q, QuerySet, Subquery, Sum
 from rest_framework.exceptions import ValidationError
 
 from . import taxonomy
-from .breakdown import breakdown
+from .breakdown import breakdown, site_metrics
 from .models import RcaCauseCategory, RcaCauseMapping, RcaRecord, RcaWorkflow
 
 logger = logging.getLogger(__name__)
@@ -308,7 +308,9 @@ def summary(params, pairs=None) -> dict:
     latest = qs.aggregate(latest=Max('reporting_date'))['latest']
     through = (end or latest).isoformat() if (end or latest) else None
     return {
-        'breakdown': breakdown(qs, circles=breakdown_circles, through=through),
+        'breakdown': {**breakdown(qs, circles=breakdown_circles, through=through),
+                      # Site Master and performance figures per circle (not RCA records): Total, USD and NSLA sites.
+                      'sites': site_metrics(params, pairs, sorted(set(breakdown_circles) | set(qs.values_list('circle', flat=True).distinct())))},
         'kpis': {
             'records': totals['records'], 'affected_sites': sites, 'outage_minutes': _round(totals['minutes']),
             'records_with_minutes': totals['with_minutes'],

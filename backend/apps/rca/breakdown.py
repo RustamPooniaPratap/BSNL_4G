@@ -99,3 +99,54 @@ def breakdown(qs: QuerySet, *, circles: list[str], through: str | None) -> dict:
         'records': grand_total + sum(unmapped.values()),
         'empty': grand_total + sum(unmapped.values()) == 0,
     }
+
+
+def site_metrics(params, pairs, circles: list[str]) -> dict | None:
+    """Total Sites, USD Sites and NSLA Sites (<98.5%) per circle: site master and daily performance data, never RCA
+    records. Each value comes from ``dashboard.metrics.period_summary``, the calculation behind the Overview's Unique
+    sites down KPI and the dashboard's period buckets, so the same project, circle and period give the same numbers.
+
+    - Sites: active sites (On-Air = Yes, the site master's only activity flag) of the circle, every project of the
+      project filter; one row per site of one project, so nothing is counted twice.
+    - Period: the Reporting date filter (one date, or the date range); without one, the dashboard's month to date.
+    - USD: outage > 0 at least once in the period. NSLA: the site's uptime over the period below 98.5% (the penalty
+      buckets); a site without any value in the period is in neither.
+    - Only the project, circle and reporting-date filters apply: Final Bucket, Bucket - 2, category and RCA
+      applicability describe RCA records, which the site master does not have.
+    None when the dashboard has no data.
+    """
+    from datetime import date as _date, timedelta
+
+    from apps.dashboard.metrics import PENALTY_BUCKETS, Selection, period_summary
+    from apps.dashboard.scope import restrict
+    from apps.dashboard.workbook import WorkbookError
+    from apps.uptimedb.datasource import current_dataset
+
+    try:
+        ds = restrict(current_dataset(), pairs)
+    except WorkbookError:
+        return None
+    parse = lambda v: _date.fromisoformat(v) if v else None  # noqa: E731 - validated already by services.filtered
+    day, start, end = parse(params.get('date')), parse(params.get('date_from')), parse(params.get('date_to'))
+    if day:
+        dates, label = [day], day.isoformat()
+    elif start or end:
+        start, end = start or ds.dates[0], end or ds.latest_date or ds.dates[-1]
+        dates, label = [start + timedelta(days=i) for i in range((end - start).days + 1)], f'{start.isoformat()} – {end.isoformat()}'
+    else:
+        latest = ds.latest_date or ds.dates[-1]
+        dates, label = [d for d in ds.dates if d <= latest], 'Month to date'
+    project = params.get('project') or None
+
+    def measure(circle: str | None) -> dict:
+        p = period_summary(ds, Selection(project, circle, 'on_air'), dates=dates, label='')
+        reported = p['days_reported'] > 0
+        return {'total_sites': p['sites_in_scope'],
+                'usd_sites': p['unique_sites_down']['count'] if reported else None,
+                'nsla_sites': sum(p['buckets'][b] for b in PENALTY_BUCKETS) if reported else None,
+                'days_reported': p['days_reported']}
+
+    total = measure(params.get('circle') or None)
+    return {'period': {'label': label, 'first': dates[0].isoformat() if dates else None, 'last': dates[-1].isoformat() if dates else None,
+                       'days_reported': total['days_reported']},
+            'rows': {c: measure(c) for c in circles}, 'total': total}

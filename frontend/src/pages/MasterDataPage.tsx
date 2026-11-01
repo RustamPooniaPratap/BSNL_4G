@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
-import { Download, RotateCcw, Search } from 'lucide-react';
+import { Download, Pencil, RotateCcw, Search } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,18 +9,20 @@ import { cn } from '@/lib/utils';
 import { SelectField } from '../components/data/DataEntry';
 import { Field, FilterCard } from '../components/dashboard/FilterBar';
 import { DataGrid } from '../components/masterdata/DataGrid';
+import { EditBar, useUnsavedGuard } from '../components/masterdata/EditBar';
+import { useDataEdits } from '../components/masterdata/useDataEdits';
 import { Segmented } from '../components/rca/RcaShared';
 import { PageHeading } from '../context/pageHeader';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { formatDate } from '../lib/format';
-import { fetchMasterDatasets, fetchMasterOptions, fetchMasterRecords, masterExportUrl } from '../services/api';
-import type { MasterDataset, MasterDatasets, MasterOptions } from '../types/masterData';
+import { ApiError, fetchMasterDatasets, fetchMasterOptions, fetchMasterRecords, masterExportUrl, saveMasterData } from '../services/api';
+import type { MasterDataset, MasterDatasets, MasterOptions, MasterSaveErrors } from '../types/masterData';
 
 /** The tabs: one sidebar entry (Master Data), one URL per tab. A new dataset is a new tab here plus its server registration. */
 const TABS = [
-  { path: '/master-data', label: 'Uptime Master' },
-  { path: '/master-data/escalation', label: 'CI-wise Consolidation & Escalation Matrix' },
-  { path: '/master-data/rca', label: 'RCA Data' },
+  { path: '/master-data', label: 'Uptime Master', datasets: ['uptime_sites', 'uptime_daily', 'uptime_monthly'] },
+  { path: '/master-data/escalation', label: 'CI-wise Consolidation & Escalation Matrix', datasets: ['escalation'] },
+  { path: '/master-data/rca', label: 'RCA Data', datasets: ['rca'] },
 ];
 type Period = 'daily' | 'weekly' | 'monthly' | 'overall';
 const PERIODS: [Period, string][] = [['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly'], ['overall', 'Overall']];
@@ -63,9 +65,10 @@ export function MasterDataPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeading title="Master Data" subtitle="Central database explorer: the business data stored in PostgreSQL, read only. Search, filter and export each dataset." />
+      <PageHeading title="Master Data" subtitle="Central database explorer: the business data stored in PostgreSQL. Search, filter and export each dataset; edit and add records where your role allows (no deletion)." />
       <nav aria-label="Master Data datasets" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1 shadow-xs">
-        {TABS.map((t) => (
+        {/* Only tabs with a dataset this user may view (the server lists only those). */}
+        {TABS.filter((t) => !meta.data || t === tab || t.datasets.some((k) => meta.data!.datasets.some((d) => d.key === k))).map((t) => (
           <Link key={t.path} to={t.path} aria-current={t === tab ? 'page' : undefined}
             className={cn('rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
               t === tab ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
@@ -74,7 +77,10 @@ export function MasterDataPage() {
         ))}
       </nav>
       {meta.error && <Alert variant="destructive"><AlertDescription>{meta.error.message}</AlertDescription></Alert>}
-      {!ds || !meta.data ? !meta.error && <Skeleton className="h-96 w-full" /> : (
+      {meta.data && !ds && (
+        <Alert><AlertDescription>You do not have access to this dataset. Ask an Admin to grant it on Users &amp; Roles.</AlertDescription></Alert>
+      )}
+      {!ds || !meta.data ? !meta.error && !meta.data && <Skeleton className="h-96 w-full" /> : (
         <DatasetView key={key} ds={ds} meta={meta.data} options={options.data} params={params} set={set}
           showView={path === '/master-data'} reset={() => setParams(new URLSearchParams(VIEW_KEYS.flatMap((k) => (params.get(k) ? [[k, params.get(k)!]] : []))), { replace: true })} />
       )}
@@ -98,12 +104,41 @@ function effectiveParams(ds: MasterDataset, options: MasterOptions | null, param
   return out;
 }
 
-function DatasetView({ ds, meta, options, params, set, reset, showView }: {
+function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, showView }: {
   ds: MasterDataset; meta: MasterDatasets; options: MasterOptions | null; params: URLSearchParams; showView: boolean;
   set: (changes: Record<string, string | null>) => void; reset: () => void;
 }) {
   const query = effectiveParams(ds, options, params);
-  const records = useApiQuery(options || !ds.time ? `master-records|${ds.key}|${query}` : null, (signal) => fetchMasterRecords(ds.key, query, signal));
+  const [saved, setSaved] = useState(0);  // a successful save reloads the page of records from the database
+  const records = useApiQuery(options || !ds.time ? `master-records|${ds.key}|${query}|${saved}` : null, (signal) => fetchMasterRecords(ds.key, query, signal));
+  const perms = ds.permissions;
+  const edits = useDataEdits();
+  const [editMode, setEditMode] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  /** Save Changes: everything in one request; the success message only after the database confirmed it. */
+  const save = async (): Promise<boolean> => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const r = await saveMasterData(ds.key, edits.payload());
+      edits.discard();
+      setSaved((n) => n + 1);
+      setMessage({ ok: true, text: `Saved to the database: ${r.updated} record${r.updated === 1 ? '' : 's'} updated, ${r.added} added.` });
+      return true;
+    } catch (e) {
+      const details = e instanceof ApiError ? (e.details as unknown as Partial<MasterSaveErrors>) : null;
+      if (details?.changes || details?.additions) edits.setErrors({ changes: details.changes ?? {}, additions: details.additions ?? {} });
+      setMessage({ ok: false, text: `${(e as Error).message} Nothing was saved.` });
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const { guard, dialog } = useUnsavedGuard(edits.dirty, save, edits.discard);
+  // Filters, paging, sorting and the view switch ask first when changes are pending.
+  const set = (changes: Record<string, string | null>) => guard(() => setNow(changes));
+  const reset = () => guard(resetNow);
   const [visible, setVisible] = useState(() => ds.columns.filter((c) => !c.hidden).map((c) => c.key));
   const [resets, setResets] = useState(0);  // remounts the text filters after a reset (they keep their own typing state)
   const exportParams = new URLSearchParams(query);
@@ -157,12 +192,25 @@ function DatasetView({ ds, meta, options, params, set, reset, showView }: {
       <DataGrid title={ds.label} columns={ds.columns} visible={visible} onVisible={setVisible} page={records.data} loading={records.loading} error={records.error}
         sort={params.get('sort') ?? ''} onSort={(s) => set({ sort: s })} pageSizes={meta.page_sizes}
         onPage={(p) => set({ page: String(p) })} onPageSize={(n) => set({ page_size: String(n) })}
+        editing={editMode ? { edits, editable: perms.editable, addable: perms.addable, required: perms.required } : null}
+        toolbar={editMode ? (
+          <EditBar edits={edits} canAdd={perms.add} busy={busy} message={message} onSave={() => { void save(); }}
+            onDone={() => { setEditMode(false); setMessage(null); }} />
+        ) : null}
         actions={(
           <>
-            <Button asChild size="sm" variant="outline" className="h-8"><a href={masterExportUrl(ds.key, new URLSearchParams([...exportParams, ['file', 'csv']]))}><Download /> CSV</a></Button>
-            <Button asChild size="sm" variant="outline" className="h-8"><a href={masterExportUrl(ds.key, new URLSearchParams([...exportParams, ['file', 'xlsx']]))}><Download /> Excel</a></Button>
+            {(perms.edit || perms.add) && !editMode && (
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setEditMode(true)}><Pencil /> Edit</Button>
+            )}
+            {perms.export && (
+              <>
+                <Button asChild size="sm" variant="outline" className="h-8"><a download href={masterExportUrl(ds.key, new URLSearchParams([...exportParams, ['file', 'csv']]))}><Download /> CSV</a></Button>
+                <Button asChild size="sm" variant="outline" className="h-8"><a download href={masterExportUrl(ds.key, new URLSearchParams([...exportParams, ['file', 'xlsx']]))}><Download /> Excel</a></Button>
+              </>
+            )}
           </>
         )} />
+      {dialog}
     </>
   );
 }

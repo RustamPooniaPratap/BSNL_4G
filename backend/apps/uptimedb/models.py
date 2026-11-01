@@ -21,6 +21,8 @@ class DataImportBatch(models.Model):
     class Kind(models.TextChoices):
         MASTER_WORKBOOK = 'master_workbook', 'Master workbook'
         RAW_DAILY_CSV = 'raw_daily_csv', 'Raw daily CSV'
+        # Records added or changed by hand in the Data Panel (one batch per Save; nothing is read from a file).
+        DATA_PANEL = 'data_panel', 'Data Panel edit'
 
     kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.MASTER_WORKBOOK)
     # Raw daily CSV uploads: the details entered with the file (blank for Master workbook imports).

@@ -31,7 +31,7 @@ def set_must_change_password(user, value: bool) -> None:
 
 # --- Roles, permissions and project/circle assignments ----------------------------------------------
 # A user's rights outside the Admin and NOC Lead roles come only from assignments: role X on project P (all its circles,
-# or one circle of it). What a role may do is a set of (module, action) grants from ``catalog.MODULES``; a new role has
+# or one circle of it). What a role may do is a set of (module, action) grants from ``catalog.modules()``; a new role has
 # none. Admin and NOC Lead stay Django groups with their fixed rights (see ``access``).
 
 class Role(models.Model):

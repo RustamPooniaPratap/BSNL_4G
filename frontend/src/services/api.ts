@@ -44,7 +44,7 @@ import type {
   RcaSummary, RcaUploadDetails, RcaUploadRights, RcaUploadType, RcaWorkflowInput,
 } from '../types/rca';
 import type { ArrivalTracker, RawRowsPage, RawUpload, RawUploadDetails, RawUploadOptions } from '../types/rawUpload';
-import type { MasterDatasets, MasterOptions, MasterPage } from '../types/masterData';
+import type { MasterDatasets, MasterOptions, MasterPage, MasterSaveRequest, MasterSaveResult } from '../types/masterData';
 import type { AlertAccount, AlertAutomation, AlertAutomationInput, AlertHistory, AlertMessage, AlertOptions, AlertPreview, AlertWorker } from '../types/alerts';
 import type { OrgAccessUser, OrgAlias, OrgAssociation, OrgChange, OrgCircle, OrgProject, OrgRemoval, OrgSiteIdMapping, OrganizationCatalog } from '../types/organization';
 
@@ -436,6 +436,8 @@ export const fetchMasterOptions = (key: string, params: URLSearchParams, signal?
 export const fetchMasterRecords = (key: string, params: URLSearchParams, signal?: AbortSignal) =>
   request<MasterPage>(`/master-data/${key}/records/`, params, { signal });
 /** Download link of the filtered records (the browser sends the session cookie). */
+/** Data Panel: every pending change of one dataset in one transaction (Add / Edit only; there is no delete). */
+export const saveMasterData = (key: string, body: MasterSaveRequest) => send<MasterSaveResult>(`/master-data/${key}/save/`, body as unknown as Record<string, unknown>);
 export const masterExportUrl = (key: string, params: URLSearchParams) => `${API_BASE_URL}/master-data/${key}/export/?${params}`;
 
 // --- Alert & Email Automation (Administration › Alert) ----------------------------------------

@@ -49,7 +49,7 @@ def Can(module: str, action: str):  # noqa: N802 - used like a permission class
     assert catalog.is_known(module, action), f'{module}.{action} is not in the permission catalogue'
 
     class _Can(IsPortalUser):
-        message = f'You do not have the {catalog.MODULES[module]["label"]} {catalog.ACTION_LABELS[action]} permission.'
+        message = f'You do not have the {catalog.modules()[module]["label"]} {catalog.ACTION_LABELS[action]} permission.'
 
         def has_permission(self, request, view) -> bool:
             from .access import can

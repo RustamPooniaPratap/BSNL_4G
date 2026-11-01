@@ -33,7 +33,7 @@ export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/ci-ie', '
  */
 const PAGE_PERMISSIONS: Record<string, string> = {
   '/': 'dashboard.view', '/portfolio': 'dashboard.view', '/thresholds': 'dashboard.view', '/thresholds/buckets': 'dashboard.view',
-  '/data-source': 'dashboard.view', '/master-data': 'master_data.view',
+  '/data-source': 'dashboard.view', '/master-data': 'data_*.view',
   '/data/upload-csv': 'csv_upload.upload', '/data/add-row': 'csv_upload.upload', '/data/new-site': 'csv_upload.upload',
   '/rca': 'rca_register.view', '/rca/import': 'rca_upload.upload', '/rca/summary': 'rca_summary.view',
 };
@@ -46,7 +46,10 @@ export function pagePermission(path: string): string | undefined {
 /** Whether the user holds ``permission`` ('module.action') on at least one project/circle. */
 export function hasPermission(user: AuthUser | null | undefined, permission: string): boolean {
   const [module, action] = permission.split('.');
-  return user?.role === 'admin' || !!user?.permissions?.[module]?.includes(action);
+  if (user?.role === 'admin') return true;
+  // 'data_*': any Data Panel dataset (each dataset is its own module, data_<dataset>).
+  if (module.endsWith('*')) return Object.entries(user?.permissions ?? {}).some(([m, actions]) => m.startsWith(module.slice(0, -1)) && actions.includes(action));
+  return !!user?.permissions?.[module]?.includes(action);
 }
 
 /** Admin: every page. Others: the pages their permissions allow (never the Admin-only ones). */

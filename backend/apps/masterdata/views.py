@@ -14,13 +14,16 @@ from datetime import date, datetime
 from django.db.models import Q, QuerySet
 from django.http import HttpResponse, StreamingHttpResponse
 from openpyxl import Workbook
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from rest_framework.parsers import JSONParser
 from rest_framework.response import Response
 
-from apps.accounts.permissions import Can
+from apps.accounts.access import can, pairs_for, pairs_q
+from apps.accounts.audit import audit
+from apps.accounts.catalog import data_module
+from apps.accounts.permissions import IsPortalUser
 from apps.accounts.roles import ADMIN, role_of
-from apps.accounts.access import pairs_for, pairs_q
 from apps.dashboard.metrics import WEEKS
 from apps.rca import taxonomy
 
@@ -59,9 +62,15 @@ def _int(value: str | None, name: str, low: int, high: int) -> int | None:
     return int(value)
 
 
+def _require(request, ds: Dataset, action: str) -> None:
+    """The dataset's own permission (Users & Roles › Data Panel · <dataset>), checked on every request."""
+    if not can(request.user, data_module(ds.key), action):
+        raise PermissionDenied(f'You do not have the {action.capitalize()} permission on {ds.label}.')
+
+
 def scoped(request, ds: Dataset, action: str = 'view') -> QuerySet:
-    """The dataset's records inside the project/circle pairs of the user's Master Data permission (accounts.access)."""
-    return ds.queryset().filter(pairs_q(pairs_for(request.user, 'master_data', action), ds.project, ds.circle))
+    """The dataset's records inside the project/circle pairs of the user's permission on it (accounts.access)."""
+    return ds.queryset().filter(pairs_q(pairs_for(request.user, data_module(ds.key), action), ds.project, ds.circle))
 
 
 def period_range(ds: Dataset, params) -> tuple[date | None, date | None]:
@@ -146,20 +155,28 @@ def _column_json(ds: Dataset, columns: list[Column]) -> list[dict]:
 
 
 @api_view(['GET'])
-@permission_classes([Can('master_data', 'view')])
+@permission_classes([IsPortalUser])
 def datasets(request):
+    """The datasets the user may view, each with what they may do on it (View, Add, Edit, Export; never Delete)."""
+    from .editing import capabilities
+    visible = [(d, capabilities(request.user, d)) for d in DATASETS.values()]
+    visible = [(d, c) for d, c in visible if c['view']]
+    if not visible:
+        raise PermissionDenied('You do not have access to any Data Panel dataset.')
     return Response({'datasets': [{'key': d.key, 'label': d.label, 'description': d.description, 'time': bool(d.date or d.month),
                                    'columns': _column_json(d, _columns(request, d)),
-                                   'filters': {'site': bool(d.site_id), 'choices': [{'key': c.key, 'label': c.label} for c in d.choices]}}
-                                  for d in DATASETS.values()],
+                                   'filters': {'site': bool(d.site_id), 'choices': [{'key': c.key, 'label': c.label} for c in d.choices]},
+                                   'permissions': caps}
+                                  for d, caps in visible],
                      'page_sizes': PAGE_SIZES, 'weeks': [{'value': i + 1, 'label': f'{w[0]} (days {w[1]}–{w[2] if w[2] < 31 else "end"})'}
                                                          for i, w in enumerate(WEEKS)]})
 
 
 @api_view(['GET'])
-@permission_classes([Can('master_data', 'view')])
+@permission_classes([IsPortalUser])
 def records(request, key: str):
     ds = _dataset(key)
+    _require(request, ds, 'view')
     columns = _columns(request, ds)
     qs = filtered(request, ds).order_by(*_ordering(request, ds, columns))
     size = _int(request.query_params.get('page_size'), 'page_size', 1, max(PAGE_SIZES)) or PAGE_SIZES[1]
@@ -171,10 +188,11 @@ def records(request, key: str):
 
 
 @api_view(['GET'])
-@permission_classes([Can('master_data', 'view')])
+@permission_classes([IsPortalUser])
 def options(request, key: str):
     """Filter options from the records the user may see (projects, circles, years and months, choices)."""
     ds = _dataset(key)
+    _require(request, ds, 'view')
     qs = scoped(request, ds).order_by()
     out = {'projects': sorted(v for v in qs.values_list(ds.project, flat=True).distinct() if v)}
     project = request.query_params.get('project')
@@ -191,10 +209,11 @@ def options(request, key: str):
 
 
 @api_view(['GET'])
-@permission_classes([Can('master_data', 'export')])
+@permission_classes([IsPortalUser])
 def export(request, key: str):
     """The filtered records, sorted as shown, with the chosen columns (all if none): CSV (streamed) or Excel."""
     ds = _dataset(key)
+    _require(request, ds, 'export')
     allowed = _columns(request, ds)
     wanted = [k for k in (request.query_params.get('columns') or '').split(',') if k]
     columns = [c for c in allowed if not wanted or c.key in wanted]
@@ -233,3 +252,23 @@ def export(request, key: str):
 def _chunks(qs: QuerySet, ds: Dataset, columns: list[Column], size: int = 5000):
     for start in range(0, qs.count(), size):
         yield _rows(qs[start:start + size], ds, columns)
+
+
+@api_view(['POST'])
+@parser_classes([JSONParser])
+@permission_classes([IsPortalUser])
+def save(request, key: str):
+    """Data Panel: save every pending change of one dataset in one transaction (no partial save, no delete)."""
+    from .editing import SaveRefused
+    from .editing import save as save_changes
+    ds = _dataset(key)
+    _require(request, ds, 'view')
+    try:
+        result = save_changes(request.user, ds, request.data if isinstance(request.data, dict) else {})
+    except SaveRefused as exc:
+        return Response({'error': str(exc), 'details': {}}, status=exc.status)
+    if not result['saved']:
+        return Response({'error': result['errors'].get('_form') or 'Nothing was saved: correct the highlighted cells.', 'details': result['errors']},
+                        status=400)
+    audit('data_panel_saved', request, dataset=ds.key, updated=result['updated'], added=result['added'])
+    return Response(result)

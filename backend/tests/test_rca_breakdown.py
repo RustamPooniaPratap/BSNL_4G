@@ -91,3 +91,73 @@ class SummaryBreakdownTests(SignedInTestCase):
         self.assertEqual(response['kpis']['records'], 14)
         self.client.force_login(portal_user('rca-ci', 'ci'))
         self.assertEqual(self.client.get(reverse('rca-summary')).status_code, 403)
+
+
+class SiteColumnsTests(SignedInTestCase):
+    """Total, USD and NSLA Sites: Site Master and performance (the Overview's period_summary), never RCA records."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        from apps.dashboard import workbook
+
+        from .test_metrics import USD_SITES
+        from .workbook_factory import write_workbook
+        super().setUpClass()
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls._override = override_settings(MASTER_WORKBOOK_PATH=str(write_workbook(Path(cls._tmp.name) / 'usd.xlsx', USD_SITES)))
+        cls._override.enable()
+        workbook.clear_cache()
+
+    @classmethod
+    def tearDownClass(cls):
+        from apps.dashboard import workbook
+        cls._override.disable()
+        workbook.clear_cache()
+        cls._tmp.cleanup()
+        super().tearDownClass()
+
+    def setUp(self):
+        super().setUp()
+        for _ in range(5):  # many RCA records on one circle: they must not change the site counts
+            record('MP', 'BSNL OFC', day=date(2026, 10, 2))
+        record('RJ', 'TCS', day=date(2026, 10, 2))
+
+    def sites(self, **params):
+        response = self.client.get(reverse('rca-summary'), params)
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        return response.json()['breakdown']
+
+    def test_columns_per_circle_and_a_total_without_double_counting(self):
+        b = self.sites()
+        s = b['sites']
+        mp, rj = s['rows']['MP'], s['rows']['RJ']
+        # MP (4G + LWE): 5 active 4G sites (the inactive one excluded) + 1 LWE site; USD 101, 102, 103 + LWE MP.
+        self.assertEqual((mp['total_sites'], mp['usd_sites']), (6, 4))
+        self.assertEqual((rj['total_sites'], rj['usd_sites']), (1, 1))
+        self.assertEqual({k: s['total'][k] for k in ('total_sites', 'usd_sites')}, {'total_sites': 7, 'usd_sites': 5})
+        for key in ('total_sites', 'usd_sites', 'nsla_sites'):
+            self.assertEqual(s['total'][key], sum(r[key] for r in s['rows'].values()), key)
+        self.assertEqual(b['grand_total'], 6)  # the RCA counts are unchanged by the new columns
+
+    def test_usd_and_nsla_reuse_the_overview_calculation_for_the_same_selection(self):
+        from apps.dashboard.metrics import PENALTY_BUCKETS, Selection, period_summary
+        from apps.uptimedb.datasource import current_dataset
+        ds = current_dataset()
+        for params, selection, days in (({}, Selection(scope='on_air'), [1, 2, 3]),
+                                        ({'date': '2026-10-01'}, Selection(scope='on_air'), [1]),
+                                        ({'project': '4G Saturation', 'circle': 'MP'}, Selection('4G Saturation', 'MP', 'on_air'), [1, 2, 3])):
+            p = period_summary(ds, selection, dates=[date(2026, 10, d) for d in days], label='')
+            total = self.sites(**params)['sites']['total']
+            self.assertEqual(total['usd_sites'], p['unique_sites_down']['count'], params)
+            self.assertEqual(total['nsla_sites'], sum(p['buckets'][b] for b in PENALTY_BUCKETS), params)
+
+    def test_the_period_and_project_filters_change_the_values_and_rca_filters_do_not(self):
+        mtd, day = self.sites()['sites']['rows']['MP'], self.sites(date='2026-10-01')['sites']['rows']['MP']
+        self.assertEqual((mtd['usd_sites'], day['usd_sites']), (4, 3))  # 101, 102 (4G) + LWE MP on 1 Oct only
+        self.assertEqual(self.sites(project='LWE')['sites']['rows']['MP']['total_sites'], 1)
+        self.assertEqual(self.sites(final_bucket='tcs')['sites']['rows']['MP'], mtd)  # RCA filters describe records, not sites

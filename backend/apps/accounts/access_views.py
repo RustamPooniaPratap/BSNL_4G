@@ -184,7 +184,7 @@ def preview(request):
     p = request.query_params
     user = _user(p.get('user'))
     module = p.get('module')
-    if module not in catalog.MODULES:
+    if module not in catalog.modules():
         raise ValidationError({'module': 'Choose a module.'})
     if not p.get('project') or not p.get('circle'):
         raise ValidationError({'circle': 'Choose the project and circle.'})

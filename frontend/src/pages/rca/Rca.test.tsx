@@ -52,6 +52,15 @@ const BREAKDOWN: RcaBreakdown = {
   not_mapped: { records: 5, values: [{ final_bucket: 'BB', records: 5 }] },
   records: 105,
   empty: false,
+  sites: {
+    period: { label: 'Month to date', first: '2026-10-01', last: '2026-10-26', days_reported: 26 },
+    rows: {
+      AP: { total_sites: 12, usd_sites: 11, nsla_sites: 4, days_reported: 26 },
+      MP: { total_sites: 120, usd_sites: 100, nsla_sites: 60, days_reported: 26 },
+      OD: { total_sites: 80, usd_sites: 70, nsla_sites: 30, days_reported: 26 },
+    },
+    total: { total_sites: 212, usd_sites: 181, nsla_sites: 94, days_reported: 26 },
+  },
 };
 const SUMMARY: RcaSummary = {
   breakdown: BREAKDOWN,
@@ -200,7 +209,7 @@ describe('RCA Summary', () => {
     expect(screen.queryByRole('region', { name: 'RCA summary KPIs' })).not.toBeInTheDocument();  // its own page
     expect(within(table).getByText('Through 26 Oct 2026 · Final Bucket, filtered as above')).toBeInTheDocument();
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(headers).toEqual(['Circle', ...BREAKDOWN_LABELS, 'Grand Total', 'Not mapped']);
+    expect(headers).toEqual(['Circle', 'Total Sites', 'USD Sites', 'NSLA Sites (<98.5%)', ...BREAKDOWN_LABELS, 'Grand Total', 'Not mapped']);
     expect(headers).not.toContain('BSNL-Link');  // out of scope: removed
     expect(headers).not.toContain('PTPL-Techn');
     const row = (name: string) => within(table).getByRole('row', { name }).querySelectorAll('th, td');
@@ -209,6 +218,10 @@ describe('RCA Summary', () => {
     expect([at('Total', 'BSNL-OFC'), at('Total', 'Grand Total'), at('Total', 'Not mapped')]).toEqual(['50', '100', '5']);
     expect([at('Circle MP', 'BSNL-OFC'), at('Circle MP', 'Grand Total')]).toEqual(['30', '40']);
     expect([at('Circle AP', 'BSNL-OFC'), at('Circle AP', 'Grand Total')]).toEqual(['', '']);  // no records: empty, not 0
+    // Site columns (Site Master and performance) are filled even for a circle without RCA records.
+    expect(['Total Sites', 'USD Sites', 'NSLA Sites (<98.5%)'].map((l) => at('Circle AP', l))).toEqual(['12', '11', '4']);
+    expect(['Total Sites', 'USD Sites', 'NSLA Sites (<98.5%)'].map((l) => at('Total', l))).toEqual(['212', '181', '94']);
+    expect(at('RCA % of Total', 'Total Sites')).toBe('');
     expect(within(table).getByText(/Not mapped \(outside the Grand Total\): BB 5\./)).toBeInTheDocument();
     m.fetchRcaSummary.mockResolvedValue({ ...SUMMARY, breakdown: { ...BREAKDOWN, through: '2026-10-22', rows: [], totals: counts({}), grand_total: 0, records: 0, empty: true,
       percent_of_total: counts({}, true), not_mapped: { records: 0, values: [] } } });

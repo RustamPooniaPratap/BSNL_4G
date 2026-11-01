@@ -14,15 +14,17 @@ vi.mock('../services/api', async (importOriginal) => ({
 const m = vi.mocked(api);
 vi.setConfig({ testTimeout: 20000 });
 const col = (key: string, label: string, kind = 'text', hidden = false) => ({ key, label, kind, hidden }) as MasterDatasets['datasets'][0]['columns'][0];
+/** View and Export only: the read-only explorer (as before editing existed). */
+const READ = { view: true, export: true, edit: false, add: false, editable: [], addable: [], required: [] };
 const META: MasterDatasets = {
   page_sizes: [25, 50], weeks: [{ value: 1, label: 'Week 1 (days 1–7)' }, { value: 2, label: 'Week 2 (days 8–14)' }],
   datasets: [
     { key: 'uptime_sites', label: 'Site Master', description: 'Sites.', time: false, columns: [col('site_id', 'Site ID'), col('ci_contact', 'CI contact', 'text', true)],
-      filters: { site: true, choices: [] } },
+      filters: { site: true, choices: [] }, permissions: READ },
     { key: 'uptime_daily', label: 'Daily Performance', description: 'Daily.', time: true,
-      columns: [col('date', 'Reporting date', 'date'), col('site_id', 'Site ID'), col('outage_minutes', 'Outage minutes', 'minutes')], filters: { site: true, choices: [] } },
-    { key: 'escalation', label: 'CI-wise Consolidation & Escalation Matrix', description: 'Matrix.', time: false, columns: [col('site_id', 'BSNL Site ID')], filters: { site: true, choices: [] } },
-    { key: 'rca', label: 'RCA Data', description: 'RCA.', time: true, columns: [col('reporting_date', 'Date', 'date')], filters: { site: true, choices: [] } },
+      columns: [col('date', 'Reporting date', 'date'), col('site_id', 'Site ID'), col('outage_minutes', 'Outage minutes', 'minutes')], filters: { site: true, choices: [] }, permissions: READ },
+    { key: 'escalation', label: 'CI-wise Consolidation & Escalation Matrix', description: 'Matrix.', time: false, columns: [col('site_id', 'BSNL Site ID')], filters: { site: true, choices: [] }, permissions: READ },
+    { key: 'rca', label: 'RCA Data', description: 'RCA.', time: true, columns: [col('reporting_date', 'Date', 'date')], filters: { site: true, choices: [] }, permissions: READ },
   ],
 };
 const lastParams = () => m.fetchMasterRecords.mock.calls.at(-1)![1] as URLSearchParams;

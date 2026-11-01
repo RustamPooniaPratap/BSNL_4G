@@ -57,3 +57,20 @@ After deploying, give each CI user their projects and circles on Access Assignme
 ## Rollback
 
 `python manage.py migrate organization 0002 && python manage.py migrate accounts 0005` recreates `UserCircleAccess`, copies active CI circle assignments back into it, then drops the new tables. Custom roles, other assignments and access history are lost on rollback; export them first if needed. Restore the previous code with the migrations reversed.
+
+## Data Panel (Master Data) editing
+
+Each dataset of `apps/masterdata/datasets.py` is its own permission module, `data_<dataset>`, with **View, Add, Edit and
+Export** (independent; there is no Delete anywhere). Admin has all four on every dataset; NOC Lead and the built-in CI role
+keep View and Export only (converted one-for-one from the former `master_data` grants by `accounts.0007`); everyone else
+gets exactly what their roles grant, within their assigned projects and circles.
+
+- Save: `POST /api/master-data/<dataset>/save/` with `{changes: [{id, values}], additions: [{values}]}`. All rows are
+  validated and written in one transaction, or nothing is (errors come back per row and column).
+- Rules per dataset: `apps/masterdata/editors.py` (editable columns, identity columns for new rows, derived keys,
+  ranges, Organization associations). Model validation adds types, lengths and unique constraints.
+- Provenance: Site Master, daily and monthly rows written by a save point to a new import batch of kind
+  `data_panel`; escalation rows to an escalation batch with `initiated_via = data_panel`; RCA edits add an `RcaEvent`.
+  The dashboard's database cache refreshes after every save.
+- New dataset: register it in `DATASETS` (it gets View / Add / Edit / Export on Users & Roles automatically) and add an
+  `Editor` to `EDITORS` to make it editable; without one it stays read-only.
