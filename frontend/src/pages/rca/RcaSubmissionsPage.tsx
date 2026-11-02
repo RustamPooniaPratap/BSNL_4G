@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Field, SelectField } from '../../components/data/DataEntry';
 import { Field as FilterField, FilterCard } from '../../components/dashboard/FilterBar';
-import { CycleBadge } from '../../components/rca/RcaShared';
+import { CycleBadge, SiteScopeField } from '../../components/rca/RcaShared';
 import { PageHeading } from '../../context/pageHeader';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDateTime, formatNumber } from '../../lib/format';
@@ -34,7 +34,8 @@ export function RcaSubmissionsPage() {
   const list = useApiQuery(`rca-cycles-${version}`, (signal) => fetchRcaCycles(signal));
   const all = useApiQuery(`rca-all-uploads-${version}`, (signal) => fetchRcaImports(signal, true));
   const selected = Number(params.get('cycle')) || list.data?.cycles[0]?.id || null;
-  const detail = useApiQuery(selected ? `rca-cycle-${selected}-${version}` : null, (signal) => fetchRcaCycle(selected!, signal));
+  const siteScope = params.get('site_scope') ?? '';
+  const detail = useApiQuery(selected ? `rca-cycle-${selected}-${version}-${siteScope}` : null, (signal) => fetchRcaCycle(selected!, signal, siteScope));
   const [starting, setStarting] = useState(false);
   const refresh = () => setVersion((v) => v + 1);
   const choose = (id: number) => setParams((cur) => { const next = new URLSearchParams(cur); next.set('cycle', String(id)); return next; }, { replace: true });
@@ -59,6 +60,10 @@ export function RcaSubmissionsPage() {
             <SelectField id="rca-cycle" value={selected ? String(selected) : ''} placeholder="Choose a period" onChange={(v) => choose(Number(v))}
               options={list.data.cycles.map((c) => ({ value: String(c.id), label: `${c.period_label}${c.name ? ` · ${c.name}` : ''} · ${c.status.label}` }))} />
           </FilterField>
+        )}
+        {list.data && list.data.cycles.length > 0 && (
+          <SiteScopeField id="rca-cycle-site-scope" value={siteScope}
+            onChange={(v) => setParams((cur) => { const next = new URLSearchParams(cur); if (v) next.set('site_scope', v); else next.delete('site_scope'); return next; }, { replace: true })} />
         )}
       </FilterCard>
       {starting && list.data && (
@@ -258,8 +263,19 @@ function PeriodView({ cycle, onChanged }: { cycle: RcaCycleDetail; onChanged: ()
                       {u.submission ? <>{formatDateTime(u.submission.committed_at ?? u.submission.uploaded_at)}<span className="block text-muted-foreground">by {u.submission.uploaded_by ?? '—'} · #{u.submission.batch}</span></> : '—'}
                     </TableCell>
                     <TableCell><CycleBadge code={u.status} label={u.data_label ?? u.status_label} /></TableCell>
-                    <TableCell className="tabular-nums">{formatNumber(u.records)}</TableCell>
-                    <TableCell className="tabular-nums">{u.records ? formatMin(u.outage_minutes) : '—'}</TableCell>
+                    {u.records_in_scope === undefined ? (
+                      <>
+                        <TableCell className="tabular-nums">{formatNumber(u.records)}</TableCell>
+                        <TableCell className="tabular-nums">{u.records ? formatMin(u.outage_minutes) : '—'}</TableCell>
+                      </>
+                    ) : (
+                      <>
+                        <TableCell className="tabular-nums" title={`${formatNumber(u.records)} records of every site`}>
+                          {formatNumber(u.records_in_scope)} <span className="text-muted-foreground">of {formatNumber(u.records)}</span>
+                        </TableCell>
+                        <TableCell className="tabular-nums">{u.records_in_scope ? formatMin(u.outage_minutes_in_scope) : '—'}</TableCell>
+                      </>
+                    )}
                     <TableCell className="max-w-80 truncate text-xs" title={u.source_files.join(', ')}>{u.source_files.join(', ') || '—'}</TableCell>
                   </TableRow>
                 ))}

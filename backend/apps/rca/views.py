@@ -533,7 +533,8 @@ def cycle_list(request):
 @api_view(['GET'])
 @permission_classes([IsAdminRole])
 def cycle_detail(request, cycle_id: int):
-    return Response(cycles.cycle_json(_cycle(cycle_id), full=True))
+    from . import sitescope
+    return Response(cycles.cycle_json(_cycle(cycle_id), full=True, site_scope=sitescope.parse(request.query_params.get('site_scope'))))
 
 
 @api_view(['PUT'])

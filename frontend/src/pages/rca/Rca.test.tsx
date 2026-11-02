@@ -346,3 +346,31 @@ describe('RCA in the sidebar', () => {
     expect(within(nav()).queryByRole('link', { name: 'Cause Mapping', hidden: true })).not.toBeInTheDocument();
   });
 });
+
+describe('RCA Site Scope', () => {
+  it('is one shared filter: sent to the API, kept across Summary tabs, explained when not All Sites', async () => {
+    const user = userEvent.setup();
+    m.fetchRcaSummary.mockResolvedValue({ ...SUMMARY, site_scope: { scope: 'om_start', label: 'O&M Start Sites',
+      coverage: { total: 105, om_start: 100, not_started: 3, unclassified: 2 } } });
+    renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary' });
+    const scope = await screen.findByRole('combobox', { name: 'Site Scope' });
+    expect(scope).toHaveTextContent('All Sites');  // the default
+    expect(Object.fromEntries(m.fetchRcaSummary.mock.calls.at(-1)![0] as URLSearchParams)).not.toHaveProperty('site_scope');
+    await user.click(scope);
+    await user.click(await screen.findByRole('option', { name: 'O&M Start Sites' }));
+    await waitFor(() => expect((m.fetchRcaSummary.mock.calls.at(-1)![0] as URLSearchParams).get('site_scope')).toBe('om_start'));
+    expect(await screen.findByText(/Site Scope: O&M Start Sites\./)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('100 of 105 records');
+    expect(screen.getByRole('status')).toHaveTextContent('2 records cannot be classified');
+    await user.click(screen.getByRole('link', { name: 'Circle-wise RCA Breakdown' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('site_scope=om_start');  // kept when changing tabs
+  });
+
+  it('is on the RCA Register too and narrows its records on the server', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<RcaRegisterPage />, { url: '/rca' });
+    await user.click(await screen.findByRole('combobox', { name: 'Site Scope' }));
+    await user.click(await screen.findByRole('option', { name: 'O&M Not Started Sites' }));
+    await waitFor(() => expect((m.fetchRcaRecords.mock.calls.at(-1)![0] as URLSearchParams).get('site_scope')).toBe('om_not_started'));
+  });
+});

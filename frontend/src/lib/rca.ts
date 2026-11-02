@@ -2,7 +2,12 @@ import { formatDate, formatNumber } from './format';
 
 export const ALL = 'all';
 /** URL parameters shared by the RCA Register and Summary (so a filtered view can be refreshed or shared). */
-export const FILTER_KEYS = ['date_from', 'date_to', 'project', 'circle', 'final_bucket', 'bucket_2', 'category', 'rca', 'status', 'q'] as const;
+export const FILTER_KEYS = ['date_from', 'date_to', 'project', 'circle', 'site_scope', 'final_bucket', 'bucket_2', 'category', 'rca', 'status', 'q'] as const;
+/** Site Scope (backend: apps/rca/sitescope.py): by the Site Master O&M Start of each record's site for its reporting month. */
+export const SITE_SCOPES = [
+  { value: 'all', label: 'All Sites' }, { value: 'om_start', label: 'O&M Start Sites' }, { value: 'om_not_started', label: 'O&M Not Started Sites' },
+] as const;
+export const siteScopeLabel = (value: string | null) => SITE_SCOPES.find((s) => s.value === value)?.label ?? 'All Sites';
 export type FilterKey = (typeof FILTER_KEYS)[number];
 
 export const NOT_RECORDED = 'Not recorded';

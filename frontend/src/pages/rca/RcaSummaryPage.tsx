@@ -11,7 +11,7 @@ import { reportTypeColor } from '../../components/dashboard/constants';
 import { RootCauseBreakdown } from '../../components/rca/RcaBreakdown';
 import { RcaAnalysisTile, RcaKpiTile, RcaSection } from '../../components/rca/RcaTiles';
 import type { Tint } from '../../components/portfolio/PortfolioKpis';
-import { RankedBars, RcaFilterBar, Segmented, SourceValue, type BarRow } from '../../components/rca/RcaShared';
+import { RankedBars, RcaFilterBar, Segmented, SiteScopeNote, SourceValue, type BarRow } from '../../components/rca/RcaShared';
 import { FILTER_KEYS, formatMin, rcaCoverageText, shortProject, type FilterKey } from '../../lib/rca';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDate, formatNumber } from '../../lib/format';
@@ -81,6 +81,7 @@ export function RcaSummaryPage() {
           }, { replace: true })} />} />
       ) : !options.error && <Skeleton className="h-16 w-full" />}
 
+      <SiteScopeNote scope={s?.site_scope} />
       {summary.error && <Alert variant="destructive" role="alert"><AlertDescription>{summary.error.message}</AlertDescription></Alert>}
       {!s && !summary.error && <Skeleton className="h-96 w-full" aria-label="Loading the RCA summary" />}
       {s && (

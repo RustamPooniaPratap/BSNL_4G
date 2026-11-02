@@ -20,6 +20,7 @@ from django.db.models import Count, Max, OuterRef, Q, QuerySet, Subquery, Sum
 from rest_framework.exceptions import ValidationError
 
 from . import taxonomy
+from . import sitescope
 from .breakdown import breakdown, site_metrics
 from .models import RcaCauseCategory, RcaCauseMapping, RcaRecord, RcaWorkflow
 
@@ -101,7 +102,8 @@ def filtered(params, pairs=None) -> QuerySet:
     q = (params.get('q') or '').strip()
     if q:
         qs = qs.filter(Q(site_id__icontains=q) | Q(site_name__icontains=q) | Q(rca_text__icontains=q) | Q(oa__icontains=q) | Q(ba__icontains=q))
-    return qs
+    # Site Scope (All / O&M Start / O&M Not Started Sites): one rule for every RCA page (sitescope).
+    return sitescope.apply(qs, sitescope.parse(params.get('site_scope')))
 
 
 def _labels(qs: QuerySet, key: str, label: str) -> dict[str, str]:
@@ -307,7 +309,11 @@ def summary(params, pairs=None) -> dict:
     end = _date(params.get('date'), 'date') or _date(params.get('date_to'), 'date_to')
     latest = qs.aggregate(latest=Max('reporting_date'))['latest']
     through = (end or latest).isoformat() if (end or latest) else None
+    scope = sitescope.parse(params.get('site_scope'))
+    unscoped = filtered({**dict(params.items()), 'site_scope': sitescope.ALL}, pairs) if scope != sitescope.ALL else qs
     return {
+        # The Site Scope applied to every figure below, and how the records of the other filters are classified.
+        'site_scope': {'scope': scope, 'label': sitescope.SCOPES[scope], 'coverage': sitescope.coverage(unscoped.order_by())},
         'breakdown': {**breakdown(qs, circles=breakdown_circles, through=through),
                       # Site Master and performance figures per circle (not RCA records): Total, USD and NSLA sites.
                       'sites': site_metrics(params, pairs, sorted(set(breakdown_circles) | set(qs.values_list('circle', flat=True).distinct())))},

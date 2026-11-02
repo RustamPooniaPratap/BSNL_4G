@@ -342,7 +342,8 @@ export const discardRcaImport = (id: number) => send<RcaImportBatch>(`/rca/impor
 export const rcaIssuesUrl = (id: number) => `${API_BASE_URL}/rca/imports/${id}/issues.csv`;
 export const rcaImportWorkbookUrl = (id: number) => `${API_BASE_URL}/rca/imports/${id}/report.xlsx`;
 export const fetchRcaCycles = (signal?: AbortSignal) => request<RcaCycleList>('/rca/cycles/', undefined, { signal });
-export const fetchRcaCycle = (id: number, signal?: AbortSignal) => request<RcaCycleDetail>(`/rca/cycles/${id}/`, undefined, { signal });
+export const fetchRcaCycle = (id: number, signal?: AbortSignal, siteScope = '') =>
+  request<RcaCycleDetail>(`/rca/cycles/${id}/`, siteScope ? new URLSearchParams({ site_scope: siteScope }) : undefined, { signal });
 export const startRcaCycle = (period: { name: string; period_start: string; period_end: string; notes: string }, units: [string, string][]) =>
   send<RcaCycleDetail>('/rca/cycles/', { ...period, units });
 export const setRcaRequired = (id: number, units: [string, string][]) => send<RcaCycleDetail>(`/rca/cycles/${id}/required/`, { units }, 'PUT');

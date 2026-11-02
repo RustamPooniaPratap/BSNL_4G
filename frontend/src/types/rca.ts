@@ -150,7 +150,16 @@ export interface RcaBreakdown {
 
 export interface RcaSiteMetrics { total_sites: number; usd_sites: number | null; nsla_sites: number | null; days_reported: number }
 
+/** The Site Scope applied (apps/rca/sitescope.py) and how the records of the other filters are classified. */
+export interface RcaSiteScope {
+  scope: 'all' | 'om_start' | 'om_not_started';
+  label: string;
+  /** unclassified: records whose site is not in the Site Master or has no O&M Start for that month (All Sites only). */
+  coverage?: { total: number; om_start: number; not_started: number; unclassified: number };
+}
+
 export interface RcaSummary {
+  site_scope?: RcaSiteScope;
   breakdown: RcaBreakdown;
   kpis: {
     records: number;
@@ -317,6 +326,9 @@ export interface RcaUnitState {
   status_label: string;
   records: number;
   outage_minutes: number | null;
+  /** With a Site Scope other than All Sites: the unit's records and minutes of those sites (status still counts all). */
+  records_in_scope?: number;
+  outage_minutes_in_scope?: number | null;
   source_files: string[];
   /** RCA data availability (records of the unit in the period, from any upload): "Data available" / "No data". */
   data_label?: string;
@@ -369,6 +381,7 @@ export interface RcaCycle {
 }
 
 export interface RcaCycleDetail extends RcaCycle {
+  site_scope?: RcaSiteScope | null;
   units: RcaUnitState[];
   /** Data present for projects / circles outside the expected scope (never counted as coverage). */
   unexpected: { project: string; circle: string; records: number }[];

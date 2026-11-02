@@ -6,8 +6,9 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { SelectField } from '../data/DataEntry';
 import { Field, FilterCard } from '../dashboard/FilterBar';
-import { ALL, FILTER_KEYS, NOT_RECORDED, type FilterKey } from '../../lib/rca';
-import type { RcaCycleCode, RcaOptions, RcaStatus, RcaUnitCode } from '../../types/rca';
+import { formatNumber } from '../../lib/format';
+import { ALL, FILTER_KEYS, NOT_RECORDED, SITE_SCOPES, type FilterKey } from '../../lib/rca';
+import type { RcaCycleCode, RcaOptions, RcaSiteScope, RcaStatus, RcaUnitCode } from '../../types/rca';
 
 const CYCLE_TONE: Record<RcaCycleCode | RcaUnitCode, string> = {
   unconfigured: 'border-slate-300 bg-slate-50 text-slate-700',
@@ -89,6 +90,7 @@ export function RcaFilterBar({ options, params, onChange, onReset, search = fals
       {select('project', 'Project', 'All projects', options.projects.map((p) => ({ value: p, label: p })), 'w-36')}
       {select('circle', 'Circle', 'All circles', [...new Map(circles.map((c) => [c.circle, c])).values()]
         .map((c) => ({ value: c.circle, label: `${c.circle} · ${c.circle_raw}` })), 'w-44')}
+      <SiteScopeField value={get('site_scope')} onChange={(v) => onChange('site_scope', v)} />
       {select('final_bucket', 'Final Bucket', 'All Final Buckets', notApproved(options.final_buckets), 'w-44')}
       {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', notApproved(options.bucket_2), 'w-44')}
       {select('category', 'Cause category', 'All categories', [
@@ -103,6 +105,33 @@ export function RcaFilterBar({ options, params, onChange, onReset, search = fals
         <RotateCcw />
       </Button>
     </FilterCard>
+  );
+}
+
+/**
+ * Site Scope of the RCA pages: All Sites (default), O&M Start Sites or O&M Not Started Sites. The same control on every
+ * RCA page; the server applies it to every figure (KPIs, tables, charts, totals). ``''`` means All Sites.
+ */
+export function SiteScopeField({ value, onChange, id = 'rca-site-scope' }: { value: string; onChange: (value: string) => void; id?: string }) {
+  return (
+    <Field id={id} label="Site Scope" className="w-48">
+      <SelectField id={id} value={value || 'all'} placeholder="All Sites" onChange={(v) => onChange(v === 'all' ? '' : v)}
+        options={SITE_SCOPES.map((s) => ({ value: s.value, label: s.label }))} />
+    </Field>
+  );
+}
+
+/** Shown under the filters when a Site Scope other than All Sites applies (with the records it cannot classify). */
+export function SiteScopeNote({ scope }: { scope: RcaSiteScope | null | undefined }) {
+  if (!scope || scope.scope === 'all') return null;
+  const c = scope.coverage;
+  return (
+    <p className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-xs text-sky-900" role="status">
+      <span className="font-semibold">Site Scope: {scope.label}.</span> Every figure on this page counts only RCA records whose site has
+      {scope.scope === 'om_start' ? ' O&M Start = Yes' : ' O&M Start = No'} in the Site Master for the record's reporting month.
+      {c && ` ${formatNumber(scope.scope === 'om_start' ? c.om_start : c.not_started)} of ${formatNumber(c.total)} records of the other filters.`}
+      {c && c.unclassified > 0 && ` ${formatNumber(c.unclassified)} record${c.unclassified === 1 ? '' : 's'} cannot be classified (site not in the Site Master, or no O&M Start for that month) and appear under All Sites only.`}
+    </p>
   );
 }
 

@@ -111,7 +111,8 @@ def site_metrics(params, pairs, circles: list[str]) -> dict | None:
     - Period: the Reporting date filter (one date, or the date range); without one, the dashboard's month to date.
     - USD: outage > 0 at least once in the period. NSLA: the site's uptime over the period below 98.5% (the penalty
       buckets); a site without any value in the period is in neither.
-    - Only the project, circle and reporting-date filters apply: Final Bucket, Bucket - 2, category and RCA
+    - The Site Scope applies too (O&M Start / Not Started: the On-Air sites with that Site Master O&M Start).
+    - Only the project, circle, reporting-date and Site Scope filters apply: Final Bucket, Bucket - 2, category and RCA
       applicability describe RCA records, which the site master does not have.
     None when the dashboard has no data.
     """
@@ -137,9 +138,11 @@ def site_metrics(params, pairs, circles: list[str]) -> dict | None:
         latest = ds.latest_date or ds.dates[-1]
         dates, label = [d for d in ds.dates if d <= latest], 'Month to date'
     project = params.get('project') or None
+    from .sitescope import dashboard_scope, parse
+    scope = dashboard_scope(parse(params.get('site_scope')))  # the same Site Scope as the RCA records
 
     def measure(circle: str | None) -> dict:
-        p = period_summary(ds, Selection(project, circle, 'on_air'), dates=dates, label='')
+        p = period_summary(ds, Selection(project, circle, scope), dates=dates, label='')
         reported = p['days_reported'] > 0
         return {'total_sites': p['sites_in_scope'],
                 'usd_sites': p['unique_sites_down']['count'] if reported else None,

@@ -81,6 +81,10 @@ def scope_mask(ds: Dataset, selection: Selection) -> np.ndarray:
         mask &= ds.sites['on_air'].to_numpy(dtype=bool)
     elif selection.scope == 'om_start':
         mask &= ds.sites['om_start'].to_numpy(dtype=bool)
+    elif selection.scope in ('on_air_om_start', 'on_air_om_not_started'):
+        # Internal (not offered as dashboard filters): the RCA Site Scope's sites, On-Air with O&M Start Yes / not Yes.
+        om = ds.sites['om_start'].to_numpy(dtype=bool)
+        mask &= ds.sites['on_air'].to_numpy(dtype=bool) & (om if selection.scope == 'on_air_om_start' else ~om)
     return mask
 
 

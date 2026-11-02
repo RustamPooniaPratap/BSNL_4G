@@ -264,7 +264,7 @@ def status(cycle: RcaReportingCycle, *, units: list[dict] | None = None, current
     }
 
 
-def cycle_json(cycle: RcaReportingCycle, *, full: bool = False) -> dict:
+def cycle_json(cycle: RcaReportingCycle, *, full: bool = False, site_scope: str = 'all') -> dict:
     units = unit_states(cycle)
     recs = list(records(cycle))
     data = {
@@ -279,7 +279,18 @@ def cycle_json(cycle: RcaReportingCycle, *, full: bool = False) -> dict:
         represented: dict[tuple, int] = {}
         for r in recs:
             represented[(r.project, r.circle)] = represented.get((r.project, r.circle), 0) + 1
+        from . import sitescope
+        if site_scope != sitescope.ALL:
+            # Site Scope: each unit's records and outage minutes of those sites only. The unit's status (data received
+            # or pending) still counts every record: the submission rules do not change with the view.
+            recs_qs = RcaRecord.objects.filter(reporting_date__range=(cycle.reporting_date, cycle.end)).order_by()
+            scoped = {(r['project'], r['circle']): r for r in sitescope.apply(recs_qs, site_scope).values('project', 'circle')
+                      .annotate(records=Count('id'), minutes=Sum('outage_minutes'))}
+            for u in units:
+                row = scoped.get((u['project'], u['circle']), {})
+                u['records_in_scope'], u['outage_minutes_in_scope'] = row.get('records', 0), services._round(row.get('minutes'))
         data.update({
+            'site_scope': {'scope': site_scope, 'label': sitescope.SCOPES[site_scope]} if full else None,
             'units': units,
             # Data present for projects / circles the period is not expected to cover (shown, never counted as coverage).
             'unexpected': [{'project': p, 'circle': c, 'records': n} for (p, c), n in sorted(represented.items()) if (p, c) not in expected],
