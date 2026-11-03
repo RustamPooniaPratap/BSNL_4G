@@ -1,4 +1,4 @@
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ChevronRight, Database, FileUp, Info, Trophy } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -13,13 +13,13 @@ import { useApiQuery } from '../hooks/useApiQuery';
 import { useDashboardFilters } from '../hooks/useDashboardFilters';
 import { formatDate, formatNumber, formatPct } from '../lib/format';
 import { fetchFilterOptions, fetchTeamTop } from '../services/api';
-import type { GroupRanking, NslaValue, RankedPerson, TeamGroup, TopPerformerCircle, TopPerformersResponse } from '../types';
+import type { GroupRanking, NslaValue, TeamGroup, TopPerformerCircle, TopPerformersResponse } from '../types';
 
 const GROUP_LABELS: Record<TeamGroup, string> = { ci: 'CI', ie: 'IE' };
 const PROJECT_ORDER = ['4G Saturation', 'LWE'];
 const projectLabel = (type: string) => (type === '4G Saturation' ? '4G' : type);
 const circleKey = (c: { report_type: string; circle: string }) => `${c.report_type}|${c.circle}`;
-/** Tied leaders named in the circle table; the rest are counted (all are listed in the circle's ranking). */
+/** Tied leaders named in the circle table; the rest are counted. */
 const TIES_SHOWN = 2;
 
 // Cell styles are set per cell (not through parent selectors) so padding and borders always apply.
@@ -27,6 +27,7 @@ const TH = 'border-b bg-muted/50 px-3 py-2 text-[11px] font-medium whitespace-no
 const TD = 'border-b px-3 py-2 align-middle';
 
 export function TopPerformersPage() {
+  const navigate = useNavigate();
   const workbook = useWorkbook();
   const { version } = workbook;
   const options = useApiQuery(workbook.active ? `${version}|filters` : null, fetchFilterOptions);
@@ -34,7 +35,6 @@ export function TopPerformersPage() {
   const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data, { defaultScope: 'om_start' });
   const [searchParams, setSearchParams] = useSearchParams();
   const month = searchParams.get('month') ?? '';
-  const focus = searchParams.get('focus') ?? '';
   const setParam = (key: string, value: string | null) => setSearchParams((current) => {
     const next = new URLSearchParams(current);
     if (value) next.set(key, value);
@@ -79,10 +79,10 @@ export function TopPerformersPage() {
   const latest = months[months.length - 1]?.key;
   const selectedMonth = month || data?.reporting_month || latest || '';
   const circles = data?.circles ?? [];
-  const selected = circles.find((c) => circleKey(c) === focus) ?? circles[0];
   const period = data?.month ? `${data.month.label}${data.month.kind === 'mtd' ? ` to ${formatDate(data.reporting_date)}` : ''}` : '';
   const projects = PROJECT_ORDER.filter((p) => circles.some((c) => c.report_type === p))
     .concat([...new Set(circles.map((c) => c.report_type))].filter((p) => !PROJECT_ORDER.includes(p)));
+
   // Opens the person on CI & IE Performance with the same project, circle, scope and month.
   const personLink = (group: TeamGroup, c: TopPerformerCircle, name: string) => {
     const q = new URLSearchParams({ report_type: c.report_type, circle: c.circle, scope: filters.scope, q: name });
@@ -90,6 +90,18 @@ export function TopPerformersPage() {
     if (month) q.set('month', month);
     return `/teams/ci-ie?${q}`;
   };
+
+  // Navigates to the dedicated circle page with preserved filters
+  const handleCircleClick = (c: TopPerformerCircle) => {
+    const q = new URLSearchParams(searchParams);
+    q.set('circle', c.circle);
+    if (filters.reportType) {
+      q.set('report_type', filters.reportType);
+    }
+    q.delete('focus');
+    navigate(`/teams/top/circle/${encodeURIComponent(c.circle)}?${q.toString()}`);
+  };
+
   const named = (g: TeamGroup) => circles.filter((c) => c[g].top.length).length;
   const ties = circles.filter((c) => c.ci.status === 'tie' || c.ie.status === 'tie').length;
   const insufficient = circles.filter((c) => !c.ci.top.length || !c.ie.top.length).length;
@@ -97,7 +109,7 @@ export function TopPerformersPage() {
   return (
     <div className="space-y-4">
       <FilterBar options={options.data} filters={filters} onChange={setFilters}
-        canReset={!isDefault || !!month || !!focus} onReset={reset} showTrendRange={false} showDate={false}
+        canReset={!isDefault || !!month} onReset={reset} showTrendRange={false} showDate={false}
         title="Circle-wise Top Performers"
         description="The CI and the IE with the lowest NSLA % in each circle, ranked separately within the same project and period."
         extra={(
@@ -124,12 +136,17 @@ export function TopPerformersPage() {
         </Alert>
       ) : (
         <>
-        <CircleNslaTable data={data} loading={result.loading} error={result.error} period={period}
-          selected={selected ? circleKey(selected) : ''} onSelect={(key) => setParam('focus', key)} />
-        <div className="grid items-start gap-4 2xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+          <CircleNslaTable
+            data={data}
+            loading={result.loading}
+            error={result.error}
+            period={period}
+            onCircleClick={handleCircleClick}
+          />
+
           <ChartCard
             title="Top CI and IE by circle"
-            description={data ? `${period} · lower NSLA % is better · select a circle to see its full rankings` : 'Lower NSLA % is better'}
+            description={data ? `${period} · lower NSLA % is better` : 'Lower NSLA % is better'}
             action={data && circles.length ? (
               <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label="Summary">
                 <Stat label="Circles" value={circles.length} />
@@ -155,36 +172,27 @@ export function TopPerformersPage() {
                     <th scope="col" className={cn(TH, 'text-right')}>CI NSLA %</th>
                     <th scope="col" className={cn(TH, 'border-l text-left')}>Top-performing IE</th>
                     <th scope="col" className={cn(TH, 'text-right')}>IE NSLA %</th>
-                    <th scope="col" className={cn(TH, 'w-8')}><span className="sr-only">Rankings</span></th>
                   </tr>
                 </thead>
                 {projects.map((project) => (
                   <tbody key={project}>
                     {projects.length > 1 && (
                       <tr>
-                        <th colSpan={7} scope="rowgroup" className="sticky left-0 border-b bg-card px-3 pt-3 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                        <th colSpan={6} scope="rowgroup" className="sticky left-0 border-b bg-card px-3 pt-3 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
                           {project} · {circles.filter((c) => c.report_type === project).length} circles
                         </th>
                       </tr>
                     )}
                     {circles.filter((c) => c.report_type === project).map((c) => {
-                      const isSelected = !!selected && circleKey(c) === circleKey(selected);
-                      const bg = isSelected ? 'bg-sky-50' : 'bg-card group-hover:bg-muted/40';
+                      const bg = 'bg-card hover:bg-muted/40';
                       return (
-                        <tr key={circleKey(c)} aria-selected={isSelected} className="group cursor-pointer" onClick={() => setParam('focus', circleKey(c))}>
-                          <th scope="row" className={cn(TD, bg, 'sticky left-0 z-10 text-left font-semibold', isSelected && 'shadow-[inset_3px_0_0_#0284c7]')}>
+                        <tr key={circleKey(c)} className="group">
+                          <th scope="row" className={cn(TD, bg, 'sticky left-0 z-10 text-left font-semibold')}>
                             {c.circle}{' '}<span className="ml-1 font-normal text-muted-foreground">{projectLabel(c.report_type)}</span>
                           </th>
                           <td className={cn(TD, bg, 'text-right text-muted-foreground')}>{formatNumber(c.sites_in_scope)}</td>
                           <WinnerCells ranking={c.ci} group="ci" bg={bg} link={(name) => personLink('ci', c, name)} />
                           <WinnerCells ranking={c.ie} group="ie" bg={bg} link={(name) => personLink('ie', c, name)} />
-                          <td className={cn(TD, bg, 'px-1 text-right')}>
-                            <Button variant="ghost" size="icon" className="size-6" aria-pressed={isSelected}
-                              aria-label={`Show ${c.circle} ${projectLabel(c.report_type)} rankings`}
-                              onClick={(e) => { e.stopPropagation(); setParam('focus', circleKey(c)); }}>
-                              <ChevronRight className={cn('size-3.5', isSelected ? 'text-primary' : 'text-muted-foreground')} />
-                            </Button>
-                          </td>
                         </tr>
                       );
                     })}
@@ -204,9 +212,6 @@ export function TopPerformersPage() {
               </p>
             )}
           </ChartCard>
-
-          {selected && data && <CircleRankings key={circleKey(selected)} circle={selected} period={period} link={personLink} />}
-        </div>
         </>
       )}
     </div>
@@ -273,113 +278,11 @@ function WinnerCells({ ranking, group, bg, link }: { ranking: GroupRanking; grou
   );
 }
 
-function CircleRankings({ circle, period, link }: {
-  circle: TopPerformerCircle; period: string; link: (group: TeamGroup, c: TopPerformerCircle, name: string) => string;
-}) {
-  return (
-    <section className="grid items-start gap-4 lg:grid-cols-2 2xl:grid-cols-1" aria-label={`${circle.circle} ${projectLabel(circle.report_type)} rankings`}>
-      {(['ci', 'ie'] as TeamGroup[]).map((group) => (
-        <RankingTable key={group} title={`${circle.circle} · ${projectLabel(circle.report_type)} — ${GROUP_LABELS[group]} ranking`}
-          group={group} ranking={circle[group]} period={period} link={(name) => link(group, circle, name)} />
-      ))}
-    </section>
-  );
-}
-
-function RankingTable({ title, group, ranking, period, link }: {
-  title: string; group: TeamGroup; ranking: GroupRanking; period: string; link: (name: string) => string;
-}) {
-  const label = GROUP_LABELS[group];
-  const ranked = ranking.ranking.filter((p) => p.rank != null);
-  const unranked = ranking.ranking.filter((p) => p.rank == null);
-  return (
-    <ChartCard
-      title={title}
-      description={`${period} · ${formatNumber(ranking.people_eligible)} of ${formatNumber(ranking.people_total)} ${label}s eligible · lowest NSLA % first`}
-      empty={!ranking.ranking.length}
-      emptyMessage={`No ${label} is assigned in this circle.`}
-      bodyClassName="px-0"
-    >
-      {ranking.status === 'insufficient' && (
-        <p className="mx-4 mb-1 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900">
-          <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-          <span>Insufficient data to name a top {label}: {ranking.reason}</span>
-        </p>
-      )}
-      <div className="max-h-[26rem] overflow-auto" role="region" aria-label={`${title} table`} tabIndex={0}>
-        <table className="w-full border-separate border-spacing-0 text-xs tabular-nums">
-          <thead className="sticky top-0 z-10">
-            <tr>
-              <th scope="col" className={cn(TH, 'w-12 text-center')}>Rank</th>
-              <th scope="col" className={cn(TH, 'text-left')}>{label}</th>
-              <th scope="col" className={cn(TH, 'text-right')}>Assigned</th>
-              <th scope="col" className={cn(TH, 'text-right')}>NSLA sites</th>
-              <th scope="col" className={cn(TH, 'w-32 text-right')}>NSLA %</th>
-              <th scope="col" className={cn(TH, 'text-right')} title="Assigned sites with a value in the period">Reported</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ranked.map((p) => <PersonRow key={p.name} person={p} top={ranking.top.includes(p.name)}
-              unnamed={!ranking.top.length && p.rank === 1} label={label} link={link} />)}
-          </tbody>
-          {unranked.length > 0 && (
-            <tbody>
-              <tr>
-                <th colSpan={6} scope="rowgroup" className="border-b bg-card px-3 pt-3 pb-1 text-left text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                  Not ranked · {unranked.length}
-                </th>
-              </tr>
-              {unranked.map((p) => <PersonRow key={p.name} person={p} top={false} unnamed={false} label={label} link={link} />)}
-            </tbody>
-          )}
-        </table>
-      </div>
-    </ChartCard>
-  );
-}
-
-function PersonRow({ person: p, top, unnamed, label, link }: {
-  person: RankedPerson; top: boolean; unnamed: boolean; label: string; link: (name: string) => string;
-}) {
-  const complete = p.sites_reported === p.sites_in_scope;
-  return (
-    <tr className={cn(top ? 'bg-emerald-50/60' : 'hover:bg-muted/40', p.rank == null && 'text-muted-foreground')}>
-      <td className={cn(TD, 'text-center')}>
-        {p.rank == null ? '—' : (
-          <span className={cn('inline-flex size-5 items-center justify-center rounded-full text-[11px] font-semibold',
-            top ? 'bg-emerald-600 text-white' : 'bg-muted text-foreground')}>{p.rank}</span>
-        )}
-      </td>
-      <td className={cn(TD, 'max-w-64')}>
-        <Link to={link(p.name)} className={cn('block truncate hover:text-primary hover:underline', top ? 'font-semibold text-emerald-900' : 'font-medium')} title={p.name}>{p.name}</Link>
-        {p.reason && <span className="block text-[11px]">{p.reason}</span>}
-        {unnamed && <span className="block text-[11px] text-muted-foreground">Not named top: too few eligible {label}s to compare</span>}
-        {!!p.other_assignments?.length && <span className="block text-[11px] text-muted-foreground">Also assigned: {p.other_assignments.join(', ')}</span>}
-      </td>
-      <td className={cn(TD, 'text-right')}>{formatNumber(p.sites_in_scope)}</td>
-      <td className={cn(TD, 'text-right')}>{formatNumber(p.nsla_sites)}</td>
-      <td className={cn(TD, 'text-right')}>
-        <div className="flex items-center justify-end gap-2">
-          {p.nsla_pct != null && (
-            <span className="h-1.5 w-14 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-              <span className={cn('block h-full rounded-full', top ? 'bg-emerald-500' : 'bg-slate-400')} style={{ width: `${Math.min(100, p.nsla_pct)}%` }} />
-            </span>
-          )}
-          <span className="w-12 font-medium">{formatPct(p.nsla_pct, 1)}</span>
-        </div>
-      </td>
-      <td className={cn(TD, 'text-right', !complete && 'text-amber-700')} title={complete ? 'Every assigned site reported' : 'Some assigned sites have no value'}>
-        {formatNumber(p.sites_reported)} / {formatNumber(p.sites_in_scope)}
-      </td>
-    </tr>
-  );
-}
-
 /** Circle-wise NSLA by month, as the workbook's "NSLA Sites" sheet: the reporting month's NSLA sites, % and rank
  * (within the project, lowest % first), then the earlier months, newest first. Totals per project. */
-function CircleNslaTable({ data, loading, error, period, selected, onSelect }: {
+function CircleNslaTable({ data, loading, error, period, onCircleClick }: {
   data: TopPerformersResponse | null; loading: boolean; error: Error | null; period: string;
-  selected: string; onSelect: (key: string) => void;
+  onCircleClick: (c: TopPerformerCircle) => void;
 }) {
   const months = data?.months ?? [];
   const current = months[months.length - 1];
@@ -448,12 +351,33 @@ function CircleNslaTable({ data, loading, error, period, selected, onSelect }: {
                   {rows.map((c) => {
                     const key = circleKey(c);
                     const v = c.nsla[current.key];
-                    const isSelected = key === selected;
                     return (
-                      <tr key={key} aria-selected={isSelected} onClick={() => onSelect(key)}
-                        className={cn('cursor-pointer', isSelected ? 'bg-sky-50' : 'hover:bg-muted/40')}>
-                        <th scope="row" className={cn(TD, 'sticky left-0 z-10 text-left font-medium', isSelected ? 'bg-sky-50' : 'bg-card')}>
-                          {c.circle}{' '}<span className="ml-1 font-normal text-muted-foreground">{projectLabel(c.report_type)}</span>
+                      <tr
+                        key={key}
+                        onClick={() => onCircleClick(c)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onCircleClick(c);
+                          }
+                        }}
+                        tabIndex={0}
+                        aria-label={`Open circle ${c.circle} (${projectLabel(c.report_type)})`}
+                        className="group cursor-pointer transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:bg-muted/50"
+                      >
+                        <th
+                          scope="row"
+                          className={cn(TD, 'sticky left-0 z-10 text-left font-medium bg-card group-hover:bg-muted/50 group-focus-visible:bg-muted/50 transition-colors')}
+                        >
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span>
+                              {c.circle}{' '}<span className="ml-1 font-normal text-muted-foreground">{projectLabel(c.report_type)}</span>
+                            </span>
+                            <ChevronRight
+                              className="size-3.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                              aria-hidden="true"
+                            />
+                          </div>
                         </th>
                         <td className={cn(TD, 'text-right')}>{formatNumber(c.sites_in_scope)}</td>
                         <td className={cn(TD, 'border-l text-right font-medium')} title={note(v)}>{formatNumber(v?.nsla_sites)}</td>

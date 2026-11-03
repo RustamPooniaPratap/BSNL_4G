@@ -19,6 +19,7 @@ const UploadCsvPage = lazy(() => import('./pages/data/UploadCsvPage').then((m) =
 const AddSitePage = lazy(() => import('./pages/data/AddSitePage').then((m) => ({ default: m.AddSitePage })));
 const TeamsPage = lazy(() => import('./pages/TeamsPage').then((m) => ({ default: m.TeamsPage })));
 const TopPerformersPage = lazy(() => import('./pages/TopPerformersPage').then((m) => ({ default: m.TopPerformersPage })));
+const CircleTopPerformerPage = lazy(() => import('./pages/CircleTopPerformerPage').then((m) => ({ default: m.CircleTopPerformerPage })));
 const CiIePerformancePage = lazy(() => import('./pages/CiIePerformancePage').then((m) => ({ default: m.CiIePerformancePage })));
 const DataSourcePage = lazy(() => import('./pages/DataSourcePage').then((m) => ({ default: m.DataSourcePage })));
 const DatabaseImportPage = lazy(() => import('./pages/DatabaseImportPage').then((m) => ({ default: m.DatabaseImportPage })));
@@ -50,6 +51,9 @@ function PortalRoutes() {
               <Route path="/teams" element={<RequireAdmin><TeamsPage /></RequireAdmin>} />
               <Route path="/teams/ci-ie" element={<RequireAdmin><CiIePerformancePage /></RequireAdmin>} />
               <Route path="/teams/top" element={<RequireAdmin><TopPerformersPage /></RequireAdmin>} />
+              <Route path="/teams/top/circle/:circleId" element={<RequireAdmin><CircleTopPerformerPage /></RequireAdmin>} />
+              <Route path="/teams/circle/:circleId" element={<RequireAdmin><CircleTopPerformerPage /></RequireAdmin>} />
+              <Route path="/team-performance/circle/:circleId" element={<RequireAdmin><CircleTopPerformerPage /></RequireAdmin>} />
               {/* Data source: Excel upload or PostgreSQL import, on one page. */}
               <Route path="/workbook" element={<RequireAdmin><DatabaseImportPage /></RequireAdmin>} />
               <Route path="/data/add-row" element={<RequirePage><AddRowPage /></RequirePage>} />

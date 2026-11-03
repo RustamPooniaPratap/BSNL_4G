@@ -53,5 +53,8 @@ export function routeTitle(pathname: string, search = ''): string {
     const reportType = new URLSearchParams(search).get('report_type');
     if (reportType && REPORT_TYPES[reportType]) return REPORT_TYPES[reportType];
   }
+  if (path.startsWith('/teams/top/circle/') || path.startsWith('/teams/circle/') || path.startsWith('/team-performance/circle/')) {
+    return 'Circle Details';
+  }
   return TITLES[path] ?? '4G Saturation & LWE Reporting';
 }

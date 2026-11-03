@@ -463,3 +463,150 @@ export const fetchAlertHistory = (params: URLSearchParams, signal?: AbortSignal)
 export const fetchAlertMessage = (id: number, signal?: AbortSignal) => request<{ message: AlertMessage }>(`/alerts/history/${id}/`, undefined, { signal });
 export const retryAlertMessage = (id: number) => send<{ message: AlertMessage }>(`/alerts/history/${id}/retry/`);
 export const resendAlertMessage = (id: number) => send<{ message: AlertMessage }>(`/alerts/history/${id}/resend/`);
+
+
+// ==============================================================================
+// TEAM PERFORMANCE HIERARCHY API CLIENT
+// ==============================================================================
+import type {
+  OperationalAreaItem,
+  OperationalAreaAliasItem,
+  OmManagerAssignmentItem,
+  OmManagerAssignmentAuditItem,
+  PersonnelItem,
+  PersonnelAliasItem,
+  PersonnelSourceMappingItem,
+  SitePersonnelAssignmentItem,
+  PersonnelConflictItem,
+  PersonnelMergeAuditItem,
+  PaginatedResult,
+} from '../types/organization';
+
+function toQuery(params?: Record<string, unknown>): URLSearchParams | undefined {
+  if (!params) return undefined;
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') {
+      q.set(k, String(v));
+    }
+  }
+  return q;
+}
+
+export const fetchOperationalAreas = (params?: { circle?: string; search?: string; page?: number; page_size?: number }) =>
+  request<PaginatedResult<OperationalAreaItem>>('/organization/hierarchy/oas/', toQuery(params));
+
+export const createOperationalArea = (data: { circle: number; name: string; code?: string }) =>
+  send<OperationalAreaItem>('/organization/hierarchy/oas/', data);
+
+export const fetchOperationalAreaAliases = (params?: { oa?: number; circle?: string; page?: number; page_size?: number }) =>
+  request<PaginatedResult<OperationalAreaAliasItem>>('/organization/hierarchy/oa-aliases/', toQuery(params));
+
+export const createOperationalAreaAlias = (data: { oa: number; raw_name: string; source?: string }) =>
+  send<OperationalAreaAliasItem>('/organization/hierarchy/oa-aliases/', data);
+
+export const fetchOmAssignments = (params?: { circle?: string; project?: string; active_only?: boolean; page?: number; page_size?: number }) =>
+  request<PaginatedResult<OmManagerAssignmentItem>>('/organization/hierarchy/om-assignments/', toQuery(params));
+
+export const createOmAssignment = (data: {
+  circle: number;
+  reason: string;
+  effective_from: string;
+  effective_to?: string | null;
+  project?: number | null;
+  manager_name?: string;
+  employee_code?: string;
+  contact?: string;
+  email?: string;
+  user?: number | null;
+  is_vacant?: boolean;
+  notes?: string;
+}) => send<OmManagerAssignmentItem>('/organization/hierarchy/om-assignments/', data);
+
+export const updateOmAssignment = (id: number, data: {
+  reason: string;
+  effective_from?: string;
+  effective_to?: string | null;
+  project?: number | null;
+  manager_name?: string;
+  employee_code?: string;
+  contact?: string;
+  email?: string;
+  user?: number | null;
+  is_vacant?: boolean;
+  notes?: string;
+}) => send<OmManagerAssignmentItem>(`/organization/hierarchy/om-assignments/${id}/`, data, 'PUT');
+
+export const fetchOmAssignmentAudit = (params?: { assignment?: number; page?: number; page_size?: number }) =>
+  request<PaginatedResult<OmManagerAssignmentAuditItem>>('/organization/hierarchy/om-assignments/audit/', toQuery(params));
+
+export const fetchPersonnelList = (params?: { role_type?: 'ci' | 'ie'; active_only?: boolean; search?: string; page?: number; page_size?: number }) =>
+  request<PaginatedResult<PersonnelItem>>('/organization/hierarchy/personnel/', toQuery(params));
+
+export const fetchPersonnelDetail = (id: number) =>
+  request<PersonnelItem>(`/organization/hierarchy/personnel/${id}/`);
+
+export const createPersonnel = (data: {
+  display_name: string;
+  role_type: 'ci' | 'ie';
+  employee_code?: string;
+  contact?: string;
+  email?: string;
+  user?: number | null;
+}) => send<PersonnelItem>('/organization/hierarchy/personnel/', data);
+
+export const updatePersonnel = (id: number, data: {
+  display_name?: string;
+  employee_code?: string;
+  contact?: string;
+  email?: string;
+  user?: number | null;
+}) => send<PersonnelItem>(`/organization/hierarchy/personnel/${id}/`, data, 'PUT');
+
+export const fetchPersonnelAliases = (params?: { personnel?: number; role_type?: string; page?: number; page_size?: number }) =>
+  request<PaginatedResult<PersonnelAliasItem>>('/organization/hierarchy/personnel-aliases/', toQuery(params));
+
+export const createPersonnelAlias = (data: {
+  personnel: number;
+  raw_name: string;
+  circle?: number | null;
+  project?: number | null;
+  source?: string;
+}) => send<PersonnelAliasItem>('/organization/hierarchy/personnel-aliases/', data);
+
+export const fetchSourceMappings = (params?: { status?: string; role_type?: string; search?: string; page?: number; page_size?: number }) =>
+  request<PaginatedResult<PersonnelSourceMappingItem>>('/organization/hierarchy/source-mappings/', toQuery(params));
+
+export const approveSourceMapping = (data: { mapping_id: number; personnel_id: number; status?: string }) =>
+  send<PersonnelSourceMappingItem>('/organization/hierarchy/source-mappings/', data);
+
+export const fetchPersonnelConflicts = (params?: { status?: string; conflict_type?: string; role_type?: string; page?: number; page_size?: number }) =>
+  request<PaginatedResult<PersonnelConflictItem>>('/organization/hierarchy/conflicts/', toQuery(params));
+
+export const resolvePersonnelConflict = (id: number, data: { personnel_id?: number | null; resolution: string; status?: string }) =>
+  send<PersonnelConflictItem>(`/organization/hierarchy/conflicts/${id}/resolve/`, data);
+
+export const fetchSiteAssignments = (params?: { site_id?: string; circle?: string; role_type?: string; personnel?: number; active_only?: boolean; page?: number; page_size?: number }) =>
+  request<PaginatedResult<SitePersonnelAssignmentItem>>('/organization/hierarchy/site-assignments/', toQuery(params));
+
+export const createSiteAssignment = (data: {
+  site: number;
+  personnel: number;
+  role_type: 'ci' | 'ie';
+  effective_from: string;
+  effective_to?: string | null;
+  parent_ci?: number | null;
+  source?: string;
+}) => send<SitePersonnelAssignmentItem>('/organization/hierarchy/site-assignments/', data);
+
+export const previewPersonnelMerge = (data: { source_id: number; target_id: number }) =>
+  send<Record<string, unknown>>('/organization/hierarchy/merge-preview/', data);
+
+export const confirmPersonnelMerge = (data: { source_id: number; target_id: number; reason: string }) =>
+  send<PersonnelMergeAuditItem>('/organization/hierarchy/merge-confirm/', data);
+
+export const rollbackPersonnelMerge = (data: { merge_audit_id: number; reason: string }) =>
+  send<PersonnelMergeAuditItem>('/organization/hierarchy/merge-rollback/', data);
+
+export const fetchMergeAuditList = (params?: { page?: number; page_size?: number }) =>
+  request<PaginatedResult<PersonnelMergeAuditItem>>('/organization/hierarchy/merge-audit/', toQuery(params));

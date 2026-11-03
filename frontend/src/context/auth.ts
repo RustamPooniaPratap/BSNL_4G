@@ -56,7 +56,7 @@ export function hasPermission(user: AuthUser | null | undefined, permission: str
 export function canOpen(user: AuthUser | null | undefined, path: string): boolean {
   if (!user?.role) return false;
   if (user.role === 'admin') return true;
-  if (ADMIN_ONLY_PATHS.includes(path)) return false;
+  if (ADMIN_ONLY_PATHS.includes(path) || path.startsWith('/teams') || path.startsWith('/team-performance')) return false;
   if (path === '/rca/import/consolidated') return !!user.rca_upload?.consolidated;
   const needed = pagePermission(path);
   return needed === undefined || hasPermission(user, needed);

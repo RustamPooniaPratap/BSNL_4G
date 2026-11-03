@@ -1,5 +1,4 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '../services/api';
 import { filterOptions, source } from '../test/fixtures';
@@ -87,19 +86,25 @@ describe('TopPerformersPage', () => {
     expect(lastQuery().has('month')).toBe(false);
   });
 
-  it('shows a circle’s CI and IE rankings separately with unranked people and their reason', async () => {
-    const user = userEvent.setup();
+  it('does not render CI and IE ranking tables on the page', async () => {
     renderWithWorkbook(<TopPerformersPage />, { url: '/teams/top' });
     await circleRow('AP');
-    expect(screen.getByRole('region', { name: 'AP · LWE — CI ranking table' })).toHaveTextContent('Not named top: too few eligible CIs to compare');
-    const ie = screen.getByRole('region', { name: 'AP · LWE — IE ranking table' });
-    expect(within(ie).getAllByRole('row').slice(1).map((r) => within(r).queryAllByRole('cell')[0]?.textContent ?? 'group')).toEqual(['1', '2', 'group', '—']);
-    expect(ie).toHaveTextContent('Not ranked · 1');
-    expect(ie).toHaveTextContent('Fewer than 10 assigned sites');
+    expect(screen.queryByRole('region', { name: /CI ranking table/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /IE ranking table/i })).not.toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole('button', { name: 'Show BH LWE rankings' }));
-    const ci = await screen.findByRole('region', { name: 'BH · LWE — CI ranking table' });
-    expect(ci).toHaveTextContent('Also assigned: JH LWE');
+  it('makes individual circle rows clickable while project total is not', async () => {
+    renderWithWorkbook(<TopPerformersPage />, { url: '/teams/top' });
+    const table = await screen.findByRole('region', { name: 'Circle-wise NSLA by month' });
+    const apHeader = within(table).getByRole('rowheader', { name: /AP/i });
+    const apRow = apHeader.closest('tr')!;
+    expect(apRow).toHaveClass('cursor-pointer');
+    expect(within(apRow).getByText('AP')).toBeInTheDocument();
+
+    // Total row is NOT clickable
+    const totalHeader = within(table).getByRole('rowheader', { name: /LWE total/i });
+    const totalRow = totalHeader.closest('tr')!;
+    expect(totalRow).not.toHaveClass('cursor-pointer');
   });
 
   it('shows circle-wise NSLA by month with the project total and the rank from the backend', async () => {

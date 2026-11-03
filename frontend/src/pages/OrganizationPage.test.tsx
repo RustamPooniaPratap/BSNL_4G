@@ -68,7 +68,20 @@ describe('Organization page', () => {
   it('has six tabs in one page, opens a tab from its URL and sends an unknown tab to Projects', async () => {
     page('/admin/organization/circles');
     expect(within(tabs()).getAllByRole('link').map((a) => a.textContent))
-      .toEqual(['Projects', 'Circles', 'Project-Circle Mapping', 'User Access', 'Code Mapping', 'Change History']);
+      .toEqual([
+        'Projects',
+        'Circles',
+        'Operational Areas',
+        'Project-Circle Mapping',
+        'O&M Assignments',
+        'Personnel Master',
+        'Site Assignments',
+        'Mappings & Conflicts',
+        'Personnel Merge',
+        'User Access',
+        'Code Mapping',
+        'Change History',
+      ]);
     expect(within(tabs()).getByRole('link', { name: 'Circles' })).toHaveAttribute('aria-current', 'page');
     expect(await screen.findByRole('row', { name: 'Circle MP' })).toBeInTheDocument();
   });
