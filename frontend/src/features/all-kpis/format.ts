@@ -7,6 +7,9 @@ export const count = (v: number | null | undefined) => (v == null ? NA : formatN
 export const hours = (v: number | null | undefined) => (v == null ? NA : `${formatNumber(Math.round(v * 10) / 10)} h`);
 export const minutes = (v: number | null | undefined) => (v == null ? NA : `${formatNumber(Math.round(v))} min`);
 
+/** Class of a numeric table cell or header: right-aligned, tabular figures. */
+export const NUM = 'text-right tabular-nums';
+
 /** Change against the previous period: an arrow direction and text; null when either value is missing. */
 export function change(current: number | null | undefined, previous: number | null | undefined, unit: 'pts' | '%' = '%') {
   if (current == null || previous == null) return null;

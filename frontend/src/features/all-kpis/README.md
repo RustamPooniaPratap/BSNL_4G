@@ -12,7 +12,8 @@ settings of its own, and no other module depends on it.
 | `AllKpisPage.tsx` | Page, tabs, KPI groups, period and data-limitation notices |
 | `useKpiFilters.ts` | Filters kept in the URL (multi-select, cascading Circle → CI → IE → Site) |
 | `api.ts`, `types.ts`, `format.ts` | API calls, response types, value formatting (null = "Not available", never 0) |
-| `components/` | `KpiFilters`, `MultiSelect`, `KpiCards`, `TrendPanel`, `ComparisonTable`, `DrillDown` (+ `SitesTable`), `RcaPanel` |
+| `status.ts` | Display-only status colours (see below) |
+| `components/` | `KpiFilters`, `MultiSelect`, `KpiCards`, `KpiTable` (+ `Pager`), `TrendPanel`, `ComparisonTable`, `DrillDown` (+ `SitesTable`), `RcaPanel` |
 | `AllKpisPage.test.tsx` | Frontend tests |
 
 | Backend (`backend/apps/allkpis/`) | Purpose |
@@ -54,6 +55,16 @@ and circles (`dashboard.scope.restrict`, `rca.services.filtered`).
 - **Missing availability:** a site-day without a value is a reporting gap (Data Completeness tab), never 0%.
 - **RCA:** `rca.services.filtered` plus the approved Final Bucket mapping `rca.breakdown.FINAL_BUCKET_CATEGORIES`.
   Values outside it are "Not mapped".
+
+## Display conventions (no effect on any value)
+
+- **Status colours** (`status.ts`), using the existing thresholds only: availability green at 98.5% and above, amber below
+  98.5%, red below 60%. Reporting coverage is amber below 100%. Counts of problem sites (USD, NSLA, below 98.5% / 60%,
+  missing site-days) are amber or red only when above zero. In tables only amber and red are shown.
+- **Comparison chips** only when both periods have a value: green when better, red when worse (more outage is worse).
+- **Unavailable or pending values** use a neutral dashed card with the reason, never 0.
+- **Charts:** one colour per series on every chart (availability = primary, USD = amber, NSLA = red), a dashed 98.5% SLA
+  line, no animation.
 
 ## Pending (shown as such in the page)
 

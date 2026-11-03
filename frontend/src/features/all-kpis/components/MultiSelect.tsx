@@ -3,9 +3,10 @@ import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
 
 /** A multi-value filter: "All" when nothing is chosen; a search box for long lists. */
-export function MultiSelect({ id, label, options, value, onChange, allLabel = 'All', width = 'w-44' }: {
+export function MultiSelect({ id, label, options, value, onChange, allLabel = 'All', width = 'w-full' }: {
   id: string; label: string; options: { key: string; label: string }[]; value: string[]; onChange: (v: string[]) => void; allLabel?: string; width?: string;
 }) {
   const [q, setQ] = useState('');
@@ -15,8 +16,8 @@ export function MultiSelect({ id, label, options, value, onChange, allLabel = 'A
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button id={id} type="button" variant="outline" aria-label={`${label}: ${summary}`} className={`h-9 justify-between font-normal ${width}`}>
-          <span className="truncate">{summary}</span><ChevronDown className="opacity-60" />
+        <Button id={id} type="button" variant="outline" aria-label={`${label}: ${summary}`} className={cn('h-9 justify-between font-normal', width, value.length > 0 && 'border-primary/40 bg-primary/5 font-medium hover:bg-primary/10')}>
+          <span className="truncate">{summary}</span><ChevronDown className="shrink-0 opacity-60" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-2 text-sm">
@@ -29,7 +30,7 @@ export function MultiSelect({ id, label, options, value, onChange, allLabel = 'A
           {shown.map((o) => (
             <li key={o.key}>
               <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-muted">
-                <input type="checkbox" checked={chosen.has(o.key)} onChange={() => onChange(chosen.has(o.key) ? value.filter((v) => v !== o.key) : [...value, o.key])} />
+                <input type="checkbox" className="accent-primary" checked={chosen.has(o.key)} onChange={() => onChange(chosen.has(o.key) ? value.filter((v) => v !== o.key) : [...value, o.key])} />
                 <span className="truncate">{o.label}</span>
               </label>
             </li>
