@@ -250,11 +250,16 @@ function NewUserForm({ onCreated }: { onCreated: (user: PortalUser, password: st
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!/^[\w.@+-]{3,150}$/.test(draft.username.trim())) { setErrors({ username: 'Use 3 to 150 letters, digits and . @ + - _ only.' }); return; }
+    const emailVal = draft.email.trim();
+    const usernameVal = draft.username.trim();
+    if (!emailVal && !usernameVal) { setErrors({ email: 'Enter a valid email ID.' }); return; }
+    if (emailVal && !emailVal.includes('@')) { setErrors({ email: 'Enter a valid email ID.' }); return; }
+    const derivedUsername = usernameVal || emailVal.split('@')[0];
+    if (!/^[\w.@+-]{3,150}$/.test(derivedUsername)) { setErrors({ username: 'Use 3 to 150 letters, digits and . @ + - _ only.' }); return; }
     setBusy(true);
     setErrors({});
     try {
-      const r = await createUser({ ...draft, username: draft.username.trim() });
+      const r = await createUser({ ...draft, email: emailVal, username: derivedUsername });
       onCreated(r.user, r.temporary_password);
       setDraft(empty);
     } catch (e) {
@@ -279,10 +284,10 @@ function NewUserForm({ onCreated }: { onCreated: (user: PortalUser, password: st
       </CardHeader>
       <CardContent>
         <form noValidate onSubmit={submit} className="flex flex-wrap items-end gap-3">
-          {text('username', 'Login ID', true)}
+          {text('email', 'Email ID', true)}
+          {text('username', 'Login ID')}
           {text('first_name', 'First name')}
           {text('last_name', 'Last name')}
-          {text('email', 'Email')}
           <Field id="new-role" label="Account role" required className="w-48">
             <SelectField id="new-role" value={draft.role} placeholder="Role" options={ROLE_OPTIONS} onChange={(v) => set('role', v)} />
           </Field>

@@ -225,9 +225,9 @@ const send = <T,>(path: string, body: JsonBody = {}, method = 'POST') =>
 
 export const fetchMe = (signal?: AbortSignal) => request<{ user: AuthUser }>('/auth/me/', undefined, { signal });
 
-export async function signIn(username: string, password: string, remember = false) {
+export async function signIn(email: string, password: string, remember = false) {
   await ensureCsrf();
-  const result = await send<{ user: AuthUser; csrf_token: string }>('/auth/login/', { username, password, remember });
+  const result = await send<{ user: AuthUser; csrf_token: string }>('/auth/login/', { email, username: email, password, remember });
   setCsrfToken(result.csrf_token);  // Django rotates the token at sign-in
   return result.user;
 }

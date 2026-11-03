@@ -98,7 +98,7 @@ class SignInTests(AuthTestCase):
     def test_wrong_password_unknown_login_and_inactive_account_get_the_same_generic_error(self):
         portal_user('old.ci', 'ci', active=False)
         answers = [self.sign_in('asha.admin', 'wrong-password'), self.sign_in('nobody.here'), self.sign_in('old.ci')]
-        self.assertEqual({(r.status_code, r.json()['error']) for r in answers}, {(400, 'Invalid login ID or password.')})
+        self.assertEqual({(r.status_code, r.json()['error']) for r in answers}, {(400, 'Invalid email ID or password.')})
         self.assertNotIn('_auth_user_id', self.client.session)
 
     def test_an_account_without_a_portal_role_cannot_sign_in(self):
@@ -274,3 +274,131 @@ class DevLoginBypassTests(AuthTestCase):
             self.ci.is_active = False
             self.ci.save()
             self.assertEqual(self.bypass().status_code, 404)
+
+
+
+class EmailAuthenticationTests(AuthTestCase):
+    """
+    Validate all 8 scenarios for email-based login of admin-created users:
+    1. Admin logs in using registered email ID.
+    2. Admin creates a new CI user, and the CI logs in using their email ID and temporary password.
+    3. Login fails with invalid email or wrong password with generic error.
+    4. Inactive / disabled user cannot log in.
+    5. Attempting to create a user with a duplicate email ID is rejected (case-insensitive).
+    6. Role-based access restrictions are preserved for CI user logged in via email.
+    7. Existing user compatibility (mixed-case email and username fallback).
+    8. User logout / session invalidation works.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        # Ensure our admin user has the registered email
+        self.admin.email = 'admin@gmail.com'
+        self.admin.save(update_fields=['email'])
+
+    def test_scenario_1_admin_logs_in_using_registered_email(self):
+        response = self.sign_in('admin@gmail.com')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['user']['role'], 'admin')
+
+    def test_scenario_2_admin_creates_ci_and_ci_logs_in_with_email(self):
+        # Admin signs in
+        self.sign_in('admin@gmail.com')
+        create_res = self.post('auth-users', {
+            'email': 'new.ci@example.com',
+            'username': 'new.ci',
+            'first_name': 'New',
+            'last_name': 'Engineer',
+            'role': 'ci',
+        })
+        self.assertEqual(create_res.status_code, 201)
+        temp_pwd = create_res.json()['temporary_password']
+
+        # CI signs in with email and temporary password
+        ci_client = Client(enforce_csrf_checks=True)
+        login_res = self.sign_in('new.ci@example.com', temp_pwd, client=ci_client)
+        self.assertEqual(login_res.status_code, 200)
+        user_info = login_res.json()['user']
+        self.assertEqual(user_info['role'], 'ci')
+        self.assertTrue(user_info['must_change_password'])
+
+    def test_scenario_3_invalid_credentials_rejected_with_generic_error(self):
+        # Non-existent email
+        res1 = self.sign_in('nonexistent@example.com', PASSWORD)
+        self.assertEqual(res1.status_code, 400)
+        self.assertEqual(res1.json()['error'], 'Invalid email ID or password.')
+
+        # Valid email, wrong password
+        res2 = self.sign_in('admin@gmail.com', 'wrongpassword')
+        self.assertEqual(res2.status_code, 400)
+        self.assertEqual(res2.json()['error'], 'Invalid email ID or password.')
+
+    def test_scenario_4_inactive_user_cannot_log_in(self):
+        from apps.accounts.roles import set_role
+        from django.contrib.auth import get_user_model
+        disabled = get_user_model().objects.create_user(
+            username='disabled.ci',
+            email='disabled.ci@example.com',
+            password=PASSWORD,
+            is_active=False
+        )
+        set_role(disabled, 'ci')
+        res = self.sign_in('disabled.ci@example.com', PASSWORD)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json()['error'], 'Invalid email ID or password.')
+
+    def test_scenario_5_duplicate_email_rejected_case_insensitive(self):
+        self.sign_in('admin@gmail.com')
+        # Attempt to create with existing admin email in uppercase
+        res = self.post('auth-users', {
+            'email': 'ADMIN@GMAIL.COM',
+            'username': 'another.admin',
+            'role': 'admin',
+        })
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('email', res.json()['details'])
+
+    def test_scenario_6_role_based_access_preserved_for_ci_logged_in_with_email(self):
+        from apps.accounts.roles import set_role
+        from django.contrib.auth import get_user_model
+        ci_user = get_user_model().objects.create_user(
+            username='field.ci',
+            email='field.ci@example.com',
+            password=PASSWORD,
+            is_active=True
+        )
+        set_role(ci_user, 'ci')
+
+        ci_client = Client(enforce_csrf_checks=True)
+        login_res = self.sign_in('field.ci@example.com', PASSWORD, client=ci_client)
+        self.assertEqual(login_res.status_code, 200)
+
+        # CI user cannot access admin-only endpoints
+        for admin_endpoint in ('auth-users', 'email-status'):
+            res = ci_client.get(reverse(admin_endpoint))
+            self.assertEqual(res.status_code, 403, f'{admin_endpoint} must be forbidden to CI')
+
+    def test_scenario_7_existing_user_compatibility_and_case_insensitivity(self):
+        # Case insensitive email login: upper/mixed case
+        res1 = self.sign_in('AdMiN@GmAiL.cOm')
+        self.assertEqual(res1.status_code, 200)
+        self.assertEqual(res1.json()['user']['role'], 'admin')
+
+        # Username login continues to work for accounts
+        res2 = self.sign_in('asha.admin')
+        self.assertEqual(res2.status_code, 200)
+
+    def test_scenario_8_logout_and_session_invalidation(self):
+        self.sign_in('admin@gmail.com')
+        # Protected call succeeds
+        self.assertEqual(self.client.get(reverse('auth-me')).status_code, 200)
+
+        # Logout
+        token = self.csrf()
+        logout_res = self.client.post(reverse('auth-logout'), {}, content_type='application/json', HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(logout_res.status_code, 200)
+
+        # Protected call fails after logout
+        self.assertEqual(self.client.get(reverse('auth-me')).status_code, 401)

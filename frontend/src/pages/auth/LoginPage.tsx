@@ -63,7 +63,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? '/portfolio';
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(false);
@@ -82,16 +82,16 @@ export function LoginPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!username.trim() || !password) { setError('Enter your login ID and password.'); return; }
+    if (!email.trim() || !password) { setError('Enter your email ID and password.'); return; }
     setBusy(true);
     setError(null);
     try {
-      const me = await signIn(username.trim(), password, remember);
+      const me = await signIn(email.trim(), password, remember);
       navigate(me.must_change_password ? '/change-password' : from, { replace: true });
     } catch (e) {
       // The server gives one generic message, so it never reveals whether a login ID exists.
       setError(e instanceof ApiError && e.status === 429 ? 'Too many sign-in attempts. Wait a minute and try again.'
-        : e instanceof ApiError && e.status !== 0 ? 'Invalid login ID or password.' : (e as Error).message);
+        : e instanceof ApiError && e.status !== 0 ? 'Invalid email ID or password.' : (e as Error).message);
       setPassword('');
     } finally {
       setBusy(false);
@@ -117,9 +117,9 @@ export function LoginPage() {
         {notice && !error && <Alert><Info /><AlertDescription>{notice}</AlertDescription></Alert>}
         {error && <Alert variant="destructive" role="alert"><CircleAlert /><AlertDescription>{error}</AlertDescription></Alert>}
         <div className="space-y-2">
-          <Label htmlFor="login-id" className="text-sm">Login ID</Label>
-          <Input id="login-id" autoComplete="username" autoFocus placeholder="your.login.id" value={username} maxLength={150}
-            className="h-11 bg-white text-base" onChange={(e) => setUsername(e.target.value)} />
+          <Label htmlFor="login-email" className="text-sm">Email ID</Label>
+          <Input id="login-email" type="email" autoComplete="email" autoFocus placeholder="name@example.com" value={email} maxLength={150}
+            className="h-11 bg-white text-base" onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between">

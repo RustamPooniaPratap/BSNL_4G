@@ -21,6 +21,11 @@ const TeamsPage = lazy(() => import('./pages/TeamsPage').then((m) => ({ default:
 const TopPerformersPage = lazy(() => import('./pages/TopPerformersPage').then((m) => ({ default: m.TopPerformersPage })));
 const CircleTopPerformerPage = lazy(() => import('./pages/CircleTopPerformerPage').then((m) => ({ default: m.CircleTopPerformerPage })));
 const CiIePerformancePage = lazy(() => import('./pages/CiIePerformancePage').then((m) => ({ default: m.CiIePerformancePage })));
+const OmOverviewPage = lazy(() => import('./pages/hierarchy/OmOverviewPage').then((m) => ({ default: m.OmOverviewPage })));
+const CirclePerformancePage = lazy(() => import('./pages/hierarchy/CirclePerformancePage').then((m) => ({ default: m.CirclePerformancePage })));
+const OaPerformancePage = lazy(() => import('./pages/hierarchy/OaPerformancePage').then((m) => ({ default: m.OaPerformancePage })));
+const CiPerformancePage = lazy(() => import('./pages/hierarchy/CiPerformancePage').then((m) => ({ default: m.CiPerformancePage })));
+const IePerformancePage = lazy(() => import('./pages/hierarchy/IePerformancePage').then((m) => ({ default: m.IePerformancePage })));
 const DataSourcePage = lazy(() => import('./pages/DataSourcePage').then((m) => ({ default: m.DataSourcePage })));
 const DatabaseImportPage = lazy(() => import('./pages/DatabaseImportPage').then((m) => ({ default: m.DatabaseImportPage })));
 const CsvArrivalPage = lazy(() => import('./pages/CsvArrivalPage').then((m) => ({ default: m.CsvArrivalPage })));
@@ -54,6 +59,12 @@ function PortalRoutes() {
               <Route path="/teams/top/circle/:circleId" element={<RequireAdmin><CircleTopPerformerPage /></RequireAdmin>} />
               <Route path="/teams/circle/:circleId" element={<RequireAdmin><CircleTopPerformerPage /></RequireAdmin>} />
               <Route path="/team-performance/circle/:circleId" element={<RequireAdmin><CircleTopPerformerPage /></RequireAdmin>} />
+              {/* Five-Level Team Performance Hierarchy */}
+              <Route path="/teams/hierarchy" element={<RequireAdmin><OmOverviewPage /></RequireAdmin>} />
+              <Route path="/teams/hierarchy/circle/:circleCode" element={<RequireAdmin><CirclePerformancePage /></RequireAdmin>} />
+              <Route path="/teams/hierarchy/circle/:circleCode/oa/:oaId" element={<RequireAdmin><OaPerformancePage /></RequireAdmin>} />
+              <Route path="/teams/hierarchy/circle/:circleCode/oa/:oaId/ci/:ciId" element={<RequireAdmin><CiPerformancePage /></RequireAdmin>} />
+              <Route path="/teams/hierarchy/circle/:circleCode/oa/:oaId/ci/:ciId/ie/:ieId" element={<RequireAdmin><IePerformancePage /></RequireAdmin>} />
               {/* Data source: Excel upload or PostgreSQL import, on one page. */}
               <Route path="/workbook" element={<RequireAdmin><DatabaseImportPage /></RequireAdmin>} />
               <Route path="/data/add-row" element={<RequirePage><AddRowPage /></RequirePage>} />

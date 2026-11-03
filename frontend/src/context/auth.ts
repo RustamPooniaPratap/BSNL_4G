@@ -8,7 +8,7 @@ export interface AuthContextValue {
   /** Why the user was signed out, e.g. an expired session. */
   notice: string | null;
   /** remember: keep the session for 7 days instead of ending it with the browser. */
-  signIn: (username: string, password: string, remember?: boolean) => Promise<AuthUser>;
+  signIn: (email: string, password: string, remember?: boolean) => Promise<AuthUser>;
   /** Development only: sign in through the backend's bypass (refused by the server unless enabled). */
   devSignIn: () => Promise<AuthUser>;
   signOut: () => Promise<void>;
@@ -25,7 +25,7 @@ export function useAuth(): AuthContextValue {
 }
 
 /** Pages that stay with the Admin role (the backend refuses their APIs to everyone else). */
-export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/ci-ie', '/teams/top', '/workbook', '/data/database', '/admin/users', '/admin/users/roles', '/admin/users/assignments', '/admin/users/history', '/admin/organization', '/admin/organization/circles', '/admin/organization/mapping', '/admin/organization/access', '/admin/organization/code-mapping', '/admin/organization/history', '/rca/submissions', '/rca/mappings', '/admin/alerts/email', '/admin/alerts/automations', '/admin/alerts/history'];
+export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/hierarchy', '/teams/ci-ie', '/teams/top', '/workbook', '/data/database', '/admin/users', '/admin/users/roles', '/admin/users/assignments', '/admin/users/history', '/admin/organization', '/admin/organization/circles', '/admin/organization/mapping', '/admin/organization/access', '/admin/organization/code-mapping', '/admin/organization/history', '/rca/submissions', '/rca/mappings', '/admin/alerts/email', '/admin/alerts/automations', '/admin/alerts/history'];
 
 /**
  * The permission ('module.action', see Users & Roles › Roles & Permissions) each other page needs. A user opens the page

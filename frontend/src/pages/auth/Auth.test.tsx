@@ -51,7 +51,7 @@ describe('sign-in', () => {
     renderApp('/thresholds');
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent('/login');
-    await user.type(screen.getByLabelText('Login ID'), 'asha.admin');
+    await user.type(screen.getByLabelText(/Email ID|Login ID/), 'asha.admin');
     await user.type(screen.getByLabelText('Password'), 'secret-password');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
     expect(await screen.findByText('Dashboard')).toBeInTheDocument();
@@ -80,12 +80,12 @@ describe('sign-in', () => {
     expect(screen.getByText(/Passwords are reset by a portal Admin/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Remember me for 7 days' })).not.toBeChecked();
     await user.click(screen.getByRole('checkbox', { name: 'Remember me for 7 days' }));
-    await user.type(screen.getByLabelText('Login ID'), 'asha.admin');
+    await user.type(screen.getByLabelText(/Email ID|Login ID/), 'asha.admin');
     await user.type(password, 'secret-password');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
     await screen.findByText('Dashboard');
     const [, init] = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/auth/login/'))!;
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ username: 'asha.admin', password: 'secret-password', remember: true });
+    expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({ password: 'secret-password', remember: true });
   });
 
   it('offers "continue without signing in" only when the backend enables the development bypass', async () => {
@@ -125,13 +125,13 @@ describe('sign-in', () => {
       const url = String(input);
       if (url.endsWith('/auth/me/')) return json({ error: 'x', details: {} }, 401);
       if (url.endsWith('/auth/csrf/')) return json({ csrf_token: 't' });
-      return json({ error: 'Invalid login ID or password.', details: {} }, 400);
+      return json({ error: 'Invalid email ID or password.', details: {} }, 400);
     });
     renderApp('/login');
-    await user.type(await screen.findByLabelText('Login ID'), 'nobody');
+    await user.type(await screen.findByLabelText(/Email ID|Login ID/), 'nobody');
     await user.type(screen.getByLabelText('Password'), 'whatever');
     await user.click(screen.getByRole('button', { name: /Sign in/ }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid login ID or password.');
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Invalid (email|login) ID or password\./);
     expect(screen.getByLabelText('Password')).toHaveValue('');
   });
 

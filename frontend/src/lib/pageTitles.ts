@@ -8,6 +8,7 @@ const TITLES: Record<string, string> = {
   '/thresholds': 'Threshold Analysis',
   '/thresholds/buckets': 'Uptime Buckets & Site Details',
   '/teams': 'Team Performance',
+  '/teams/hierarchy': 'Team Performance Hierarchy',
   '/teams/ci-ie': 'CI & IE Performance',
   '/teams/top': 'Circle-wise Top Performers',
   '/workbook': 'Master Workbook',
@@ -55,6 +56,13 @@ export function routeTitle(pathname: string, search = ''): string {
   }
   if (path.startsWith('/teams/top/circle/') || path.startsWith('/teams/circle/') || path.startsWith('/team-performance/circle/')) {
     return 'Circle Details';
+  }
+  if (path.startsWith('/teams/hierarchy')) {
+    if (path.includes('/ie/')) return 'IE Performance Details';
+    if (path.includes('/ci/')) return 'CI Performance Details';
+    if (path.includes('/oa/')) return 'OA Performance Details';
+    if (path.includes('/circle/')) return 'Circle Performance Details';
+    return 'O&M Hierarchy Overview';
   }
   return TITLES[path] ?? '4G Saturation & LWE Reporting';
 }

@@ -35,8 +35,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(AUTH_EVENT, onEvent);
   }, []);
 
-  const signIn = useCallback(async (username: string, password: string, remember = false) => {
-    const me = await apiSignIn(username, password, remember);
+  const signIn = useCallback(async (email: string, password: string, remember = false) => {
+    const me = await apiSignIn(email, password, remember);
     setUserState(me);
     setStatus('signed_in');
     setNotice(null);

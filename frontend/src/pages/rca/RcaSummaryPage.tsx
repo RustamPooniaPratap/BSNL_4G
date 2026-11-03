@@ -138,15 +138,11 @@ function SummaryNav({ current, search }: { current: SummaryView; search: string 
   );
 }
 
-/** Overview: one tile per analysis page, with a figure taken from the same response (presentation of the same facts). */
+/** Overview: one tile per analysis page (excluding circle-wise breakdown), with a figure taken from the same response. */
 function OverviewLinks({ s, search }: { s: RcaSummary; search: string }) {
   const topCause = s.final_buckets.filter((i) => !i.unclassified && !i.rca_not_applicable).sort((a, b) => b.records - a.records)[0];
   const topCircle = [...s.circles].sort((a, b) => b.records - a.records)[0];
   const facts: Record<string, { headline: string; detail: string }> = {
-    '/rca/summary/breakdown': {
-      headline: formatNumber(s.breakdown.grand_total),
-      detail: `records in the reporting categories${s.breakdown.not_mapped.records ? ` · ${formatNumber(s.breakdown.not_mapped.records)} not mapped` : ''}`,
-    },
     '/rca/summary/root-causes': topCause
       ? { headline: topCause.label, detail: `Most frequent Final Bucket · ${formatNumber(topCause.records)} records` }
       : { headline: '—', detail: 'No classified Final Bucket in the filter' },
@@ -155,9 +151,10 @@ function OverviewLinks({ s, search }: { s: RcaSummary; search: string }) {
       : { headline: '—', detail: 'No circle in the filter' },
     '/rca/summary/trends': { headline: formatNumber(s.dates.length), detail: `reporting date${s.dates.length === 1 ? '' : 's'} with records` },
   };
+  const tiles = SUMMARY_VIEWS.filter((v) => v.path !== '/rca/summary' && v.path !== '/rca/summary/breakdown');
   return (
-    <RcaSection heading="RCA analysis" label="RCA analysis pages" columns={4}>
-      {SUMMARY_VIEWS.slice(1).map((v) => (
+    <RcaSection heading="RCA analysis" label="RCA analysis pages" columns={3}>
+      {tiles.map((v) => (
         <RcaAnalysisTile key={v.path} label={v.label} description={v.description} icon={VIEW_LOOK[v.path].icon} tint={VIEW_LOOK[v.path].tint}
           headline={facts[v.path].headline} detail={facts[v.path].detail} to={{ pathname: v.path, search }} />
       ))}

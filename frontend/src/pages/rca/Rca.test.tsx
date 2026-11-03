@@ -168,7 +168,7 @@ describe('RCA Summary', () => {
     // The Overview is concise: the details are on their own pages, reached from the tabs or the overview links.
     expect(screen.queryByRole('region', { name: 'Circle-wise Root Cause Breakdown' })).not.toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'RCA analysis pages' })).getAllByRole('link').map((l) => l.textContent?.split(/[A-Z][a-z]+ [a-z]/)[0]))
-      .toHaveLength(4);
+      .toHaveLength(3);
     await user.click(within(screen.getByRole('navigation', { name: 'RCA Summary pages' })).getByRole('link', { name: 'Root Cause Analysis' }));
     const title = 'RCA classification: Final Bucket';
     // Technical causes are ranked; Other Media follows, labelled as not applicable, even though it has the most records.

@@ -34,7 +34,7 @@ from .services import log
 from .throttles import LoginIPThrottle, LoginUserThrottle
 
 User = get_user_model()
-GENERIC_LOGIN_ERROR = 'Invalid login ID or password.'
+GENERIC_LOGIN_ERROR = 'Invalid email ID or password.'
 
 
 MEMBER = 'member'  # no built-in role: rights from assignments only
@@ -100,10 +100,18 @@ class CsrfView(APIView):
 
 
 class LoginSerializer(serializers.Serializer):
-    username = serializers.CharField(max_length=150, trim_whitespace=True)
+    email = serializers.CharField(max_length=150, required=False, trim_whitespace=True)
+    username = serializers.CharField(max_length=150, required=False, trim_whitespace=True)
     password = serializers.CharField(max_length=128, trim_whitespace=False)
     # "Remember me": keep the session for REMEMBER_ME_DAYS (renewed on use) and across browser restarts.
     remember = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        identifier = attrs.get('email') or attrs.get('username')
+        if not identifier or not identifier.strip():
+            raise serializers.ValidationError('Email ID is required.')
+        attrs['login_id'] = identifier.strip()
+        return attrs
 
 
 @method_decorator(csrf_protect, name='dispatch')
@@ -116,17 +124,17 @@ class LoginView(APIView):
         data = LoginSerializer(data=request.data)
         if not data.is_valid():
             return Response({'error': GENERIC_LOGIN_ERROR, 'details': {}}, status=status.HTTP_400_BAD_REQUEST)
-        username = data.validated_data['username']
-        # authenticate() refuses inactive users (ModelBackend), with the same generic error.
-        user = authenticate(request, username=username, password=data.validated_data['password'])
+        login_id = data.validated_data['login_id']
+        # authenticate() checks EmailBackend (email first, fallback username) and refuses inactive users with generic error.
+        user = authenticate(request, username=login_id, password=data.validated_data['password'])
         if user is None or role_of(user) is None:
-            audit('login_failed', request, login_id=username)
+            audit('login_failed', request, login_id=login_id)
             return Response({'error': GENERIC_LOGIN_ERROR, 'details': {}}, status=status.HTTP_400_BAD_REQUEST)
         login(request, user)  # new session key; any previous session data is not carried over
         remember = data.validated_data['remember']
         if remember:
             request.session.set_expiry(settings.REMEMBER_ME_DAYS * 24 * 60 * 60)
-        audit('login_success', request, login_id=username, user_id=user.pk, remember=remember)
+        audit('login_success', request, login_id=login_id, user_id=user.pk, remember=remember)
         return Response({'user': me_payload(user), 'csrf_token': get_token(request)})
 
 
@@ -259,7 +267,7 @@ def _known_circles(value: list[str]) -> list[str]:
 
 class CreateUserSerializer(serializers.Serializer):
     # Explicit fields only: nothing else (is_superuser, is_staff, groups...) can be set.
-    username = serializers.RegexField(r'^[\w.@+-]{3,150}$', max_length=150,
+    username = serializers.RegexField(r'^[\w.@+-]{3,150}$', max_length=150, required=False,
                                       error_messages={'invalid': 'Use 3 to 150 letters, digits and . @ + - _ only.'})
     first_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
     last_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
@@ -271,10 +279,34 @@ class CreateUserSerializer(serializers.Serializer):
     def validate_circles(self, value):
         return _known_circles(value)
 
+    def validate_email(self, value):
+        val = value.strip().lower()
+        if val:
+            if User.objects.filter(email__iexact=val).exists():
+                raise serializers.ValidationError('This email ID is already in use.')
+        return val
+
     def validate_username(self, value):
-        if User.objects.filter(username__iexact=value).exists():
+        if value and User.objects.filter(username__iexact=value).exists():
             raise serializers.ValidationError('This login ID is already in use.')
         return value
+
+    def validate(self, attrs):
+        email = (attrs.get('email') or '').strip().lower()
+        username = (attrs.get('username') or '').strip()
+        if not email and not username:
+            raise serializers.ValidationError({'email': 'Email ID is required.'})
+        if not username and email:
+            import re
+            base = re.sub(r'[^\w.@+-]', '_', email.split('@')[0])[:140] or 'user'
+            candidate = base
+            idx = 1
+            while User.objects.filter(username__iexact=candidate).exists():
+                candidate = f"{base}_{idx}"
+                idx += 1
+            attrs['username'] = candidate
+        attrs['email'] = email
+        return attrs
 
 
 class UpdateUserSerializer(serializers.Serializer):
@@ -290,6 +322,17 @@ class UpdateUserSerializer(serializers.Serializer):
 
     def validate_circles(self, value):
         return _known_circles(value)
+
+    def validate_email(self, value):
+        val = value.strip().lower()
+        if val:
+            user_id = self.context.get('user_id')
+            qs = User.objects.filter(email__iexact=val)
+            if user_id:
+                qs = qs.exclude(pk=user_id)
+            if qs.exists():
+                raise serializers.ValidationError('This email ID is already in use.')
+        return val
 
 
 class UsersView(APIView):
@@ -333,7 +376,7 @@ class UserDetailView(APIView):
 
     def patch(self, request, user_id: int):
         user = _target(request, user_id)
-        data = UpdateUserSerializer(data=request.data)
+        data = UpdateUserSerializer(data=request.data, context={'user_id': user.pk})
         data.is_valid(raise_exception=True)
         v = data.validated_data
         if user.pk == request.user.pk and (('role' in v and v['role'] != account_role(user)) or v.get('is_active') is False):

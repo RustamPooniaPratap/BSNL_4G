@@ -59,6 +59,7 @@ const entries: NavEntry[] = [
     kind: 'group', id: 'teams', label: 'Team Performance', icon: Users,
     link: page('/teams', 'Team Performance', Users),
     items: [
+      { ...page('/teams/hierarchy', 'Performance Hierarchy', ListTree), isActive: (p) => p.startsWith('/teams/hierarchy') },
       page('/teams/ci-ie', 'CI & IE Performance', UserCheck),
       { ...page('/teams/top', 'Circle-wise Top Performers', Trophy), isActive: (p) => p === '/teams/top' || p.startsWith('/teams/top/') || p.startsWith('/teams/circle/') || p.startsWith('/team-performance/circle/') },
     ],
