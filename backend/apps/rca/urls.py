@@ -9,6 +9,7 @@ urlpatterns = [
     path('records/<int:record_id>/workflow/', views.record_workflow, name='rca-workflow'),
     path('records/<int:record_id>/comments/', views.record_comments, name='rca-comments'),
     path('summary/', views.summary, name='rca-summary'),
+    path('overview/', views.overview, name='rca-overview'),
     path('imports/', views.import_list, name='rca-imports'),
     path('imports/preview/', views.import_preview, name='rca-import-preview'),
     path('imports/<int:batch_id>/', views.import_detail, name='rca-import'),

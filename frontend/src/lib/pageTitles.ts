@@ -22,6 +22,7 @@ const TITLES: Record<string, string> = {
   '/admin/users/roles': 'Users & Roles · Roles & Permissions',
   '/admin/users/assignments': 'Users & Roles · Access Assignments',
   '/admin/users/history': 'Users & Roles · Access History',
+  '/all-kpis': "All KPI's",
   '/master-data': 'Master Data · Uptime Master',
   '/master-data/escalation': 'Master Data · CI-wise Consolidation & Escalation Matrix',
   '/master-data/rca': 'Master Data · RCA Data',

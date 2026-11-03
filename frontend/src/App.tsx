@@ -35,6 +35,7 @@ const RcaMappingPage = lazy(() => import('./pages/rca/RcaMappingPage').then((m) 
 const RcaImportPage = lazy(() => import('./pages/rca/RcaImportPage').then((m) => ({ default: m.RcaImportPage })));
 const RcaSubmissionsPage = lazy(() => import('./pages/rca/RcaSubmissionsPage').then((m) => ({ default: m.RcaSubmissionsPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage').then((m) => ({ default: m.UsersPage })));
+const AllKpisPage = lazy(() => import('./features/all-kpis/AllKpisPage').then((m) => ({ default: m.AllKpisPage })));  // optional module: features/all-kpis/README.md
 const MasterDataPage = lazy(() => import('./pages/MasterDataPage').then((m) => ({ default: m.MasterDataPage })));
 const AlertEmailSetupPage = lazy(() => import('./pages/alerts/AlertEmailSetupPage').then((m) => ({ default: m.AlertEmailSetupPage })));
 const AlertAutomationsPage = lazy(() => import('./pages/alerts/AlertAutomationsPage').then((m) => ({ default: m.AlertAutomationsPage })));
@@ -75,6 +76,7 @@ function PortalRoutes() {
               <Route path="/daily-ingestion" element={<RequireAdmin><CsvArrivalPage /></RequireAdmin>} />
               <Route path="/admin/users/*" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
               <Route path="/master-data/*" element={<RequirePage><MasterDataPage /></RequirePage>} />
+              <Route path="/all-kpis" element={<RequirePage><AllKpisPage /></RequirePage>} />
               <Route path="/admin/organization/*" element={<RequireAdmin><OrganizationPage /></RequireAdmin>} />
               <Route path="/admin/alerts" element={<Navigate to="/admin/alerts/email" replace />} />
               <Route path="/admin/alerts/email" element={<RequireAdmin><AlertEmailSetupPage /></RequireAdmin>} />

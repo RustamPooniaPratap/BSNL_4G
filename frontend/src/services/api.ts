@@ -41,7 +41,7 @@ import type {
 } from '../types';
 import type {
   RcaCauses, RcaCycleDetail, RcaCycleList, RcaImportBatch, RcaOptions, RcaPage, RcaRecordDetail, RcaRecordInput, RcaReportVersion,
-  RcaSummary, RcaUploadDetails, RcaUploadRights, RcaUploadType, RcaWorkflowInput,
+  RcaSummary, RcaOverviewResponse, RcaUploadDetails, RcaUploadRights, RcaUploadType, RcaWorkflowInput,
 } from '../types/rca';
 import type { ArrivalTracker, RawRowsPage, RawUpload, RawUploadDetails, RawUploadOptions } from '../types/rawUpload';
 import type { MasterDatasets, MasterOptions, MasterPage, MasterSaveRequest, MasterSaveResult } from '../types/masterData';
@@ -104,7 +104,7 @@ async function ensureCsrf(): Promise<string> {
   return csrfToken;
 }
 
-async function request<T>(path: string, params?: URLSearchParams, init?: RequestInit, retried = false): Promise<T> {
+export async function request<T>(path: string, params?: URLSearchParams, init?: RequestInit, retried = false): Promise<T> {
   const query = params && params.toString() ? `?${params}` : '';
   const method = (init?.method ?? 'GET').toUpperCase();
   const headers = new Headers(init?.headers);
@@ -322,6 +322,7 @@ export const createRcaRecord = (record: RcaRecordInput) => send<RcaRecordDetail>
 export const updateRcaWorkflow = (id: number, workflow: RcaWorkflowInput) => send<RcaRecordDetail>(`/rca/records/${id}/workflow/`, { ...workflow }, 'PUT');
 export const addRcaComment = (id: number, text: string, evidence: string) => send<RcaRecordDetail>(`/rca/records/${id}/comments/`, { text, evidence });
 export const fetchRcaSummary = (params: URLSearchParams, signal?: AbortSignal) => request<RcaSummary>('/rca/summary/', params, { signal });
+export const fetchRcaOverview = (params: URLSearchParams, signal?: AbortSignal) => request<RcaOverviewResponse>('/rca/overview/', params, { signal });
 /** The signed-in user's uploads; an Admin may ask for every upload. */
 export const fetchRcaImports = (signal?: AbortSignal, all = false, uploadType?: RcaUploadType) => {
   const params = new URLSearchParams();

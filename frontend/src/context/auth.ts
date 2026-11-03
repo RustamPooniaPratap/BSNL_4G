@@ -33,7 +33,7 @@ export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/hierarchy
  */
 const PAGE_PERMISSIONS: Record<string, string> = {
   '/': 'dashboard.view', '/portfolio': 'dashboard.view', '/thresholds': 'dashboard.view', '/thresholds/buckets': 'dashboard.view',
-  '/data-source': 'dashboard.view', '/master-data': 'data_*.view',
+  '/data-source': 'dashboard.view', '/master-data': 'data_*.view', '/all-kpis': 'dashboard.view',
   '/data/upload-csv': 'csv_upload.upload', '/data/add-row': 'csv_upload.upload', '/data/new-site': 'csv_upload.upload',
   '/rca': 'rca_register.view', '/rca/import': 'rca_upload.upload', '/rca/summary': 'rca_summary.view',
 };

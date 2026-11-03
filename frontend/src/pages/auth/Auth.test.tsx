@@ -161,7 +161,7 @@ describe('roles in the interface', () => {
     await user.click(within(nav).getByRole('button', { name: 'Data Management' }));
     await user.click(within(nav).getByRole('button', { name: 'Data Entry' }));
     const links = within(nav).getAllByRole('link').map((a) => a.textContent);
-    expect(links).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'RCA Register', 'Upload Circle RCA',
+    expect(links).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', "All KPI's", 'RCA Register', 'Upload Circle RCA',
       'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site']);
     expect(within(nav).queryByText('CSV Arrival & Follow-up')).not.toBeInTheDocument();
     expect(within(nav).queryByText('Administration')).not.toBeInTheDocument();

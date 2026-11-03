@@ -7,7 +7,7 @@ import { Sidebar } from '../../components/Sidebar';
 import * as api from '../../services/api';
 import { CI_PERMISSIONS, CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
 import type { AuthUser } from '../../types';
-import type { RcaBreakdown, RcaCauses, RcaOptions, RcaPage, RcaRecord, RcaRecordDetail, RcaSummary } from '../../types/rca';
+import type { RcaBreakdown, RcaCauses, RcaOptions, RcaOverviewResponse, RcaPage, RcaRecord, RcaRecordDetail, RcaSummary } from '../../types/rca';
 import { RcaMappingPage } from './RcaMappingPage';
 import { RcaRegisterPage } from './RcaRegisterPage';
 import { RcaSummaryPage } from './RcaSummaryPage';
@@ -15,7 +15,7 @@ import { RcaSummaryPage } from './RcaSummaryPage';
 vi.mock('../../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/api')>()),
   fetchRcaOptions: vi.fn(), fetchRcaRecords: vi.fn(), fetchRcaRecord: vi.fn(), updateRcaWorkflow: vi.fn(), fetchRcaSummary: vi.fn(),
-  fetchRcaCauses: vi.fn(), mapRcaCauses: vi.fn(), createRcaCategory: vi.fn(),
+  fetchRcaCauses: vi.fn(), mapRcaCauses: vi.fn(), createRcaCategory: vi.fn(), fetchRcaOverview: vi.fn(),
 }));
 const m = vi.mocked(api);
 
@@ -34,8 +34,10 @@ const REC: RcaRecord = {
 };
 const PAGE: RcaPage = { count: 2, page: 1, page_size: 25, pages: 1, results: [REC, { ...REC, id: 2, site_id: 'LWEBH0063', project: 'LWE', project_raw: 'LWE', circle: 'BH', outage_minutes: 20.6, bucket_2: 'BSNL Media', bucket_2_unclassified: false, rca_text: 'Media Flacuatation' }] };
 const DETAIL: RcaRecordDetail = { ...REC, source_file: 'Book1_RCA_Rustam.xlsx', source_row: 7, batch: 1, created_by: null, created_at: '2026-10-26T09:05:00', workflow: null, comments: [], history: [], other_records: [] };
-const BREAKDOWN_LABELS = ['PTPL-Battery', 'PTPL-OFC', 'PTPL-Others', 'BSNL-OFC', 'BSNL-Media', 'BSNL-Others', 'BBNL-OFC',
-  'DMW', 'HFCL', 'Iaasp Link', 'Iaasp OFC', 'Iaasp Others', 'Iaasp Power', 'TCS', 'Tech Delay', 'Theft', 'Vsat', 'Others'];
+const BREAKDOWN_LABELS = [
+  'IaaSP Power', 'IaaSP Others', 'IaaSP Battery', 'IaaSP OFC', 'BSNL OFC',
+  'BSNL Media', 'Others', 'TCS', 'DMW', 'HFCL',
+];
 const counts = (values: Record<string, number>, empty = false) =>
   Object.fromEntries(BREAKDOWN_LABELS.map((l) => [l, empty ? null : (values[l] ?? 0)]));
 const BREAKDOWN: RcaBreakdown = {
@@ -43,23 +45,30 @@ const BREAKDOWN: RcaBreakdown = {
   columns: BREAKDOWN_LABELS.map((label) => ({ label, pending: false, final_buckets: [label] })),
   rows: [
     { circle: 'AP', has_records: false, counts: counts({}, true), grand_total: null, not_mapped: null },
-    { circle: 'MP', has_records: true, counts: counts({ 'BSNL-OFC': 30, Others: 10 }), grand_total: 40, not_mapped: 5 },
-    { circle: 'OD', has_records: true, counts: counts({ 'BSNL-OFC': 20, TCS: 40 }), grand_total: 60, not_mapped: 0 },
+    { circle: 'MP', has_records: true, counts: counts({ 'BSNL OFC': 30, Others: 10 }), grand_total: 40, not_mapped: 5 },
+    { circle: 'OD', has_records: true, counts: counts({ 'BSNL OFC': 20, TCS: 40 }), grand_total: 60, not_mapped: 0 },
   ],
-  totals: counts({ 'BSNL-OFC': 50, TCS: 40, Others: 10 }),
+  totals: counts({ 'BSNL OFC': 50, TCS: 40, Others: 10 }),
   grand_total: 100,
-  percent_of_total: Object.fromEntries(BREAKDOWN_LABELS.map((l) => [l, ({ 'BSNL-OFC': 50, TCS: 40, Others: 10 } as Record<string, number>)[l] ?? 0])),
+  percent_of_total: Object.fromEntries(BREAKDOWN_LABELS.map((l) => [l, ({ 'BSNL OFC': 50, TCS: 40, Others: 10 } as Record<string, number>)[l] ?? 0])),
   not_mapped: { records: 5, values: [{ final_bucket: 'BB', records: 5 }] },
   records: 105,
+  all_rca_records: 105,
+  nsla_rca_records: 80,
+  missing_availability: {
+    count: 3,
+    by_circle: { MP: 2, OD: 1 },
+    sample: [{ site_id: 'UVMP999', circle: 'MP' }],
+  },
   empty: false,
   sites: {
     period: { label: 'Month to date', first: '2026-10-01', last: '2026-10-26', days_reported: 26 },
     rows: {
-      AP: { total_sites: 12, usd_sites: 11, nsla_sites: 4, days_reported: 26 },
-      MP: { total_sites: 120, usd_sites: 100, nsla_sites: 60, days_reported: 26 },
-      OD: { total_sites: 80, usd_sites: 70, nsla_sites: 30, days_reported: 26 },
+      AP: { total_sites: 12, om_start_sites: 12, usd_sites: 11, nsla_sites: 4, days_reported: 26 },
+      MP: { total_sites: 120, om_start_sites: 115, usd_sites: 100, nsla_sites: 60, days_reported: 26 },
+      OD: { total_sites: 80, om_start_sites: 75, usd_sites: 70, nsla_sites: 30, days_reported: 26 },
     },
-    total: { total_sites: 212, usd_sites: 181, nsla_sites: 94, days_reported: 26 },
+    total: { total_sites: 212, om_start_sites: 202, usd_sites: 181, nsla_sites: 94, days_reported: 26 },
   },
 };
 const SUMMARY: RcaSummary = {
@@ -97,6 +106,76 @@ const SUMMARY: RcaSummary = {
   top_records: [REC],
 };
 
+const OVERVIEW_MOCK: RcaOverviewResponse = {
+  tab: 'circle',
+  kpis: {
+    own: { records: 280, outage_minutes: 31000, share_pct: 15.5 },
+    customer: { records: 1100, outage_minutes: 117000, share_pct: 58.5 },
+    third_party: { records: 130, outage_minutes: 40000, share_pct: 20.0 },
+    pending: { records: 180, outage_minutes: 12000, share_pct: 6.0 },
+    total_records: 1690,
+    total_minutes: 200000,
+  },
+  count: 3,
+  page: 1,
+  page_size: 25,
+  pages: 1,
+  rows: [
+    {
+      id: 'OD',
+      name: 'OD',
+      detail: 'Odisha',
+      site_count: 80,
+      om_start_sites: 75,
+      uptime_pct: 90.49,
+      target: '> 98.5%',
+      gap: -8.01,
+      outage_min: 67962,
+      status: 'Not Meeting SLA',
+      split: { own: 23, customer: 41, third_party: 33, pending: 3 },
+    },
+    {
+      id: 'AP',
+      name: 'AP',
+      detail: 'Andhra Pradesh',
+      site_count: 12,
+      om_start_sites: 12,
+      uptime_pct: 99.11,
+      target: '> 98.5%',
+      gap: 0.61,
+      outage_min: 198,
+      status: 'Meeting SLA',
+      split: { own: 0, customer: 83, third_party: 0, pending: 17 },
+    },
+    {
+      id: 'EX',
+      name: 'EX',
+      detail: 'Exact Target',
+      site_count: 10,
+      om_start_sites: 10,
+      uptime_pct: 98.50,
+      target: '> 98.5%',
+      gap: 0.00,
+      outage_min: 500,
+      status: 'Not Meeting SLA',
+      split: null,
+    },
+  ],
+  total_row: {
+    id: 'TOTAL',
+    name: 'Total',
+    detail: '3 circle records',
+    site_count: 102,
+    om_start_sites: 97,
+    uptime_pct: 95.80,
+    target: '> 98.5%',
+    gap: -2.70,
+    outage_min: 68660,
+    status: 'Not Meeting SLA',
+    split: { own: 22, customer: 42, third_party: 33, pending: 3 },
+  },
+};
+
 const NOC_LEAD: AuthUser = { username: 'noc.lead', name: 'NOC Lead', role: 'noc_lead', role_label: 'NOC Lead', must_change_password: false, permissions: CI_PERMISSIONS };
 const Location = () => { const l = useLocation(); return <p data-testid="location">{l.pathname + l.search}</p>; };
 const bars = (name: string) => within(screen.getByRole('list', { name })).getAllByRole('listitem').map((li) => li.textContent);
@@ -107,6 +186,7 @@ beforeEach(() => {
   m.fetchRcaRecords.mockResolvedValue(PAGE);
   m.fetchRcaRecord.mockResolvedValue(DETAIL);
   m.fetchRcaSummary.mockResolvedValue(SUMMARY);
+  m.fetchRcaOverview.mockResolvedValue(OVERVIEW_MOCK);
 });
 
 describe('RCA Register', () => {
@@ -153,22 +233,56 @@ describe('RCA Register', () => {
 });
 
 describe('RCA Summary', () => {
-  it('shows the KPIs, a single-date snapshot and ranks incidents and outage minutes separately', async () => {
+  it('shows the 4 KPI cards, 4 tabs, and 8-column RCA overview table with SLA status', async () => {
     const user = userEvent.setup();
     renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary' });
     expect(await screen.findByText(/Single-date snapshot: 21 Oct 2026/)).toBeInTheDocument();
-    expect(within(screen.getByRole('group', { name: 'Total RCA records' })).getByText('1,819')).toBeInTheDocument();
-    // Only the three totals remain: the reporting-period panel and the missing-information / Other Media cards were removed.
-    expect(within(screen.getByRole('region', { name: 'RCA summary KPIs' })).getAllByRole('group').map((g) => g.getAttribute('aria-label')))
-      .toEqual(['Total RCA records', 'Distinct affected sites', 'Total recorded outage']);
-    expect(screen.queryByRole('group', { name: 'RCA Required — Missing Information' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: 'Other Media — RCA Not Applicable' })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Reporting period')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Project-wise summary')).not.toBeInTheDocument();  // removed from the summary
-    // The Overview is concise: the details are on their own pages, reached from the tabs or the overview links.
-    expect(screen.queryByRole('region', { name: 'Circle-wise Root Cause Breakdown' })).not.toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'RCA analysis pages' })).getAllByRole('link').map((l) => l.textContent?.split(/[A-Z][a-z]+ [a-z]/)[0]))
-      .toHaveLength(3);
+
+    // 4 KPI Cards above the table: Own, Customer, Third Party, Pending
+    const kpiRegion = screen.getByRole('region', { name: 'RCA attribution KPIs' });
+    expect(within(kpiRegion).getByRole('group', { name: 'Own' })).toBeInTheDocument();
+    expect(within(kpiRegion).getByRole('group', { name: 'Customer' })).toBeInTheDocument();
+    expect(within(kpiRegion).getByRole('group', { name: 'Third Party' })).toBeInTheDocument();
+    expect(within(kpiRegion).getByRole('group', { name: 'Pending' })).toBeInTheDocument();
+
+    // 4 Tabs
+    const tabNav = screen.getByRole('navigation', { name: 'RCA breakdown tabs' });
+    expect(within(tabNav).getByRole('button', { name: 'Circle-wise' })).toBeInTheDocument();
+    expect(within(tabNav).getByRole('button', { name: 'CI-wise' })).toBeInTheDocument();
+    expect(within(tabNav).getByRole('button', { name: 'IE-wise' })).toBeInTheDocument();
+    expect(within(tabNav).getByRole('button', { name: 'Site-wise' })).toBeInTheDocument();
+
+    // 8 Exact Table Columns
+    expect(screen.getByRole('columnheader', { name: 'Circle' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Site Count' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'O&M Start Sites' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Uptime %' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Target' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Gap' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Outage Min' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Split' })).toBeInTheDocument();
+
+    // Verify unrequested columns are removed
+    expect(screen.queryByRole('columnheader', { name: /Gross Uptime/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /Net Uptime/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /Customer %/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /Own H/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /Pending H/i })).not.toBeInTheDocument();
+
+    // Verify SLA status: AP (>98.5%) is Meeting SLA; OD and EX (<=98.5%) are Not Meeting SLA
+    const apRow = screen.getByRole('cell', { name: /Andhra Pradesh/i }).closest('tr')!;
+    expect(within(apRow).getByText('Meeting SLA')).toBeInTheDocument();
+    expect(within(apRow).getByText('+0.61%')).toBeInTheDocument();
+
+    const exRow = screen.getByRole('cell', { name: /Exact Target/i }).closest('tr')!;
+    expect(within(exRow).getByText('Not Meeting SLA')).toBeInTheDocument(); // exactly 98.5% is Not Meeting SLA
+    expect(within(exRow).getByText('0.00%')).toBeInTheDocument();
+
+    const odRow = screen.getByRole('cell', { name: /Odisha/i }).closest('tr')!;
+    expect(within(odRow).getByText('Not Meeting SLA')).toBeInTheDocument();
+    expect(within(odRow).getByText('-8.01%')).toBeInTheDocument();
+
     await user.click(within(screen.getByRole('navigation', { name: 'RCA Summary pages' })).getByRole('link', { name: 'Root Cause Analysis' }));
     const title = 'RCA classification: Final Bucket';
     // Technical causes are ranked; Other Media follows, labelled as not applicable, even though it has the most records.
@@ -182,13 +296,13 @@ describe('RCA Summary', () => {
     expect(bars('Secondary classification: Bucket - 2 (per Final Bucket)').at(-1)).toMatch(/^Unclassified/);
   });
 
-  it('compares circles by rate per 100 sites, not only by raw counts', async () => {
+  it('compares circles by raw counts and outage minutes', async () => {
     const user = userEvent.setup();
     renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary/circles' });
     await screen.findByText(/Single-date snapshot/);
     expect(bars('RCA by circle').map((t) => t!.slice(0, 2))).toEqual(['OD', 'UP']);  // raw incidents
-    await user.click(screen.getByRole('button', { name: 'Per 100 sites' }));
-    expect(bars('RCA by circle').map((t) => t!.slice(0, 2))).toEqual(['UP', 'OD']);  // 50.0 vs 32.6
+    expect(screen.queryByRole('button', { name: 'Per 100 sites' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Outage min' }));
     await user.click(within(screen.getByRole('group', { name: 'Network' })).getByRole('button', { name: 'LWE' }));
     expect(bars('RCA by circle')).toHaveLength(1);
   });
@@ -196,7 +310,8 @@ describe('RCA Summary', () => {
   it('points to the review queue while no cause category has been approved, and opens records from the attention table', async () => {
     const user = userEvent.setup();
     renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary/root-causes' });
-    expect(await screen.findByText(/394 distinct RCA texts/)).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'RCA Summary · Root Cause Analysis' })).toBeInTheDocument();
+    expect(screen.queryByText('Standardised cause categories')).not.toBeInTheDocument();
     await user.click(within(screen.getByRole('navigation', { name: 'RCA Summary pages' })).getByRole('link', { name: 'Project & Circle Analysis' }));
     expect(await screen.findByRole('link', { name: 'OD0001' })).toHaveAttribute('href', '/rca?record=1');
   });
@@ -209,20 +324,35 @@ describe('RCA Summary', () => {
     expect(screen.queryByRole('region', { name: 'RCA summary KPIs' })).not.toBeInTheDocument();  // its own page
     expect(within(table).getByText('Through 26 Oct 2026 · Final Bucket, filtered as above')).toBeInTheDocument();
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(headers).toEqual(['Circle', 'Total Sites', 'USD Sites', 'NSLA Sites (<98.5%)', ...BREAKDOWN_LABELS, 'Grand Total', 'Not mapped']);
+    expect(headers).toEqual(['Circle', 'Total Sites', 'O&M Start Sites', 'USD Sites', 'NSLA Sites (<98.5%)', ...BREAKDOWN_LABELS, 'Grand Total', 'Not mapped']);
     expect(headers).not.toContain('BSNL-Link');  // out of scope: removed
     expect(headers).not.toContain('PTPL-Techn');
     const row = (name: string) => within(table).getByRole('row', { name }).querySelectorAll('th, td');
     const at = (name: string, label: string) => row(name)[headers.indexOf(label)].textContent;
-    expect([at('RCA % of Total', 'BSNL-OFC'), at('RCA % of Total', 'TCS'), at('RCA % of Total', 'Grand Total')]).toEqual(['50%', '40%', '100%']);
-    expect([at('Total', 'BSNL-OFC'), at('Total', 'Grand Total'), at('Total', 'Not mapped')]).toEqual(['50', '100', '5']);
-    expect([at('Circle MP', 'BSNL-OFC'), at('Circle MP', 'Grand Total')]).toEqual(['30', '40']);
-    expect([at('Circle AP', 'BSNL-OFC'), at('Circle AP', 'Grand Total')]).toEqual(['', '']);  // no records: empty, not 0
+    expect([at('RCA % of Total', 'BSNL OFC'), at('RCA % of Total', 'TCS'), at('RCA % of Total', 'Grand Total')]).toEqual(['50%', '40%', '100%']);
+    expect([at('Total', 'BSNL OFC'), at('Total', 'Grand Total'), at('Total', 'Not mapped')]).toEqual(['50', '100', '5']);
+    expect([at('Circle MP', 'BSNL OFC'), at('Circle MP', 'Grand Total')]).toEqual(['30', '40']);
+    expect([at('Circle AP', 'BSNL OFC'), at('Circle AP', 'Grand Total')]).toEqual(['', '']);  // no records: empty, not 0
     // Site columns (Site Master and performance) are filled even for a circle without RCA records.
-    expect(['Total Sites', 'USD Sites', 'NSLA Sites (<98.5%)'].map((l) => at('Circle AP', l))).toEqual(['12', '11', '4']);
-    expect(['Total Sites', 'USD Sites', 'NSLA Sites (<98.5%)'].map((l) => at('Total', l))).toEqual(['212', '181', '94']);
+    expect(['Total Sites', 'O&M Start Sites', 'USD Sites', 'NSLA Sites (<98.5%)'].map((l) => at('Circle AP', l))).toEqual(['12', '12', '11', '4']);
+    expect(['Total Sites', 'O&M Start Sites', 'USD Sites', 'NSLA Sites (<98.5%)'].map((l) => at('Total', l))).toEqual(['212', '202', '181', '94']);
     expect(at('RCA % of Total', 'Total Sites')).toBe('');
     expect(within(table).getByText(/Not mapped \(outside the Grand Total\): BB 5\./)).toBeInTheDocument();
+
+    // Missing availability notice
+    expect(screen.getByRole('status', { name: 'Missing availability notification' })).toBeInTheDocument();
+    expect(screen.getByText(/Availability Data Notice: 3 O&M Start sites have missing daily availability/)).toBeInTheDocument();
+
+    // RCA Scope toggle
+    const toggleGroup = screen.getByRole('group', { name: 'RCA incident scope toggle' });
+    const allBtn = within(toggleGroup).getByRole('button', { name: /All RCA/ });
+    const nslaBtn = within(toggleGroup).getByRole('button', { name: /NSLA RCA/ });
+    expect(allBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(nslaBtn).toHaveAttribute('aria-pressed', 'false');
+    await user.click(nslaBtn);
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ rca_scope: 'nsla' }), expect.anything());
+    await user.click(allBtn);
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams(), expect.anything());
     m.fetchRcaSummary.mockResolvedValue({ ...SUMMARY, breakdown: { ...BREAKDOWN, through: '2026-10-22', rows: [], totals: counts({}), grand_total: 0, records: 0, empty: true,
       percent_of_total: counts({}, true), not_mapped: { records: 0, values: [] } } });
     await user.click(screen.getByRole('combobox', { name: 'Reporting date' }));
@@ -245,13 +375,13 @@ describe('RCA Summary', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/rca/summary/breakdown?project=LWE&date_from=2026-10-21&date_to=2026-10-21');
     expect(await screen.findByRole('region', { name: 'Circle-wise Root Cause Breakdown' })).toBeInTheDocument();
     await user.click(within(screen.getByRole('navigation', { name: 'RCA Summary pages' })).getByRole('link', { name: 'Overview' }));
-    await user.click(within(await screen.findByRole('region', { name: 'RCA analysis pages' })).getByRole('link', { name: /Daily & Monthly Trends/ }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/rca/summary/trends?project=LWE&date_from=2026-10-21&date_to=2026-10-21');
+    expect(await screen.findByRole('region', { name: 'RCA attribution KPIs' })).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/rca/summary?project=LWE&date_from=2026-10-21&date_to=2026-10-21');
   });
 
   it('opens the Overview, with the filters, for an unknown RCA Summary page', async () => {
     renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary/no-such-page?project=LWE' });
-    expect(await screen.findByRole('region', { name: 'RCA summary KPIs' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'RCA attribution KPIs' })).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/rca\/summary\?project=LWE$/);
   });
 

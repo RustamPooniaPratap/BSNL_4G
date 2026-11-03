@@ -25,4 +25,5 @@ urlpatterns = [
     path('api/organization/', include('apps.organization.urls')),
     path('api/master-data/', include('apps.masterdata.urls')),
     path('api/alerts/', include('apps.alerts.urls')),
+    path('api/all-kpis/', include('apps.allkpis.urls')),  # optional All KPI's module (apps/allkpis/README.md)
 ]

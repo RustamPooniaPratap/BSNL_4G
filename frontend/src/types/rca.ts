@@ -136,6 +136,14 @@ export interface RcaBreakdown {
   not_mapped: { records: number; values: { final_bucket: string; records: number }[] };
   records: number;
   empty: boolean;
+  rca_scope?: 'all' | 'nsla';
+  all_rca_records?: number;
+  nsla_rca_records?: number;
+  missing_availability?: {
+    count: number;
+    by_circle: Record<string, number>;
+    sample: { site_id: string; circle: string }[];
+  } | null;
   /**
    * Site Master and daily performance per circle (not RCA records): active sites, Unique Sites Down (outage > 0 at least
    * once) and NSLA sites (period uptime below 98.5%), for the reporting-date filter. null: no dashboard data.
@@ -148,7 +156,7 @@ export interface RcaBreakdown {
   } | null;
 }
 
-export interface RcaSiteMetrics { total_sites: number; usd_sites: number | null; nsla_sites: number | null; days_reported: number }
+export interface RcaSiteMetrics { total_sites: number; om_start_sites: number; usd_sites: number | null; nsla_sites: number | null; days_reported: number }
 
 /** The Site Scope applied (apps/rca/sitescope.py) and how the records of the other filters are classified. */
 export interface RcaSiteScope {
@@ -445,4 +453,54 @@ export interface RcaRecordInput {
   final_bucket?: string;
   bucket_2?: string;
   rca_text: string;
+}
+
+
+export interface RcaOverviewKpi {
+  records: number;
+  outage_minutes: number;
+  share_pct: number;
+}
+
+export interface RcaOverviewSplit {
+  own: number;
+  customer: number;
+  third_party: number;
+  pending: number;
+  own_min?: number;
+  customer_min?: number;
+  third_party_min?: number;
+  pending_min?: number;
+}
+
+export interface RcaOverviewRow {
+  id: string;
+  name: string;
+  detail: string;
+  site_count: number;
+  om_start_sites: number;
+  uptime_pct: number | null;
+  target: string;
+  gap: number | null;
+  outage_min: number;
+  status: 'Meeting SLA' | 'Not Meeting SLA' | 'N/A';
+  split: RcaOverviewSplit | null;
+}
+
+export interface RcaOverviewResponse {
+  tab: 'circle' | 'ci' | 'ne' | 'site';
+  kpis: {
+    own: RcaOverviewKpi;
+    customer: RcaOverviewKpi;
+    third_party: RcaOverviewKpi;
+    pending: RcaOverviewKpi;
+    total_records: number;
+    total_minutes: number;
+  };
+  count: number;
+  page: number;
+  page_size: number;
+  pages: number;
+  rows: RcaOverviewRow[];
+  total_row: RcaOverviewRow | null;
 }

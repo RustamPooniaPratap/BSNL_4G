@@ -1,4 +1,4 @@
-import { Info } from 'lucide-react';
+import { AlertTriangle, Info } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { formatDate, formatNumber } from '../../lib/format';
@@ -18,89 +18,185 @@ const cell = (value: number | null | undefined) => (value === null || value === 
  */
 const SITE_COLUMNS = [
   { key: 'total_sites', label: 'Total Sites', title: 'Active sites (On-Air = Yes) in the Site Master' },
-  { key: 'usd_sites', label: 'USD Sites', title: 'Unique Sites Down: outage above 0 minutes at least once in the period (as the Overview KPI)' },
+  { key: 'om_start_sites', label: 'O&M Start Sites', title: 'Sites with O&M Start in the Site Master' },
+  { key: 'usd_sites', label: 'USD Sites', title: 'Unique Sites Down: O&M Start sites with outage > 0 minutes at least once in the period' },
   { key: 'nsla_sites', label: 'NSLA Sites (<98.5%)', title: 'Sites whose uptime over the period is below 98.5%' },
 ] as const;
 
-export function RootCauseBreakdown({ data }: { data: RcaBreakdown }) {
+export function RootCauseBreakdown({
+  data,
+  rcaScope = 'all',
+  onRcaScopeChange,
+}: {
+  data: RcaBreakdown;
+  rcaScope?: 'all' | 'nsla';
+  onRcaScopeChange?: (scope: 'all' | 'nsla') => void;
+}) {
   const { columns } = data;
   const sticky = 'sticky left-0 z-10';
   const sites = data.sites ?? null;
+  const activeScope = data.rca_scope || rcaScope || 'all';
+
+  const missing = data.missing_availability;
+  const circleSummary = missing && missing.by_circle && Object.keys(missing.by_circle).length > 0
+    ? Object.entries(missing.by_circle)
+        .sort((a, b) => b[1] - a[1])
+        .map(([c, n]) => `${c}: ${formatNumber(n)}`)
+        .join(', ')
+    : null;
+  const sampleSites = missing && missing.sample && missing.sample.length > 0
+    ? missing.sample.slice(0, 8).map((s) => s.site_id).join(', ') + (missing.sample.length > 8 ? ' ...' : '')
+    : null;
+
   // Site Master and performance figures (not RCA records); empty when the dashboard has no data.
   const siteCells = (m: RcaSiteMetrics | undefined, cls: string) => SITE_COLUMNS.map((c) => (
     <td key={c.key} className={cn(cls, 'px-2 py-1.5 text-center')}>{m ? cell(m[c.key]) : ''}</td>
   ));
+
   return (
-    <Card className="gap-0 overflow-hidden p-0" role="region" aria-label="Circle-wise Root Cause Breakdown">
-      {/* Title bands as in the workbook ("RCA Analysis - Updated"): navy title, green "Root Cause Breakdown | Through …". */}
-      <div className="bg-[#1f3864] px-4 py-2 text-center text-white">
-        <h2 className="text-base font-semibold">Circle-wise Root Cause Breakdown</h2>
-      </div>
-      <p className="border-b bg-[#548235] px-4 py-1 text-center text-xs font-semibold text-white">
-        <span>Root Cause Breakdown | </span><span>{data.through ? `Through ${formatDate(data.through)}` : 'No reporting date'} · Final Bucket, filtered as above</span>
-      </p>
-      {data.empty ? (
-        <p className="px-4 py-8 text-center text-sm text-muted-foreground">No RCA records match these filters.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1400px] border-collapse text-xs tabular-nums" aria-label="Root cause breakdown by circle">
-            <thead>
-              <tr className="bg-[#2e75b6] text-white">
-                <th scope="col" className={cn(sticky, 'min-w-28 border border-white/30 bg-[#2e75b6] px-2 py-2 text-left')}>Circle</th>
-                {SITE_COLUMNS.map((c) => (
-                  <th key={c.key} scope="col" title={c.title} className="min-w-20 border border-white/30 bg-[#305496] px-1.5 py-2 text-center leading-tight font-semibold">{c.label}</th>
-                ))}
-                {columns.map((c) => (
-                  <th key={c.label} scope="col" title={c.pending ? 'Pending: to be defined by the updated RCA workbook' : `Final Bucket: ${c.final_buckets.join(', ')}`}
-                    className={cn('border border-white/30 px-1.5 py-2 text-center leading-tight font-semibold', c.label.startsWith('BSNL') || c.label.startsWith('BBNL') ? 'bg-[#c55a11]' : '')}>
-                    {c.label}{c.pending && <span className="block text-[10px] font-normal opacity-80">pending</span>}
-                  </th>
-                ))}
-                <th scope="col" className="border border-white/30 bg-[#548235] px-2 py-2 text-center">Grand Total</th>
-                <th scope="col" className="border border-white/30 bg-slate-500 px-2 py-2 text-center" title="Final Bucket values outside every column (not in the Grand Total)">Not mapped</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="bg-[#bf8f00] font-semibold text-white" aria-label="RCA % of Total">
-                <th scope="row" className={cn(sticky, 'border border-white/30 bg-[#bf8f00] px-2 py-1.5 text-left')}>RCA % of Total</th>
-                {SITE_COLUMNS.map((c) => <td key={c.key} className="border border-white/30 bg-[#bf8f00] px-2 py-1.5" />)}
-                {columns.map((c) => <td key={c.label} className="border border-white/30 px-1.5 py-1.5 text-center">{formatShare(data.percent_of_total[c.label])}</td>)}
-                <td className="border border-white/30 bg-[#548235] px-2 py-1.5 text-center">{data.grand_total ? '100%' : ''}</td>
-                <td className="border border-white/30 bg-slate-500 px-2 py-1.5" />
-              </tr>
-              <tr className="bg-[#1f3864] font-semibold text-white" aria-label="Total">
-                <th scope="row" className={cn(sticky, 'border border-white/30 bg-[#1f3864] px-2 py-1.5 text-left')}>Total</th>
-                {siteCells(sites?.total, 'border border-white/30 bg-[#305496]')}
-                {columns.map((c) => <td key={c.label} className="border border-white/30 px-1.5 py-1.5 text-center">{cell(data.totals[c.label])}</td>)}
-                <td className="border border-white/30 bg-[#548235] px-2 py-1.5 text-center">{formatNumber(data.grand_total)}</td>
-                <td className="border border-white/30 bg-slate-500 px-2 py-1.5 text-center">{formatNumber(data.not_mapped.records)}</td>
-              </tr>
-              {data.rows.map((r) => (
-                <tr key={r.circle} className="bg-amber-50/60 hover:bg-amber-100/60" aria-label={`Circle ${r.circle}`}>
-                  <th scope="row" className={cn(sticky, 'border border-amber-200 bg-amber-50 px-2 py-1.5 text-left font-semibold')}>{r.circle}</th>
-                  {siteCells(sites?.rows[r.circle], 'border border-amber-200 bg-[#ddebf7] font-medium')}
-                  {columns.map((c) => <td key={c.label} className="border border-amber-200 px-1.5 py-1.5 text-center">{cell(r.counts[c.label])}</td>)}
-                  <td className="border border-amber-200 bg-[#e2efda] px-2 py-1.5 text-center font-semibold">{cell(r.grand_total)}</td>
-                  <td className="border border-amber-200 px-2 py-1.5 text-center text-muted-foreground">{cell(r.not_mapped)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <div className="space-y-3">
+      {missing && missing.count > 0 && (
+        <div
+          role="status"
+          aria-label="Missing availability notification"
+          className="rounded-lg border border-amber-200 bg-amber-50/90 p-3 text-xs text-amber-900 shadow-xs dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+            <div className="space-y-1">
+              <p className="font-semibold text-amber-950 dark:text-amber-100">
+                Availability Data Notice: {formatNumber(missing.count)} O&M Start {missing.count === 1 ? 'site has' : 'sites have'} missing daily availability for the selected period.
+              </p>
+              <p className="text-amber-800 dark:text-amber-300">
+                These sites are excluded from NSLA calculation (&lt;98.5%) because their daily availability is not recorded. They remain counted in Total Sites and O&M Start Sites.
+              </p>
+              {circleSummary && (
+                <p className="text-[11px] text-amber-900/80 dark:text-amber-300/80">
+                  <span className="font-medium">Affected Circle(s):</span> {circleSummary}
+                </p>
+              )}
+              {sampleSites && (
+                <p className="text-[11px] font-mono text-amber-900/70 dark:text-amber-300/70">
+                  <span className="font-sans font-medium">Sample Site IDs:</span> {sampleSites}
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       )}
-      {!data.empty && (
-        <p className="flex items-start gap-1.5 border-t px-4 py-2 text-[11px] text-muted-foreground">
-          <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-          <span>
-            Records per circle by Final Bucket; each record counted once. % = column total ÷ Grand Total.
-            Empty cells: circles without records.
-            {sites && ` Total, USD and NSLA Sites: active sites of the Site Master and their daily performance for ${sites.period.label}
-              (${sites.period.days_reported} day${sites.period.days_reported === 1 ? '' : 's'} with data), by project, circle and reporting date only: the
-              Final Bucket, Bucket - 2, category and RCA filters apply to RCA records, not to sites.`}
-            {data.not_mapped.records > 0 && ` Not mapped (outside the Grand Total): ${data.not_mapped.values.map((v) => `${v.final_bucket} ${formatNumber(v.records)}`).join(', ')}.`}
-          </span>
+
+      <Card className="gap-0 overflow-hidden p-0" role="region" aria-label="Circle-wise Root Cause Breakdown">
+        {/* Title bands as in the workbook ("RCA Analysis - Updated"): navy title, green "Root Cause Breakdown | Through …". */}
+        <div className="bg-[#1f3864] px-4 py-2 text-center text-white">
+          <h2 className="text-base font-semibold">Circle-wise Root Cause Breakdown</h2>
+        </div>
+        <p className="border-b bg-[#548235] px-4 py-1 text-center text-xs font-semibold text-white">
+          <span>Root Cause Breakdown | </span><span>{data.through ? `Through ${formatDate(data.through)}` : 'No reporting date'} · Final Bucket, filtered as above</span>
         </p>
-      )}
-    </Card>
+
+        {/* RCA Scope Toggle directly above the breakdown table */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/40 px-4 py-2 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-foreground">RCA Incident Scope:</span>
+            <div className="inline-flex rounded-md border bg-background p-0.5 shadow-2xs" role="group" aria-label="RCA incident scope toggle">
+              <button
+                type="button"
+                onClick={() => onRcaScopeChange?.('all')}
+                aria-pressed={activeScope === 'all'}
+                className={cn(
+                  'rounded px-3 py-1 text-xs font-medium transition-colors',
+                  activeScope === 'all'
+                    ? 'bg-primary text-primary-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                All RCA {data.all_rca_records != null && <span className="ml-1 opacity-80">({formatNumber(data.all_rca_records)})</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => onRcaScopeChange?.('nsla')}
+                aria-pressed={activeScope === 'nsla'}
+                className={cn(
+                  'rounded px-3 py-1 text-xs font-medium transition-colors',
+                  activeScope === 'nsla'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                NSLA RCA (&lt;98.5%) {data.nsla_rca_records != null && <span className="ml-1 opacity-80">({formatNumber(data.nsla_rca_records)})</span>}
+              </button>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            {activeScope === 'all'
+              ? 'Showing all RCA records matching current filters. Site metrics (Total, O&M Start, USD, NSLA) are independent of this toggle.'
+              : 'Showing RCA incident breakdown for eligible NSLA sites (<98.5%) only. Site metrics (Total, O&M Start, USD, NSLA) are independent of this toggle.'}
+          </p>
+        </div>
+
+        {data.empty ? (
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">No RCA records match these filters.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1400px] border-collapse text-xs tabular-nums" aria-label="Root cause breakdown by circle">
+              <thead>
+                <tr className="bg-[#2e75b6] text-white">
+                  <th scope="col" className={cn(sticky, 'min-w-28 border border-white/30 bg-[#2e75b6] px-2 py-2 text-left')}>Circle</th>
+                  {SITE_COLUMNS.map((c) => (
+                    <th key={c.key} scope="col" title={c.title} className="min-w-20 border border-white/30 bg-[#305496] px-1.5 py-2 text-center leading-tight font-semibold">{c.label}</th>
+                  ))}
+                  {columns.map((c) => (
+                    <th key={c.label} scope="col" title={c.pending ? 'Pending: to be defined by the updated RCA workbook' : `Final Bucket: ${c.final_buckets.join(', ')}`}
+                      className={cn('border border-white/30 px-1.5 py-2 text-center leading-tight font-semibold', c.label.startsWith('BSNL') || c.label.startsWith('BBNL') ? 'bg-[#c55a11]' : '')}>
+                      {c.label}{c.pending && <span className="block text-[10px] font-normal opacity-80">pending</span>}
+                    </th>
+                  ))}
+                  <th scope="col" className="border border-white/30 bg-[#548235] px-2 py-2 text-center">Grand Total</th>
+                  <th scope="col" className="border border-white/30 bg-slate-500 px-2 py-2 text-center" title="Final Bucket values outside every column (not in the Grand Total)">Not mapped</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="bg-[#bf8f00] font-semibold text-white" aria-label="RCA % of Total">
+                  <th scope="row" className={cn(sticky, 'border border-white/30 bg-[#bf8f00] px-2 py-1.5 text-left')}>RCA % of Total</th>
+                  {SITE_COLUMNS.map((c) => <td key={c.key} className="border border-white/30 bg-[#bf8f00] px-2 py-1.5" />)}
+                  {columns.map((c) => <td key={c.label} className="border border-white/30 px-1.5 py-1.5 text-center">{formatShare(data.percent_of_total[c.label])}</td>)}
+                  <td className="border border-white/30 bg-[#548235] px-2 py-1.5 text-center">{data.grand_total ? '100%' : ''}</td>
+                  <td className="border border-white/30 bg-slate-500 px-2 py-1.5" />
+                </tr>
+                <tr className="bg-[#1f3864] font-semibold text-white" aria-label="Total">
+                  <th scope="row" className={cn(sticky, 'border border-white/30 bg-[#1f3864] px-2 py-1.5 text-left')}>Total</th>
+                  {siteCells(sites?.total, 'border border-white/30 bg-[#305496]')}
+                  {columns.map((c) => <td key={c.label} className="border border-white/30 px-1.5 py-1.5 text-center">{cell(data.totals[c.label])}</td>)}
+                  <td className="border border-white/30 bg-[#548235] px-2 py-1.5 text-center">{formatNumber(data.grand_total)}</td>
+                  <td className="border border-white/30 bg-slate-500 px-2 py-1.5 text-center">{formatNumber(data.not_mapped.records)}</td>
+                </tr>
+                {data.rows.map((r) => (
+                  <tr key={r.circle} className="bg-amber-50/60 hover:bg-amber-100/60" aria-label={`Circle ${r.circle}`}>
+                    <th scope="row" className={cn(sticky, 'border border-amber-200 bg-amber-50 px-2 py-1.5 text-left font-semibold')}>{r.circle}</th>
+                    {siteCells(sites?.rows[r.circle], 'border border-amber-200 bg-[#ddebf7] font-medium')}
+                    {columns.map((c) => <td key={c.label} className="border border-amber-200 px-1.5 py-1.5 text-center">{cell(r.counts[c.label])}</td>)}
+                    <td className="border border-amber-200 bg-[#e2efda] px-2 py-1.5 text-center font-semibold">{cell(r.grand_total)}</td>
+                    <td className="border border-amber-200 px-2 py-1.5 text-center text-muted-foreground">{cell(r.not_mapped)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!data.empty && (
+          <p className="flex items-start gap-1.5 border-t px-4 py-2 text-[11px] text-muted-foreground">
+            <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              Records per circle by Final Bucket; each record counted once. % = column total ÷ Grand Total.
+              Empty cells: circles without records.
+              {sites && ` Total, O&M Start, USD and NSLA Sites: active sites of the Site Master and their daily performance for ${sites.period.label}
+                (${sites.period.days_reported} day${sites.period.days_reported === 1 ? '' : 's'} with data), by project, circle and reporting date only: the
+                Final Bucket, Bucket - 2, category and RCA filters apply to RCA records, not to sites.`}
+              {data.not_mapped.records > 0 && ` Not mapped (outside the Grand Total): ${data.not_mapped.values.map((v) => `${v.final_bucket} ${formatNumber(v.records)}`).join(', ')}.`}
+            </span>
+          </p>
+        )}
+      </Card>
+    </div>
   );
 }

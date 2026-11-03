@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  BriefcaseBusiness, ChevronRight, ClipboardPen, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
+  BriefcaseBusiness, ChevronRight, LayoutGrid, ClipboardPen, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
   LayoutDashboard, MapPinPlus, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy, Table2, ListTree, MapPinned, ChartLine, Building2, TableProperties, BellRing, Mail, Workflow, History,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -64,6 +64,7 @@ const entries: NavEntry[] = [
       { ...page('/teams/top', 'Circle-wise Top Performers', Trophy), isActive: (p) => p === '/teams/top' || p.startsWith('/teams/top/') || p.startsWith('/teams/circle/') || p.startsWith('/team-performance/circle/') },
     ],
   },
+  { kind: 'link', item: page('/all-kpis', "All KPI's", LayoutGrid) },  // optional module: features/all-kpis/README.md
   { kind: 'heading', heading: 'RCA' },
   { kind: 'link', item: page('/rca', 'RCA Register', ClipboardList) },
   {

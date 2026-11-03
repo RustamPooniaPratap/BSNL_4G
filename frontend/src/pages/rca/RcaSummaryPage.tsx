@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { CalendarDays, ChartLine, FileWarning, Info, ListTree, MapPin, MapPinned, Table2, TimerOff, type LucideIcon } from 'lucide-react';
+import { CalendarDays, ChartLine, FileWarning, ListTree, MapPin, MapPinned, Table2, TimerOff, type LucideIcon } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -9,6 +9,7 @@ import { ChartCard } from '../../components/dashboard/ChartCard';
 import { DataTable } from '../../components/dashboard/DataTable';
 import { reportTypeColor } from '../../components/dashboard/constants';
 import { RootCauseBreakdown } from '../../components/rca/RcaBreakdown';
+import { RcaOverviewTable } from '../../components/rca/RcaOverviewTable';
 import { RcaAnalysisTile, RcaKpiTile, RcaSection } from '../../components/rca/RcaTiles';
 import type { Tint } from '../../components/portfolio/PortfolioKpis';
 import { RankedBars, RcaFilterBar, Segmented, SiteScopeNote, SourceValue, type BarRow } from '../../components/rca/RcaShared';
@@ -22,14 +23,14 @@ import { Field } from '../../components/dashboard/FilterBar';
 import { PageHeading } from '../../context/pageHeader';
 
 type Measure = 'records' | 'minutes';
-type CircleMeasure = 'records' | 'minutes' | 'rate';
+type CircleMeasure = 'records' | 'minutes';
 type Network = string;  // 'all' or a project of the data
 
 /** The RCA Summary pages: one dataset (the same filtered API response), several views. */
 const SUMMARY_VIEWS = [
   { path: '/rca/summary', label: 'Overview', description: 'Headline totals of the filtered RCA records, and where to look next.' },
   { path: '/rca/summary/breakdown', label: 'Circle-wise RCA Breakdown', description: 'RCA records per circle and Final Bucket reporting category, with totals and shares.' },
-  { path: '/rca/summary/root-causes', label: 'Root Cause Analysis', description: 'RCA classifications (Final Bucket, Bucket - 2) and the standardised cause categories.' },
+  { path: '/rca/summary/root-causes', label: 'Root Cause Analysis', description: 'RCA classifications (Final Bucket, Bucket - 2).' },
   { path: '/rca/summary/circles', label: 'Project & Circle Analysis', description: 'Circles compared within 4G Saturation and LWE, and the sites with the largest outages.' },
   { path: '/rca/summary/trends', label: 'Daily & Monthly Trends', description: 'RCA records per reporting date, and per month from the dates with records.' },
 ] as const;
@@ -93,12 +94,15 @@ export function RcaSummaryPage() {
             </p>
           )}
           {view.path === '/rca/summary' && (
-            <>
-              <Kpis s={s} search={filterSearch(query)} />
-              <OverviewLinks s={s} search={location.search} />
-            </>
+            <RcaOverviewTable query={query} />
           )}
-          {view.path === '/rca/summary/breakdown' && <RootCauseBreakdown data={s.breakdown} />}
+          {view.path === '/rca/summary/breakdown' && (
+            <RootCauseBreakdown
+              data={s.breakdown}
+              rcaScope={(params.get('rca_scope') === 'nsla' ? 'nsla' : 'all')}
+              onRcaScopeChange={(scope) => onFilter('rca_scope' as FilterKey, scope === 'nsla' ? 'nsla' : '')}
+            />
+          )}
           {view.path === '/rca/summary/root-causes' && (
             <>
               {s.classification && <ClassificationStatus counts={s.classification} />}
@@ -107,12 +111,11 @@ export function RcaSummaryPage() {
                 <ClassificationCard title="Secondary classification: Bucket - 2 (per Final Bucket)" items={s.bucket_2} field="bucket_2" onSelect={openRegister}
                   scopeNote={s.kpis.rca_not_applicable.records ? `RCA-applicable records only: the ${formatNumber(s.kpis.rca_not_applicable.records)} ${s.kpis.rca_not_applicable.label} records are not included.` : undefined} />
               </div>
-              <CategoryCard s={s} onSelect={(category) => openRegister({ category })} />
             </>
           )}
           {view.path === '/rca/summary/circles' && (
             <>
-              <CircleCard circles={s.circles} populationSource={s.population_source} onSelect={(circle) => openRegister({ circle })} />
+              <CircleCard circles={s.circles} onSelect={(circle) => openRegister({ circle })} />
               <TopRecords s={s} />
             </>
           )}
@@ -139,7 +142,7 @@ function SummaryNav({ current, search }: { current: SummaryView; search: string 
 }
 
 /** Overview: one tile per analysis page (excluding circle-wise breakdown), with a figure taken from the same response. */
-function OverviewLinks({ s, search }: { s: RcaSummary; search: string }) {
+export function OverviewLinks({ s, search }: { s: RcaSummary; search: string }) {
   const topCause = s.final_buckets.filter((i) => !i.unclassified && !i.rca_not_applicable).sort((a, b) => b.records - a.records)[0];
   const topCircle = [...s.circles].sort((a, b) => b.records - a.records)[0];
   const facts: Record<string, { headline: string; detail: string }> = {
@@ -198,7 +201,7 @@ function TrendsCard({ dates }: { dates: RcaSummary['dates'] }) {
 }
 
 /** The register link keeps the summary's filters. */
-const filterSearch = (query: URLSearchParams) => (query.toString() ? `?${query}` : '');
+export const filterSearch = (query: URLSearchParams) => (query.toString() ? `?${query}` : '');
 
 const monthBounds = (month: string): [string, string] => {
   const [y, m] = month.split('-').map(Number);
@@ -245,7 +248,7 @@ function showingText(options: RcaOptions, params: URLSearchParams) {
 }
 
 /** The three RCA totals of the filtered records, in the dashboard's KPI tile style (same values and wording as before). */
-function Kpis({ s, search }: { s: RcaSummary; search: string }) {
+export function Kpis({ s, search }: { s: RcaSummary; search: string }) {
   const k = s.kpis;
   return (
     <RcaSection heading="RCA records" label="RCA summary KPIs" columns={3}>
@@ -320,64 +323,37 @@ function ClassificationCard({ title, items, field, onSelect, scopeNote }: {
   );
 }
 
-function CircleCard({ circles, populationSource, onSelect }: { circles: RcaCircle[]; populationSource: string | null; onSelect: (circle: string) => void }) {
+function CircleCard({ circles, onSelect }: { circles: RcaCircle[]; onSelect: (circle: string) => void }) {
   const [network, setNetwork] = useState<Network>('all');
   const [measure, setMeasure] = useState<CircleMeasure>('records');
   const shown = circles.filter((c) => network === 'all' || c.project === network);
-  const value = (c: RcaCircle) => (measure === 'records' ? c.records : measure === 'minutes' ? c.outage_minutes : c.records_per_100_sites);
+  const value = (c: RcaCircle) => (measure === 'records' ? c.records : c.outage_minutes);
   const sorted = [...shown].sort((a, b) => (value(b) ?? -1) - (value(a) ?? -1));
   const rows: BarRow[] = sorted.map((c) => ({
     key: c.circle, label: `${c.circle} · ${shortProject(c.project)}`, value: value(c),
-    display: measure === 'records' ? formatNumber(c.records) : measure === 'minutes' ? formatMin(c.outage_minutes)
-      : c.records_per_100_sites == null ? 'No population' : c.records_per_100_sites.toFixed(1),
-    note: measure === 'rate' && c.portfolio_sites ? `of ${formatNumber(c.portfolio_sites)} sites` : undefined,
-    title: `${c.records} records, ${formatMin(c.outage_minutes)}, ${c.affected_sites} affected sites${c.portfolio_sites ? `, ${c.portfolio_sites} sites in the portfolio` : ''}`,
+    display: measure === 'records' ? formatNumber(c.records) : formatMin(c.outage_minutes),
+    title: `${c.records} records, ${formatMin(c.outage_minutes)}, ${c.affected_sites} affected sites`,
   }));
   const colorOf = network === 'all' ? 'var(--chart-1)' : reportTypeColor(network);
   return (
     <ChartCard title="Circle-wise comparison"
-      description={measure === 'rate' ? 'RCA records per 100 sites in the portfolio, so circles of different sizes compare more fairly.'
-        : 'Raw totals: larger circles have more sites, so these are not a performance ranking on their own.'}
+      description="Raw totals: larger circles have more sites, so these are not a performance ranking on their own."
       action={(
         <div className="flex flex-wrap justify-end gap-2">
           <Segmented label="Network" value={network} onChange={setNetwork}
             options={[['all', 'All'], ...[...new Set(circles.map((c) => c.project))].sort().map((p) => [p, shortProject(p)] as [string, string])]} />
-          <Segmented label="Circle measure" value={measure} onChange={setMeasure} options={[['records', 'Incidents'], ['minutes', 'Outage min'], ['rate', 'Per 100 sites']]} />
+          <Segmented label="Circle measure" value={measure} onChange={setMeasure} options={[['records', 'Incidents'], ['minutes', 'Outage min']]} />
         </div>
       )}
       empty={!shown.length}>
       <RankedBars rows={rows} label="RCA by circle" color={colorOf} onSelect={onSelect} />
-      <p className="mt-2 flex items-start gap-1.5 text-[11px] text-muted-foreground">
-        <Info className="mt-px size-3 shrink-0" aria-hidden="true" />
-        {populationSource ? `Per 100 sites uses: ${populationSource}.` : 'Per-site rates are not available: no Master data is loaded for the site population.'}
-      </p>
-      <DataTable caption="RCA by circle" columns={['Circle', 'Project', 'Records', 'Outage minutes', 'Affected sites', 'Portfolio sites', 'Records per 100 sites']}
-        rows={sorted.map((c) => [c.circle, c.project, formatNumber(c.records), formatMin(c.outage_minutes), formatNumber(c.affected_sites),
-          c.portfolio_sites == null ? '—' : formatNumber(c.portfolio_sites), c.records_per_100_sites == null ? '—' : c.records_per_100_sites.toFixed(1)])} />
+      <DataTable caption="RCA by circle" columns={['Circle', 'Project', 'Records', 'Outage minutes', 'Affected sites']}
+        rows={sorted.map((c) => [c.circle, c.project, formatNumber(c.records), formatMin(c.outage_minutes), formatNumber(c.affected_sites)])} />
     </ChartCard>
   );
 }
 
-function CategoryCard({ s, onSelect }: { s: RcaSummary; onSelect: (category: string) => void }) {
-  const { mapped, unreviewed, no_description: none } = s.categories;
-  const rows: BarRow[] = [
-    ...mapped.map((c) => ({ key: String(c.id), label: c.name, value: c.records, display: formatNumber(c.records), note: formatMin(c.outage_minutes) })),
-    ...(unreviewed.records ? [{ key: 'unreviewed', label: 'Unreviewed descriptions', value: unreviewed.records, display: formatNumber(unreviewed.records), muted: true,
-      note: `${formatNumber(unreviewed.descriptions)} texts` }] : []),
-  ];
-  return (
-    <ChartCard title="Standardised cause categories" description="From Admin-approved mappings of RCA descriptions only. Unreviewed descriptions are counted separately, never guessed.">
-      {mapped.length === 0 && (
-        <p className="mb-3 rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-          No descriptions have been reviewed yet: {formatNumber(unreviewed.descriptions)} distinct RCA texts ({formatNumber(unreviewed.records)} records) are waiting in the{' '}
-          <Link to="/rca/mappings" className="font-medium text-foreground underline underline-offset-2">cause-mapping review queue</Link>.
-        </p>
-      )}
-      <RankedBars rows={rows} label="Cause categories" onSelect={onSelect} />
-      {none.records > 0 && <p className="mt-2 text-[11px] text-muted-foreground">{formatNumber(none.records)} records have no RCA description.</p>}
-    </ChartCard>
-  );
-}
+
 
 function TopRecords({ s }: { s: RcaSummary }) {
   return (

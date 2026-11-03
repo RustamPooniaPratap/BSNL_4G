@@ -146,6 +146,11 @@ def _build() -> Dataset:
 
     om = {site: (raw, flag) for site, raw, flag in SiteMonthlyPerformance.objects.filter(month=current).values_list('site_id', 'om_start_raw', 'om_start')}
     has_om_start = any(raw is not None for raw, _ in om.values())
+    if not has_om_start:
+        latest_om = SiteMonthlyPerformance.objects.filter(om_start__isnull=False).aggregate(m=Max('month'))['m']
+        if latest_om:
+            om = {site: (raw, flag) for site, raw, flag in SiteMonthlyPerformance.objects.filter(month=latest_om).values_list('site_id', 'om_start_raw', 'om_start')}
+            has_om_start = any(raw is not None for raw, _ in om.values())
     previous_month = (current - timedelta(days=1)).replace(day=1)
     om_previous = {site: (raw, flag) for site, raw, flag in SiteMonthlyPerformance.objects.filter(month=previous_month).values_list('site_id', 'om_start_raw', 'om_start')}
     has_om_previous = any(raw is not None for raw, _ in om_previous.values())

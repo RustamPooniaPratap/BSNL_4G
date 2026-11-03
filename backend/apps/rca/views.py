@@ -250,6 +250,14 @@ def summary(request):
     return Response(data)
 
 
+@api_view(['GET'])
+@permission_classes([Can('rca_summary', 'view')])
+def overview(request):
+    from . import overview as overview_service
+    data = overview_service.get_rca_overview(request.query_params, pairs_for(request.user, 'rca_summary', 'view'))
+    return Response(data)
+
+
 # --- Uploads -------------------------------------------------------------------------------------
 # Two upload types, checked here on every request whatever the interface shows:
 # - Upload Circle RCA: Admins and NOC Leads for every project and circle; CI users for the project/circle pairs granted
