@@ -1,0 +1,3 @@
+﻿upload,upload_kind,source_file,row,site_id,circle,report_date,identifier,value,code,severity,message,related
+2,lwe_band_mapping,LWE Band ID.xlsx,1074,LWEBH0141,BH,,"BRLWE1910, T4BR28BGBGHP09WE1910lw;T4BR28BGKTHP09KAH009",,invalid_identifier,rejected,"BTS Site ID (700) ""T4BR28BGBGHP09WE1910lw;T4BR28BGKTHP09KAH009"": not a single identifier (identifiers are separated by "";;"" only).",
+2,lwe_band_mapping,LWE Band ID.xlsx,1505,LWECG0624,CG,,"BSNL-CG-USO-2562, T4CG013DUGKBGRNO2562Lw, T4CG283DUGKBGRNO2562Lw",,duplicate_row,duplicate,Identical repeat of an earlier row.,

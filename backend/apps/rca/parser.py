@@ -3,16 +3,33 @@
 Circle names and codes resolve through the Organization's RCA workbook aliases (read once per file); otherwise no
 database access. The data sheet is found by its header (for example "Sheet1" of a plain RCA file, or
 "RCA Backup" of the Daily RCA Compilation, whose header is on row 2 and whose "Sheet1" is a pivot table);
-columns are found by header text. Values are trimmed but otherwise kept as written, except that Final Bucket and
-Bucket - 2 take the approved spelling where they match the approved bucketization exactly (taxonomy.resolve; pairs
-outside it are kept as written and flagged); normalised companions
-(project, circle code, ``*_key``) are added for filtering only. Every problem is reported with its Excel row;
+columns are found by header text. Values are trimmed but otherwise kept as written: Final Bucket and Sub Bucket are
+validated against the approved taxonomy (apps.rca.taxonomy, spaces and case ignored) and never renamed or corrected;
+normalised companions (project, circle code, ``*_key``) are added for filtering only. Every problem is reported with its Excel row;
 rows with errors are rejected, never repaired.
 
-A site can have several RCA rows on one date (separate outages). Each row gets an ``occurrence``: its rank among
-that site's rows of the date, ordered by cause and outage, so the rank does not depend on the row order of the
-file. (reporting date, project, site, occurrence) identifies a record. A row identical to an earlier one in
-every column is a duplicate and rejected.
+Validation priorities (business rules of 4 Nov 2026):
+
+1. Duplicates (mandatory). A record is identified by Site ID (with its project), Reporting Date, Final Bucket and Sub
+   Bucket (``duplicate_key``). A site can have several records on one date when the Final Bucket or Sub Bucket differs.
+   A later row with the same four values is a ``duplicate_record`` and rejected, even when its RCA description or
+   Outage Min. differ (they are not part of the key). A blank Sub Bucket is a value: two rows with the same site, date,
+   Final Bucket and a blank Sub Bucket are duplicates. Buckets are compared as uploaded, ignoring case and
+   spacing (``text_key``); placeholders ("-") count as blank. Each rejection names the site and both Excel rows.
+2. Final Bucket (highest priority). It must be one of the 10 approved Final Buckets (taxonomy.APPROVED). A blank or
+   unapproved value is an error, reported with its value, row count and example rows; it is never renamed, remapped or
+   discarded. The importer refuses a file with any such row (``final_bucket_file_error``).
+3. Sub Bucket (Bucket - 2), validated against the row's Final Bucket. An approved Sub Bucket of another Final Bucket
+   only is a classification mismatch and rejects the row (``sub_bucket_classification_mismatch``). A blank value, or one
+   that is not an approved Sub Bucket of any Final Bucket, is a warning only; the value is kept as written.
+4. RCA description, no priority. A blank or placeholder description is a note only; descriptions are never classified
+   here.
+5. Basic integrity (date, project, circle, Site ID, Outage Min., report scope) rejects the row; an outage over one day
+   is a separate warning and the value is kept.
+
+The importer matches stored records by the same key (importer._identity), so preview and import apply one rule.
+``occurrence`` ranks a site's rows of a date by Final Bucket and Sub Bucket; the importer numbers new records after the
+ones already stored.
 """
 from __future__ import annotations
 
@@ -43,6 +60,8 @@ PROJECTS_TO_CONFIRM = {'4g satu', '4g satu.'}
 ALIAS_SOURCE = 'rca_workbook'
 PLACEHOLDERS = {'', '-', '--', 'na', 'n/a', '#n/a', 'nil', 'null', 'none', '0'}
 MAX_EXAMPLES = 20
+EXAMPLE_ROWS = 5  # Excel rows listed per reported value
+FINAL_BUCKET_ERRORS = ('missing_final_bucket', 'final_bucket_not_approved')
 
 
 class ParseError(ValueError):
@@ -139,16 +158,33 @@ def _data_sheet(book, filename: str) -> tuple[str, int, list]:
                      f'(sheets: {", ".join(book.sheetnames)}).')
 
 
-def _number_occurrences(rows: list[dict]) -> None:
-    """Rank each row among the rows of its site and date (by cause, then outage, then Excel row)."""
-    groups: dict[tuple, list[dict]] = {}
-    for row in rows:
-        groups.setdefault((row['reporting_date'], row['project'], row['site_key']), []).append(row)
-    for group in groups.values():
-        group.sort(key=lambda r: (r['final_bucket_key'], r['bucket_2_key'], r['rca_key'],
-                                  -1 if r['outage_minutes'] is None else r['outage_minutes'], r['source_row']))
-        for n, row in enumerate(group, start=1):
-            row['occurrence'] = n
+def duplicate_key(reporting_date: str, project: str, site: str, final_bucket_key: str, bucket_2_key: str) -> tuple:
+    """The identity of an RCA record: site (project, Site ID key), reporting date, Final Bucket and Sub Bucket keys.
+
+    Not the RCA description and not the outage: rows that differ only there are the same record. A blank Sub Bucket
+    ("" key, also for placeholders) is a value of its own.
+    """
+    return (reporting_date, project, site, final_bucket_key, bucket_2_key)
+
+
+def row_key(row: dict) -> tuple:
+    return duplicate_key(row['reporting_date'], row['project'], row['site_key'], row['final_bucket_key'], row['bucket_2_key'])
+
+
+def repeated_keys(rows: list[dict]) -> list[tuple]:
+    """Keys that occur more than once among the rows (empty for rows validated with the duplicate rule)."""
+    return [k for k, n in Counter(row_key(r) for r in rows).items() if n > 1]
+
+
+def final_bucket_file_error(report: dict) -> str:
+    """Why the file cannot be imported because of its Final Buckets (blank when every row has an approved one)."""
+    problems = report.get('final_bucket_problems') or []
+    if not problems:
+        return ''
+    n = sum(p['rows'] for p in problems)
+    values = ', '.join(f'"{p["value"] or "blank"}" ({p["rows"]:,})' for p in problems[:10])
+    return (f'{n:,} rows have a missing or unapproved Final Bucket ({values}). Every RCA record needs one of the approved '
+            'Final Buckets; correct the workbook and upload it again. Nothing can be imported.')
 
 
 def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None, projects: set[str] | None = None,
@@ -181,15 +217,18 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
 
     issues: list[dict] = []
     rows: list[dict] = []
-    seen: dict[tuple, int] = {}  # every column as read -> first Excel row, to find exact duplicates
+    first_row: dict[tuple, tuple[int, tuple]] = {}  # duplicate_key -> (first Excel row, its values as read)
+    duplicates: dict[tuple, dict] = {}  # duplicate_key -> the first row and the rejected later rows
+    final_problems: dict[tuple, dict] = {}  # (Final Bucket as written, code) -> rows and example Excel rows
+    sub_problems: dict[tuple, dict] = {}  # (Final Bucket, Bucket - 2 as written, code) -> rows and example Excel rows
+    mismatches: dict[tuple, dict] = {}  # (Final Bucket, Sub Bucket of another Final Bucket) -> rows and example Excel rows
     trimmed = 0
     blank_rows = 0
 
     from apps.organization.services import AliasResolver
     circles = AliasResolver(ALIAS_SOURCE)
+    first_row_site: dict[tuple, str] = {}
     classified: Counter = Counter()  # rows per classification status (taxonomy.STATUS_LABELS)
-    normalised: Counter = Counter()  # (final, bucket 2 as written, approved final, approved bucket 2) -> rows
-    unapproved: Counter = Counter()  # pairs outside the approved classification -> rows
 
     def issue(severity, code, row, site_id, message):
         issues.append({'severity': severity, 'code': code, 'row': row, 'site_id': site_id, 'message': message})
@@ -238,15 +277,59 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
             elif expected_circle and uptime_circle != expected_circle:
                 errors.append(('site_of_other_circle', f'The Up-Time Report lists this {project} site under {uptime_circle}, not {expected_circle}.'))
 
-        key = tuple(_text(v) for v in raw)
-        if key in seen:
-            errors.append(('duplicate_row', f'Identical in every column to Excel row {seen[key]}.'))
+        # 2. Final Bucket: one of the approved major categories; blank or anything else is an error, kept as written.
+        resolved = taxonomy.resolve(values['final_bucket'], values['bucket_2'])
+        if taxonomy.is_blank(values['final_bucket']):
+            final_code = 'missing_final_bucket'
+            errors.append((final_code, f'Final Bucket is "{values["final_bucket"] or "blank"}": every RCA record needs an approved Final Bucket.'))
+        elif resolved.status == 'unapproved':
+            final_code = 'final_bucket_not_approved'
+            errors.append((final_code, f'Final Bucket "{values["final_bucket"]}" is not one of the approved Final Buckets: '
+                                       'kept as written, not renamed or reassigned.'))
+        else:
+            final_code = None
+        if final_code:
+            entry = final_problems.setdefault((values['final_bucket'], final_code), {'rows': 0, 'examples': []})
+            entry['rows'] += 1
+            if len(entry['examples']) < EXAMPLE_ROWS:
+                entry['examples'].append(offset)
+        # 3. A Sub Bucket of another Final Bucket only (e.g. "SSA OFC" under BSNL Media) is a classification mismatch.
+        if resolved.status == 'mismatch':
+            errors.append(('sub_bucket_classification_mismatch',
+                           f'Sub Bucket "{values["bucket_2"]}" belongs to {" / ".join(resolved.other_final_buckets)}, not to '
+                           f'{resolved.final_bucket}: classification mismatch, the row is rejected (values kept as written).'))
+            entry = mismatches.setdefault((resolved.final_bucket, values['bucket_2']), {'rows': 0, 'examples': [],
+                                                                                         'belongs_to': list(resolved.other_final_buckets)})
+            entry['rows'] += 1
+            if len(entry['examples']) < EXAMPLE_ROWS:
+                entry['examples'].append(offset)
+
+        # 1. Duplicates: the same site, date, Final Bucket and Sub Bucket as an earlier row (description and outage ignored).
+        if day and project and site_id:
+            identity = duplicate_key(day.isoformat(), project, site_key(site_id), text_key(values['final_bucket']), text_key(values['bucket_2']))
+            as_read = tuple(_text(v) for v in raw)
+            if identity in first_row:
+                first, first_values = first_row[identity]
+                how = 'identical in every column' if as_read == first_values else 'the RCA description, outage or other columns differ'
+                sub = values['bucket_2'] if not is_placeholder(values['bucket_2']) else 'blank'
+                errors.append(('duplicate_record', f'Duplicate of Excel row {first}: same Site ID {site_id}, date {day.isoformat()}, '
+                                                   f'Final Bucket "{values["final_bucket"] or "blank"}" and Sub Bucket "{sub}" ({how}). '
+                                                   'This row is rejected.'))
+                group = duplicates.setdefault(identity, {'site_id': first_row_site[identity], 'project': project,
+                                                         'reporting_date': day.isoformat(), 'final_bucket': values['final_bucket'],
+                                                         'sub_bucket': '' if is_placeholder(values['bucket_2']) else values['bucket_2'],
+                                                         'first_row': first, 'rejected_rows': []})
+                group['rejected_rows'].append(offset)
+                group.setdefault('identical', 0)
+                group['identical'] += as_read == first_values
+            else:
+                first_row[identity] = (offset, as_read)
+                first_row_site[identity] = site_id
 
         if errors:
             for code, message in errors:
                 issue('error', code, offset, site_id, message)
             continue
-        seen[key] = offset
 
         if uptime_circle and circle and uptime_circle != circle:
             issue('warning', 'circle_differs_from_uptime', offset, site_id,
@@ -259,18 +342,25 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
         om_start = True if om == 'yes' else False if om == 'no' else None
         if om_start is None:
             issue('warning', 'om_start_unrecognised', offset, site_id, f'O&M Start "{values["om_start_raw"]}" is not Yes or No: kept as written.')
-        # The approved bucketization (taxonomy): approved spellings where they match exactly, everything else as written.
-        resolved = taxonomy.resolve(values['final_bucket'], values['bucket_2'])
-        if (resolved.final_bucket, resolved.bucket_2) != (values['final_bucket'], values['bucket_2']):
-            normalised[(values['final_bucket'], values['bucket_2'], resolved.final_bucket, resolved.bucket_2)] += 1
-            values['final_bucket'], values['bucket_2'] = resolved.final_bucket, resolved.bucket_2
-        classified[resolved.status] += 1
-        if resolved.status in ('final_only', 'unapproved'):
-            unapproved[(resolved.final_bucket, resolved.bucket_2, resolved.status)] += 1
-        for field, label in (('final_bucket', 'Final Bucket'), ('bucket_2', 'Bucket - 2'), ('rca_text', 'RCA')):
-            if is_placeholder(values[field]):
-                issue('info', f'unclassified_{field}', offset, site_id,
-                      f'{label} is "{values[field] or "blank"}": counted as unclassified, not as a root cause.')
+        # Final Bucket and Sub Bucket are stored as uploaded (trimmed); the taxonomy only classifies them.
+        classified[taxonomy.count_status(resolved.status)] += 1
+        # 3. Sub Bucket blank or not approved anywhere: a warning only (never blocks); the value is kept as written.
+        sub_code = ('sub_bucket_missing' if taxonomy.is_blank(values['bucket_2'])
+                    else 'sub_bucket_not_approved' if resolved.status == 'final_only' else None)
+        if sub_code:
+            entry = sub_problems.setdefault((values['final_bucket'], values['bucket_2'], sub_code), {'rows': 0, 'examples': []})
+            entry['rows'] += 1
+            if len(entry['examples']) < EXAMPLE_ROWS:
+                entry['examples'].append(offset)
+            issue('warning', sub_code, offset, site_id,
+                  f'Bucket - 2 is blank under {values["final_bucket"]}: kept as not recorded; does not block the import.'
+                  if sub_code == 'sub_bucket_missing' else
+                  f'Bucket - 2 "{values["bucket_2"]}" is not an approved Sub Bucket of {values["final_bucket"]}: kept as written; '
+                  'does not block the import.')
+        # 4. RCA description: a note only; the description is kept as written and not classified here.
+        if is_placeholder(values['rca_text']):
+            issue('info', 'unclassified_rca_text', offset, site_id,
+                  f'RCA is "{values["rca_text"] or "blank"}": kept as written, counted as unclassified; does not block the import.')
 
         rows.append({
             **values,
@@ -281,13 +371,24 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
             'earlier_date': bool(period) and day < period[0],
         })
 
-    _number_occurrences(rows)
-    for (final_raw, b2_raw, final, b2), n in sorted(normalised.items(), key=lambda kv: -kv[1]):
-        issue('info', 'bucket_spelling_approved', None, '',
-              f'"{final_raw} / {b2_raw}" ({n:,} rows) is stored with the approved spelling "{final} / {b2}".')
-    for (final, b2, status), n in sorted(unapproved.items(), key=lambda kv: -kv[1]):
-        issue('warning', 'bucket_pair_not_approved', None, '',
-              f'"{final} / {b2 or "blank"}" ({n:,} rows): {taxonomy.STATUS_LABELS[status].lower()}. Kept as written, for review; not reassigned.')
+    # Rank of each record among its site's records of the date, by Final Bucket and Sub Bucket (unique per the key).
+    by_site: dict[tuple, list[dict]] = {}
+    for row in rows:
+        by_site.setdefault((row['reporting_date'], row['project'], row['site_key']), []).append(row)
+    for group in by_site.values():
+        for n, row in enumerate(sorted(group, key=lambda r: (r['final_bucket_key'], r['bucket_2_key'])), start=1):
+            row['occurrence'] = n
+
+    classification_mismatches = [{'final_bucket': final, 'value': value, 'belongs_to': e['belongs_to'], 'rows': e['rows'],
+                                  'example_rows': e['examples']}
+                                 for (final, value), e in sorted(mismatches.items(), key=lambda kv: -kv[1]['rows'])]
+    final_bucket_problems = [{'value': value, 'code': code, 'rows': e['rows'], 'example_rows': e['examples']}
+                             for (value, code), e in sorted(final_problems.items(), key=lambda kv: -kv[1]['rows'])]
+    sub_bucket_problems = [{'final_bucket': final, 'value': value, 'code': code, 'rows': e['rows'], 'example_rows': e['examples']}
+                           for (final, value, code), e in sorted(sub_problems.items(), key=lambda kv: -kv[1]['rows'])]
+    duplicate_groups = sorted(duplicates.values(), key=lambda g: g['first_row'])
+    duplicate_rows = sum(len(g['rejected_rows']) for g in duplicate_groups)
+    identical_rows = sum(g['identical'] for g in duplicate_groups)
     projects_raw = Counter(r['project_raw'] for r in rows)
     to_confirm = sorted(p for p in projects_raw if p.casefold() in PROJECTS_TO_CONFIRM)
     for label in to_confirm:
@@ -308,7 +409,30 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
         'rows': rows,
         'report': {
             'filename': filename, 'sheet': sheet, 'header_row': header_at + 1,
-            'sites_with_several_rows': sum(1 for r in rows if r['occurrence'] == 2),
+            # 1. Rows rejected as duplicates of an earlier row (same site, date, Final Bucket and Sub Bucket), also those with
+            # other errors; groups: distinct duplicated keys.
+            'duplicates': {
+                'rows': duplicate_rows, 'groups': len(duplicate_groups), 'sites': len({(g['project'], g['site_id'].upper()) for g in duplicate_groups}),
+                'identical_rows': identical_rows, 'differing_rows': duplicate_rows - identical_rows,
+                'examples': duplicate_groups[:MAX_EXAMPLES],
+            },
+            # 2. Missing or unapproved Final Bucket values (rows rejected; the file cannot be imported).
+            'final_bucket_problems': final_bucket_problems,
+            'final_bucket_error_rows': sum(p['rows'] for p in final_bucket_problems),
+            # 3. Sub Buckets of another Final Bucket (rows rejected).
+            'classification_mismatches': classification_mismatches,
+            'classification_mismatch_rows': sum(p['rows'] for p in classification_mismatches),
+            # 3. Sub Bucket warnings of valid rows (never block).
+            'sub_bucket_warnings': {
+                'rows': sum(p['rows'] for p in sub_bucket_problems),
+                'missing_rows': sum(p['rows'] for p in sub_bucket_problems if p['code'] == 'sub_bucket_missing'),
+                'not_approved_rows': sum(p['rows'] for p in sub_bucket_problems if p['code'] == 'sub_bucket_not_approved'),
+                'values': sub_bucket_problems[:MAX_EXAMPLES * 5],
+            },
+            # 4. Valid rows whose RCA description is blank or a placeholder (never block).
+            'rca_description_warnings': sum(1 for r in rows if not r['rca_key']),
+            'outage_over_day_rows': sum(1 for i in issues if i['code'] == 'outage_over_day'),
+            'sites_with_several_records': sum(1 for r in rows if r['occurrence'] == 2),
             'rows_read': len(rows) + len({i['row'] for i in issues if i['severity'] == 'error'}),
             'valid_rows': len(rows),
             'rejected_rows': len({i['row'] for i in issues if i['severity'] == 'error'}),

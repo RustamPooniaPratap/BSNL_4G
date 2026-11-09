@@ -31,7 +31,7 @@ from apps.accounts.access import can, pairs_for
 from apps.accounts.permissions import Can, CanUploadRca, IsAdminRole, IsPortalUser
 from apps.accounts.roles import ADMIN, can_upload_circle_rca, can_upload_consolidated_rca, can_upload_rca, role_of
 
-from . import cycles, importer, parser, services
+from . import cycles, importer, parser, services, taxonomy
 from .models import (RcaCauseCategory, RcaCauseMapping, RcaComment, RcaEvent, RcaImportBatch, RcaRecord,
                      RcaReport, RcaReportingCycle, RcaWorkflow)
 
@@ -139,6 +139,14 @@ def _manual_fields(data) -> dict:
     text = lambda name, limit: str(data.get(name) or '').strip()[:limit]  # noqa: E731
     if not text('rca_text', 5000):
         errors['rca_text'] = 'Describe the RCA.'
+    # The approved taxonomy, as for an upload: Final Bucket required and approved; a Sub Bucket of another Final Bucket is
+    # a classification mismatch. A blank or unapproved Sub Bucket is accepted (kept as entered).
+    classified = taxonomy.resolve(text('final_bucket', 100), text('bucket_2', 100))
+    if classified.final_bucket is None:
+        errors['final_bucket'] = 'Choose one of the approved Final Buckets.'
+    elif classified.status == 'mismatch':
+        errors['bucket_2'] = (f'"{text("bucket_2", 100)}" is a Sub Bucket of {" / ".join(classified.other_final_buckets)}, '
+                              f'not of {classified.final_bucket}.')
     if errors:
         raise ValidationError(errors)
     final_bucket, bucket_2, rca_text = text('final_bucket', 100), text('bucket_2', 100), text('rca_text', 5000)

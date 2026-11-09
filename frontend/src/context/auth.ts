@@ -9,8 +9,6 @@ export interface AuthContextValue {
   notice: string | null;
   /** remember: keep the session for 7 days instead of ending it with the browser. */
   signIn: (email: string, password: string, remember?: boolean) => Promise<AuthUser>;
-  /** Development only: sign in through the backend's bypass (refused by the server unless enabled). */
-  devSignIn: () => Promise<AuthUser>;
   signOut: () => Promise<void>;
   /** Replace the user after a password change. */
   setUser: (user: AuthUser) => void;

@@ -88,35 +88,24 @@ describe('sign-in', () => {
     expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({ password: 'secret-password', remember: true });
   });
 
-  it('offers "continue without signing in" only when the backend enables the development bypass', async () => {
-    const user = userEvent.setup();
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith('/auth/me/')) return json({ error: 'x', details: {} }, 401);
-      if (url.endsWith('/auth/csrf/')) return json({ csrf_token: 't' });
-      if (url.endsWith('/auth/dev-login/')) {
-        return (init as RequestInit | undefined)?.method === 'POST' ? json({ user: ADMIN_USER, csrf_token: 't2' })
-          : json({ enabled: true, username: 'pratap.admin', role: 'admin' });
-      }
-      return json({});
-    });
-    renderApp('/portfolio');
-    await user.click(await screen.findByRole('button', { name: /Continue without signing in/ }));
-    expect(await screen.findByText('Dashboard')).toBeInTheDocument();
-    expect(screen.getByTestId('location')).toHaveTextContent('/portfolio');
-  });
-
-  it('hides the bypass when the backend does not offer it (404)', async () => {
+  it('offers only normal sign-in: no development bypass is shown or requested', async () => {
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith('/auth/me/')) return json({ error: 'x', details: {} }, 401);
-      if (url.endsWith('/auth/dev-login/')) return json({ error: 'Not found.', details: {} }, 404);
+      // Even a server that still answered the old bypass endpoint must not make the page offer it.
+      if (url.endsWith('/auth/dev-login/')) return json({ enabled: true, username: 'pratap.admin', role: 'admin' });
       return json({ csrf_token: 't' });
     });
     renderApp('/login');
     await screen.findByRole('heading', { name: 'Sign in' });
-    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/auth/dev-login/'))).toBe(true));
+    expect(screen.getByLabelText(/Email ID|Login ID/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Remember me/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Forgot password/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Continue without signing in/ })).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/pratap\.admin|DEV_LOGIN_BYPASS|Development only/);
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('dev-login'))).toBe(false);
   });
 
   it('shows one generic message for any failed sign-in', async () => {

@@ -99,23 +99,11 @@ There is no public registration endpoint.
 
 When `DEBUG` is off, session and CSRF cookies are `Secure`, HTTP is redirected to HTTPS and HSTS is sent. `manage.py check --deploy` then reports only the two optional HSTS settings (subdomains, preload).
 
-## Development sign-in bypass
+## Sign-in
 
-A **Continue without signing in** button on the sign-in page, for local testing only. It signs in as the existing account `DEV_LOGIN_USER`, with that account's own role.
-
-**When it works:** only if all of these hold:
-- the backend runs with `DEBUG=True`;
-- `DEV_LOGIN_BYPASS=True` is set;
-- the request comes from this computer (127.0.0.1 or ::1);
-- the account exists, is active and has a role.
-
-The request also needs the CSRF token.
-
-**Otherwise:** `/api/auth/dev-login/` answers 404 and the button is not shown. With `DEBUG=False` the setting is ignored, so it cannot be enabled in production.
-
-**Audit:** each use is logged as `login_bypass`.
-
-**Turning it off:** remove `DEV_LOGIN_BYPASS` from `backend/.env`, or set it to False, before any shared or production use.
+There is no sign-in bypass: every session is created by `/api/auth/login/` with a valid login ID (email) and password.
+The former development bypass (`DEV_LOGIN_BYPASS`, `/api/auth/dev-login/`) was removed on 5 Nov 2026; the setting is
+no longer read, so setting it has no effect.
 
 ## Limitations and pending decisions
 

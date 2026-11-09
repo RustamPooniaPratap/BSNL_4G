@@ -136,9 +136,14 @@ class PeriodSerializer(SelectionSerializer):
                 raise serializers.ValidationError({'weeks': 'Weeks must be numbers 1 to 4.'}) from exc
             if not set(weeks) <= {1, 2, 3, 4}:
                 raise serializers.ValidationError({'weeks': 'Weeks must be numbers 1 to 4.'})
-            ranges = [WEEKS[w - 1] for w in weeks]
+            # Only complete weeks (every day reported) count: a week in progress has no week-to-date value.
+            from .metrics import week_columns
+            complete = [w for w in weeks if week_columns(ds, WEEKS[w - 1][1], WEEKS[w - 1][2])[1]]
+            ranges = [WEEKS[w - 1] for w in complete]
             attrs['dates'] = [d for d in ds.dates if any(first <= d.day <= last for _, first, last in ranges)]
             attrs['label'] = 'All weeks' if len(weeks) == 4 else f"Week{'s' if len(weeks) > 1 else ''} {', '.join(map(str, weeks))}"
+            if len(complete) < len(weeks):
+                attrs['label'] += ' (complete weeks only)'
         elif period == 'days':
             try:
                 days = sorted({date.fromisoformat(d) for d in split(attrs['days'])})

@@ -26,4 +26,7 @@ urlpatterns = [
     path('api/master-data/', include('apps.masterdata.urls')),
     path('api/alerts/', include('apps.alerts.urls')),
     path('api/all-kpis/', include('apps.allkpis.urls')),  # optional All KPI's module (apps/allkpis/README.md)
+    path('api/site-portfolio/', include('apps.sitedata.urls')),
+    path('api/sitedata/matrix/', include('apps.sitedata.matrix_urls')),
+    path('api/sitedata/uptime/', include('apps.sitedata.uptime_urls')),  # Up-Time Report into the new data layer (apps/sitedata/uptime_master.py)  # Consolidation Matrix import (apps/sitedata/matrix.py)  # Site Portfolio on the new data layer (apps/sitedata/portfolio.py)
 ]

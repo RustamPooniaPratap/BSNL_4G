@@ -74,8 +74,10 @@ export interface RcaPage {
 
 export interface RcaOption {
   value: string; label: string; unclassified?: boolean;
-  /** In the approved bucketization (Final Bucket and Bucket - 2 filter options only). */
+  /** In the approved taxonomy (Final Bucket and Bucket - 2 filter options only). */
   approved?: boolean;
+  /** A Sub Bucket filter option: the approved Final Buckets it belongs to. */
+  final_buckets?: string[];
 }
 
 /** Approved-classification status of records: approved pair, approved Final Bucket only, not approved, blank. */
@@ -92,7 +94,7 @@ export interface RcaOptions {
   categories: RcaOption[];
   statuses: RcaOption[];
   total_records: number;
-  /** The approved bucketization (from the server; the pages keep no list of their own). */
+  /** The approved taxonomy (apps.rca.taxonomy, from the server; the pages keep no list of their own: lib/rcaTaxonomy.ts). */
   classification?: { final_bucket: string; bucket_2: string[] }[];
 }
 
@@ -254,9 +256,23 @@ export interface RcaImportReport {
   is_correction?: boolean;
   /** Final Bucket labels (as written) found in no stored record, with their row counts. */
   new_final_buckets?: Record<string, number>;
-  /** The data sheet found by its header, its header row, and the sites with more than one row on a date. */
+  /** The data sheet found by its header and its header row. */
   header_row?: number;
-  sites_with_several_rows?: number;
+  /** Duplicates: rows with the same site, date, Final Bucket and Sub Bucket as an earlier row (description and outage ignored). */
+  duplicates?: {
+    rows: number; groups: number; sites: number; identical_rows: number; differing_rows: number;
+    examples: { site_id: string; project: string; reporting_date: string; final_bucket: string; sub_bucket: string; first_row: number; rejected_rows: number[] }[];
+  };
+  /** Sites with more than one record on a date (different Final Bucket or Sub Bucket). */
+  sites_with_several_records?: number;
+  /** Missing or unapproved Final Bucket values (rows rejected; the file cannot be imported). */
+  final_bucket_problems?: RcaValueProblem[];
+  final_bucket_error_rows?: number;
+  /** Sub Bucket (Bucket - 2) warnings of valid rows: never block the import. */
+  sub_bucket_warnings?: { rows: number; missing_rows: number; not_approved_rows: number; values: (RcaValueProblem & { final_bucket: string })[] };
+  /** Valid rows with a blank or placeholder RCA description: never block the import. */
+  rca_description_warnings?: number;
+  outage_over_day_rows?: number;
   /** Per reporting date in the workbook: rows against stored records; earlier dates are history of a cumulative workbook. */
   by_date?: RcaDateBreakdown[];
   earlier_date_rows?: number;
@@ -269,6 +285,9 @@ export interface RcaImportReport {
   rca_not_applicable_rows?: number;
   missing_rca_rows?: number;
 }
+
+/** A reported source value: its row count and the first Excel rows that have it. */
+export interface RcaValueProblem { value: string; code: string; rows: number; example_rows: number[] }
 
 export interface RcaMissingRecord {
   record_id: number; site_id: string; project: string; circle: string; outage_minutes: number | null; final_bucket: string; source_file: string;

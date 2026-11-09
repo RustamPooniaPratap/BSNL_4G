@@ -1,6 +1,12 @@
 # Project Handover: BSNL 4G Saturation & LWE Reporting Portal
 
-State as of **2 Nov 2026**. Repository at commit `c6de8f6` ("rca filters updated"); the working tree had no uncommitted changes when this was written.
+State as of **4 Nov 2026**. Repository at commit `e0cd4c4` ("updated"). The new site data layer (`backend/apps/sitedata/`), the Site
+Portfolio migration, the All KPI's Site Handover removal and the Phase 1–3 / production reports in `docs/` are **uncommitted
+changes in the working tree** at this writing.
+
+**Migration in progress.** A new site and performance data layer (`sitedata`) exists in the production database and is
+populated with September–October 2026. **Only Site Portfolio reads it so far**; every other dashboard module still reads the
+legacy `uptimedb` tables (section 3, "Data layers", and section 6).
 
 This document is the entry point for an AI coding assistant continuing development. It summarises the whole project and links to the detailed guides in [`docs/`](docs/README.md). Those guides remain the reference for their topics; where they and this file differ, the code wins (check it).
 
@@ -39,8 +45,12 @@ An internal web portal for BSNL's **4G Saturation** and **LWE** (Left Wing Extre
 │   ├── apps/
 │   │   ├── accounts/        sign-in, users, roles, permission catalogue, access assignments, access history
 │   │   ├── organization/    projects, circles, project-circle associations, circle aliases, change history
-│   │   ├── uptimedb/        PostgreSQL uptime data: sites, daily/monthly performance, escalation matrix, imports,
-│   │   │                    raw CSV upload (raw/), CSV arrival tracker, data-source switch
+│   │   ├── sitedata/        NEW data layer (source of truth for site master and performance): Consolidation Matrix
+│   │   │                    site master, LWE Band ID mapping, central daily table, monthly results, upload history,
+│   │   │                    importers, shared rules (rules.py), Site Portfolio API (portfolio.py); see its README.md
+│   │   ├── uptimedb/        LEGACY uptime data: sites, daily/monthly performance, escalation matrix, imports,
+│   │   │                    raw CSV upload (raw/), CSV arrival tracker, data-source switch (still used by most pages)
+│   │   ├── allkpis/         All KPI's module (read-only APIs; reads the legacy dataset)
 │   │   ├── dashboard/       KPI/metric engine (metrics.py), dataset loading (workbook.py), Excel report exports
 │   │   ├── rca/             RCA records, imports, reporting periods, taxonomy, summary, breakdown, site scope
 │   │   ├── masterdata/      Data Panel (Master Data explorer): dataset registry, editing framework
@@ -56,7 +66,8 @@ An internal web portal for BSNL's **4G Saturation** and **LWE** (Left Wing Extre
 │       ├── components/      shared UI: dashboard/, rca/, masterdata/, organization/, users/, auth/, ui/ (shadcn)
 │       ├── context/         auth.ts (page permissions), workbook, page header
 │       ├── hooks/           useApiQuery, useDashboardFilters, useOrganization …
-│       ├── services/api.ts  every API call
+│       ├── features/all-kpis/  All KPI's module (self-contained; README.md)
+│       ├── services/api.ts  API calls (sitePortfolioApi.ts: Site Portfolio on the new data layer)
 │       ├── types/           TypeScript types of API responses
 │       └── test/            fixtures and render helpers
 ├── Data/                    raw/ (uploaded raw files), processed/ (staged imports, reports), reference/ (reference workbooks)
@@ -76,7 +87,9 @@ An internal web portal for BSNL's **4G Saturation** and **LWE** (Left Wing Extre
 |---|---|
 | `/api/auth/` | accounts (sign-in, users, roles, access) |
 | `/api/` | common (health, legacy upload/email) and uptimedb (data-source, imports, raw-uploads, arrival-tracker) |
-| `/api/dashboard/` | dashboard metrics and exports |
+| `/api/dashboard/` | dashboard metrics and exports (legacy dataset) |
+| `/api/site-portfolio/` | Site Portfolio on the new data layer (`apps/sitedata/portfolio_views.py`) |
+| `/api/all-kpis/` | All KPI's (`apps/allkpis`; legacy dataset) |
 | `/api/rca/` | RCA |
 | `/api/organization/` | organization |
 | `/api/master-data/` | Data Panel |
@@ -90,7 +103,7 @@ An internal web portal for BSNL's **4G Saturation** and **LWE** (Left Wing Extre
 
 ### Authentication and authorization (summary; details in section 5)
 
-- Django sessions, no public registration, Admin-provisioned accounts with temporary passwords, login throttling, idle timeout, optional "remember me", development-only login bypass (`DEV_LOGIN_BYPASS`, DEBUG and local requests only).
+- Django sessions, no public registration, Admin-provisioned accounts with temporary passwords, login throttling, idle timeout, optional "remember me". No sign-in bypass: the former development bypass (`DEV_LOGIN_BYPASS`) was removed on 5 Nov 2026.
 - Authorization is enforced in the API: DRF default permission `IsPortalUser`, plus `IsAdminRole`, `Can(module, action)` and data restriction by project/circle (`apps/accounts/access.py`). The frontend guards (`RequireAdmin`, `RequirePage`, `context/auth.ts`) only decide what to show.
 
 ---
@@ -103,7 +116,8 @@ Status legend: **Complete** = implemented, tested, in use; **Partial** = works w
 |---|---|---|---|---|
 | Overview dashboard | `/`, `/?report_type=…` | KPI cards (MTD uptime, Not meeting SLA, Unique sites down, Below 60% MTD, Outage minutes Day/MTD/Month), trends, breakdowns, alerts. Filters: project, circle, site scope, reporting date, trend period. | `pages/DashboardPage.tsx`, `components/dashboard/*`, `apps/dashboard/views.py`, `metrics.py` | Complete |
 | Threshold Analysis | `/thresholds`, `/thresholds/buckets` | Uptime buckets by period with comparisons; Uptime Buckets & Site Details table (also opened from CI & IE Performance with a person filter, see below). | `ThresholdPage.tsx`, `BucketsSitesPage.tsx`, `metrics.threshold_analysis` | Complete |
-| Site Portfolio | `/portfolio` | Portfolio KPIs per project/circle. | `PortfolioPage.tsx`, `lib/portfolio.ts`, docs/site-portfolio.md | Complete |
+| Site Portfolio | `/portfolio` | Portfolio KPIs (total, On-Air, O&M Start, difference, conversion activity, uptime buckets, week / month views) and the circle-wise breakdown. **Reads the new `sitedata` layer** via `/api/site-portfolio/`: sites and effective dates from the Consolidation Matrix, daily / monthly performance from the new models (details in section 3, "Site Portfolio on the new data layer"). | `PortfolioPage.tsx`, `services/sitePortfolioApi.ts`, `apps/sitedata/portfolio.py`, `portfolio_views.py` | Complete (migrated 4 Nov 2026; `docs/site-portfolio.md` still describes the legacy sources) |
+| All KPI's | `/all-kpis` | Consolidated KPIs: portfolio, availability (day / week / month), outage, USD, SLA thresholds, NSLA, RCA Final Buckets, completeness, Circle → CI → IE → Site drill-down. Reads the legacy dataset. The Site Handover card and field were removed on 4 Nov 2026 (not a project concept); RCA ownership (Own / Customer / Third Party / Pending) remains "Not configured". | `features/all-kpis/*`, `apps/allkpis/*`, `features/all-kpis/README.md` | Complete (still on the legacy data layer) |
 | Team Performance | `/teams`, `/teams/ci-ie`, `/teams/top` | CI/IE performance, CI-wise NSLA table (names link to the person's sites), circle-wise top performers. Admin only. | `TeamsPage.tsx`, `CiIePerformancePage.tsx`, `TopPerformersPage.tsx`, `metrics.team_*` | Complete |
 | Data source switch & PostgreSQL import | `/workbook` | Upload the Master workbook (Excel source) or import it into PostgreSQL (preview → commit); switch the dashboard source between Excel and PostgreSQL. Admin only. | `DatabaseImportPage.tsx`, `apps/uptimedb/views.py`, `importer.py`, `datasource.py`, docs/database-import.md | Complete |
 | Data Source & Quality | `/data-source` | Data coverage, warnings, calculation check against workbook figures. | `DataSourcePage.tsx`, `dashboard/crosscheck.py` | Complete |
@@ -131,7 +145,20 @@ Status legend: **Complete** = implemented, tested, in use; **Partial** = works w
 
 Source: the models in `backend/apps/*/models.py` and the migrations listed below. Django's own tables (`auth_user`, `auth_group`, `django_session`, …) are used for users, built-in role groups and sessions.
 
-### Migrations (all applied on the developer PostgreSQL as of this writing)
+### Data layers (read this first)
+
+| Layer | Tables | Role now | Notes |
+|---|---|---|---|
+| **New: `sitedata`** | `sitedata_site`, `_siteidentifier`, `_identifierconflict`, `_lwemappingrow`, `_lwemappingidentifier`, `_dailysiteperformance`, `_dailyperformanceevent`, `_monthlysiteperformance`, `_uploadbatch` | **Source of truth for site master and performance data.** Read by Site Portfolio only, so far | Migration `sitedata.0001_initial` applied to production 4 Nov 2026; populated the same day (section 6) |
+| **Legacy: `uptimedb`** | `uptimedb_uptimesite`, `_sitedailyperformance`, `_sitemonthlyperformance`, `_escalationsite`, `_dataimportbatch`, `_escalationimportbatch`, `_appsetting` | **Retained** and still used by every other module, the raw CSV upload, the Database Import page and the Data Panel | Not deleted or cleared; still written by the existing importers (e.g. a Master workbook import on 4 Nov 2026). `uptimedb_appsetting` holds application settings (data source, alert heartbeat) and is not part of the site data |
+| **RCA** | `rca_*` | Existing operational data | **Must remain intact.** RCA stays on its existing system and is excluded from the migration. It also reads legacy site tables (site validation, cycles, Site Scope, overview), so the legacy site tables cannot be cleared while RCA depends on them |
+| **Infrastructure** | `auth_*`, `accounts_*`, `organization_*`, `alerts_*`, `django_*` | Users, sign-in, roles, permissions, organization, alerts | Retained, unchanged |
+
+Detailed design and history: `docs/phase1-database-audit.md` (audit and design), `docs/phase2-replay/` (validation),
+`docs/phase3-production-readiness-audit.md` (readiness, dependencies, the future controlled reset), `docs/production-backup-report-20261104.md`,
+`docs/production-sitedata-import-20261104.md`, `backend/apps/sitedata/README.md`.
+
+### Migrations (applied on the production PostgreSQL `4G-DB` as of this writing)
 
 | App | Migrations |
 |---|---|
@@ -140,9 +167,27 @@ Source: the models in `backend/apps/*/models.py` and the migrations listed below
 | uptimedb | 0001_initial, 0002_escalation_matrix, 0003_escalation_village_code, 0004_raw_daily_uploads, 0005_data_panel_batch_kind (choices only) |
 | rca | 0001_initial, 0002_reporting_cycles, 0003_upload_details, 0004_incident_occurrence, 0005_upload_types |
 | alerts | 0001_initial |
-| dashboard, common | no models |
+| sitedata | 0001_initial (9 new tables only; applied 4 Nov 2026) |
+| dashboard, common, allkpis | no models |
 
-### Business data tables (actual operational data)
+**Not applied:** `organization.0004_team_performance_hierarchy` (Team Performance hierarchy). Its `SitePersonnelAssignment.site`
+foreign key points to the legacy `uptimedb.UptimeSite` with ON DELETE CASCADE; review and re-target it before applying.
+
+### New data layer tables (`sitedata`)
+
+| Model | Purpose | Key rules |
+|---|---|---|
+| `Site` | One row per BSNL Site ID (6,764), attributes from the **Consolidation Matrix**: circle, BA, OA, district, CI / IE, Site On-Air Date, O&M Start Date | `site_key` unique; `technology` (4G Saturation / LWE) and `circle` are independent fields; Sterlite and VI-HPSC sites kept as `outside_scope` (excluded from every KPI); a site missing from a newer matrix is flagged, never deleted |
+| `SiteIdentifier`, `IdentifierConflict` | Every identifier of a site (BSNL ID, BTS IP ID, 2100 / 700 MHz IDs); ambiguous IDs blocked | unique (kind, key) |
+| `LweMappingRow`, `LweMappingIdentifier` | Every row of every LWE Band ID mapping import (history) | never deleted |
+| `DailySitePerformance` | **The only daily table**, 4G and LWE | unique (site, report_date, technology); 0–100% and 0–1,440 min checks; no record = not reported |
+| `DailyPerformanceEvent` | Append-only log of conflicts, supersedes and corrections | source precedence: correction > Uptime Master > raw CSV |
+| `MonthlySitePerformance` | Monthly results per site: all reported days, On-Air days, O&M Start days (from the effective dates), with revisions | outage-weighted over reporting days |
+| `UploadBatch` | Upload history of every file (staged copy, checksum, counts, exception report) | — |
+
+Business rules of this layer: `backend/apps/sitedata/rules.py` and its README.
+
+### Legacy business data tables (`uptimedb`, retained) and RCA tables
 
 | Model (app) | Purpose | Key columns | Constraints / indexes | Relations |
 |---|---|---|---|---|
@@ -175,6 +220,7 @@ Source: the models in `backend/apps/*/models.py` and the migrations listed below
 - Data rows reference projects and circles **by text** (`project` key, `circle` code), not by foreign key to Organization. Renaming a project key or circle code would orphan data, so these are fixed once created.
 - Every uptime row points to the import batch that last wrote it (PROTECT): batches cannot be deleted while rows reference them.
 - RCA records link to the Site Master only logically (project, circle, site_key). Two current RCA records have no Site Master match (section 9).
+- The new `sitedata` tables have no foreign key to `uptimedb`, `rca` or `organization`; they reference only `auth_user` and each other.
 
 ---
 
@@ -185,7 +231,8 @@ Detailed rules: [docs/business-rules.md](docs/business-rules.md) (dashboard), [d
 ### Reporting basics
 
 - **Projects (report types):** `4G Saturation` (written "4G Satu." in the workbook) and `LWE`. A site belongs to one project and circle; **4G and LWE site identities are kept separate**. MP under 4G and MP under LWE are different networks.
-- **Dataset:** the dashboard reads one in-memory dataset (`dashboard/workbook.py: Dataset`) built from the **active source**: the Master workbook (Excel) or PostgreSQL (`uptimedb/datasource.py`). The source is switched explicitly by an Admin (`AppSetting`). Without the setting the default is Excel; the developer machine is set to PostgreSQL. The database dataset is cached and rebuilt when a newer committed import batch exists.
+- **Dataset (legacy pages):** the dashboard reads one in-memory dataset (`dashboard/workbook.py: Dataset`) built from the **active source**: the Master workbook (Excel) or PostgreSQL (`uptimedb/datasource.py`). The source is switched explicitly by an Admin (`AppSetting`). Without the setting the default is Excel; production is set to PostgreSQL. The database dataset is cached and rebuilt when a newer committed import batch exists. The global setting was **not** changed by the migration.
+- **Dataset (Site Portfolio):** built from the new `sitedata` tables (`sitedata/dataset.py`, cached in `sitedata/portfolio.py`) and run through the same `dashboard/metrics.py` functions, unchanged.
 - **Missing values:** a blank daily value is **not reported**: left out of numerator and denominator, never treated as 0.
 
 ### Uptime and outage
@@ -237,6 +284,18 @@ uptime % = 100 × (1 − Σ outage minutes ÷ (1,440 × site-days reported))    
 
 - Source circle codes and names (e.g. raw CSV "OR", "Madhya Pradesh") are resolved with `CircleAlias` (`organization/services.AliasResolver`). Unknown codes are reported, never turned into new circles.
 - Raw uploads, RCA uploads and assignments accept only active project-circle associations.
+
+### Site Portfolio on the new data layer
+
+- **Sites and populations:** total sites = dashboard sites of the Consolidation Matrix (6,724; Sterlite and VI-HPSC excluded). On-Air and O&M Start come from the matrix **Site On-Air Date** and **O&M Start Date**: a site counts in a month when its date is on or before the month's last day. A site without a date is not counted and is flagged for review. No site is created from performance records.
+- **Availability:** site-weighted (outage-weighted): 100 × (1 − Σ outage ÷ (1,440 × reported site-days)); a missing record is not reported, never 0. On-Air and O&M Start figures count each site only from its effective date, as in the validated replay. This is done in the portfolio service with dataset variants, without changing `metrics.py`.
+- **Periods:** weeks 1–7, 8–14, 15–21, 22–month end. Whole months use their reporting days, not calendar days, and the page shows the number of reporting days. MTD ends at the last continuous date with data; later dates after a gap are not offered and a notice explains it.
+- **Circle-wise breakdown:** one row per circle and technology (e.g. MP has separate 4G and LWE rows), the same population as the KPI cards, so totals reconcile.
+- **Filters:** project (technology) and circle are independent; dates come from the new layer.
+- **Coverage:** September and October 2026, through **31 Oct 2026**. The new layer has no November data yet, while the legacy tables do.
+- **No fallback:** if the new layer cannot serve the page, the error is shown; legacy data is never substituted.
+- **Reconciled:** 81 checks on production data (every technology and circle; all sites, On-Air, O&M Start; counts and October MTD availability) equal the validated replay with no difference.
+- **Still on legacy sources:** the Dashboard and Threshold pages its cards link to. O&M heads come from the reference sheet (not site data).
 
 ---
 
@@ -296,10 +355,30 @@ Details: [docs/access-control.md](docs/access-control.md), [docs/security.md](do
 - USD KPI correction (distinct sites with outage > 0 in the period).
 - Alert & Email Automation module (code, tests, worker).
 - Windows launch and health scripts.
+- **New site data layer (`sitedata`), 4 Nov 2026:**
+  - created in production (`sitedata.0001_initial`, 9 new tables only);
+  - verified backups taken before the migration and before the import (`C:\Users\gaura\Backups\4G-DB\`, outside the repository and OneDrive);
+  - populated with the validated replay sequence: **6,764 sites** (Consolidation Matrix), the LWE Band ID mapping (1,996 rows read, 1,994 accepted), **410,130 daily records** (4G 277,031; LWE 133,099) from the September and October Uptime Masters, the 4G and LWE CSVs, and the **September and October monthly calculations** (19,331 + 19,332 records). The result equals the replay record for record.
+- **Site Portfolio migrated** to the new layer and reconciled against the validated replay (section 4).
+- **All KPI's:** Site Handover card and `site_handover_status` field removed; RCA ownership remains "Not configured".
 
 ### Partial / in progress
 
-- Raw daily CSV upload for **LWE**: validated, but no rows imported until the LWE site-ID mapping is supplied.
+- **Migration to the new data layer** (only Site Portfolio done). Modules still on the legacy `uptimedb` tables:
+
+  | Module | Legacy dependency (from the code) |
+  |---|---|
+  | Dashboard 4G / LWE (and Overview) | `/api/dashboard/*` on `uptimedb.datasource.current_dataset()` |
+  | Threshold Analysis | the same dashboard endpoints and dataset |
+  | All KPI's | the legacy dataset, plus O&M Start flags from `SiteMonthlyPerformance` |
+  | CSV Arrival Tracker | reads `SiteDailyPerformance` (coverage), `UptimeSite.on_air` (expected sites) and `DataImportBatch` raw uploads directly; its uploads come from the legacy raw CSV importer |
+  | Team Performance | `/api/dashboard/teams*` on the legacy dataset; the hierarchy services read `UptimeSite`; the pending `organization.0004` FK targets `UptimeSite` |
+  | Also on legacy tables | raw CSV upload and Database Import pages (write the legacy tables), Data Panel, report exports, organization usage counts |
+
+  **RCA remains on its existing system and is excluded from the migration.**
+- Upload screens and an import lock for the new importers do not exist yet; new-layer imports run as management/scripted operations.
+
+- Raw daily CSV upload for **LWE** on the legacy page: validated, but no rows imported (the legacy resolver has no mapping). The new data layer has the LWE Band ID mapping and imports LWE rows.
 - Add Row / Add Site pages: browser-only validation (superseded in practice by Data Panel editing).
 - Alert e-mail: real SMTP / Microsoft 365 sending not verified; needs company IT approval (SMTP AUTH or relay, sender mailbox, firewall).
 
@@ -312,7 +391,14 @@ Details: [docs/access-control.md](docs/access-control.md), [docs/security.md](do
 
 ### Last known development task
 
-The **RCA Site Scope** filter (All / O&M Start / O&M Not Started Sites) across the RCA Register, all RCA Summary tabs and RCA Submissions. Finished and committed. Before that came the Data Panel editing framework.
+**Site Portfolio migration to the new `sitedata` layer** (4 Nov 2026), followed by removing Site Handover from All KPI's.
+Before that:
+- the production backup;
+- `sitedata.0001_initial` applied;
+- the September–October production import into the new layer.
+
+**Next steps need approval, one module at a time:** migrate the remaining modules, add new-layer upload screens, and
+re-target `organization.0004`. The legacy tables are **not** cleared (see `docs/phase3-production-readiness-audit.md`).
 
 ### Unresolved issues / known bugs
 
@@ -392,7 +478,7 @@ npm run dev        :: Vite on http://localhost:5173 (or start_frontend.bat)
 
 | Where | Names |
 |---|---|
-| `backend/.env` (via `settings.py`) | `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `LOG_LEVEL`, `DB_ENGINE`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DATA_DIR`, `WORKBOOK_STORE_DIR`, `MASTER_WORKBOOK_PATH`, `MAX_WORKBOOK_BYTES`, `RAW_UPLOAD_DIR`, `MAX_UPLOAD_BYTES`, `EMAIL_BACKEND`, `DEFAULT_FROM_EMAIL`, `EMAIL_TIMEOUT`, `SESSION_IDLE_MINUTES`, `SESSION_COOKIE_SAMESITE`, `CSRF_COOKIE_SAMESITE`, `REMEMBER_ME_DAYS`, `LOGIN_RATE_PER_USER`, `LOGIN_RATE_PER_IP`, `AUDIT_LOG_FILE`, `DEV_LOGIN_BYPASS`, `DEV_LOGIN_USER`, `SECURE_SSL_REDIRECT`, `SECURE_HSTS_SECONDS`, `SECURE_HSTS_INCLUDE_SUBDOMAINS`, `TRUST_X_FORWARDED_PROTO` |
+| `backend/.env` (via `settings.py`) | `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `LOG_LEVEL`, `DB_ENGINE`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DATA_DIR`, `WORKBOOK_STORE_DIR`, `MASTER_WORKBOOK_PATH`, `MAX_WORKBOOK_BYTES`, `RAW_UPLOAD_DIR`, `MAX_UPLOAD_BYTES`, `EMAIL_BACKEND`, `DEFAULT_FROM_EMAIL`, `EMAIL_TIMEOUT`, `SESSION_IDLE_MINUTES`, `SESSION_COOKIE_SAMESITE`, `CSRF_COOKIE_SAMESITE`, `REMEMBER_ME_DAYS`, `LOGIN_RATE_PER_USER`, `LOGIN_RATE_PER_IP`, `AUDIT_LOG_FILE`, `SECURE_SSL_REDIRECT`, `SECURE_HSTS_SECONDS`, `SECURE_HSTS_INCLUDE_SUBDOMAINS`, `TRUST_X_FORWARDED_PROTO` |
 | Alert module | `ALERT_ENCRYPTION_KEY` (optional; else derived from `SECRET_KEY`), `PORTAL_URL` |
 | `frontend/.env` | `VITE_API_BASE_URL` |
 
@@ -414,10 +500,10 @@ npm test            :: vitest run
 npm run build
 ```
 
-Latest results (2 Nov 2026):
+Latest results (4 Nov 2026):
 
-- Backend: 476 tests, 474 pass. The 2 failures are the known `test_reconciliation` tests, which read the live October workbook (section 9).
-- Frontend: 297 / 297 pass; type-check, lint and build clean.
+- Backend: 585 tests, 583 pass. The 2 failures are the known `test_reconciliation` tests, which read the live October workbook (section 9). The `sitedata` suite (61), Site Portfolio (12) and All KPI's (8) pass.
+- Frontend: 318 / 318 pass; type-check, lint and build clean.
 
 ### Deployment
 
@@ -432,16 +518,19 @@ No production deployment configuration (Docker, CI pipeline, web server config) 
 | Tests | `tests/test_reconciliation.py`: 2 tests fail because they read the live October workbook, whose dates moved on (e.g. expected 14 Oct, now later). Not a regression. |
 | Performance | The RCA Summary request takes about 11–16 s on the full data (~177,690 RCA records), mostly the existing aggregations; the Site Scope adds little. |
 | RCA data quality | 2 RCA records have no Site Master site: 4G AP `dhssghks` (28 Oct), LWE CG `LWEBH0269` (26 Oct). 67 RCA records of 3 LWE MP sites say O&M Start "Yes" on the RCA row but "No" in Site Master (Site Scope follows Site Master). |
-| Raw uploads | LWE raw CSV rows are not imported (no ID mapping); open question 8 in docs/business-rules.md. |
-| Excel runtime reads | `dashboard/activity.py` (conversion activity) reads `Data/reference/*Escalation Matrix*.xlsx`; `dashboard/reference.py` (O&M heads) reads `Data/reference/*first page*.xlsx`; the Excel data source reads the uploaded Master workbook. These are the remaining runtime file dependencies. |
+| Raw uploads | The legacy raw CSV page still imports no LWE rows (no mapping in the legacy resolver). The new data layer has the LWE Band ID mapping, but no upload screen yet. |
+| Two data layers | Site Portfolio (new layer, through 31 Oct 2026) and the other pages (legacy tables, include 1 Nov) can show different latest dates and figures until the remaining modules are migrated. The legacy LWE October data also differs from the new layer: the legacy import of 4 Nov used the consolidated October workbook, the new layer the approved LWE Oct'26 report. |
+| Source data gaps (new layer) | 78 MP 4G sites and 3 MP LWE sites have no O&M Start Date in the matrix, and 12 4G sites (6 MP, 6 OD) and 2 MP LWE sites have no On-Air Date; they are excluded from those populations until the matrix is corrected. 2 RJ sites are missing from the matrix; 436 matrix band IDs are claimed by several sites; mapping row LWEBH0141 uses a single `;`; BLG1394's 2100 and 700 IDs map to different Master IDs; 188 LWE sites have no mapping row (`docs/phase2-replay/`). |
+| Excel runtime reads | `dashboard/activity.py` (legacy conversion activity) reads `Data/reference/*Escalation Matrix*.xlsx`; `dashboard/reference.py` (O&M heads, used by Site Portfolio too) reads `Data/reference/*first page*.xlsx`; the Excel data source reads the uploaded Master workbook. Site Portfolio's conversion activity now comes from the matrix dates in the database. |
 | Dashboard filters | No "O&M Start = No" dashboard scope and no multi-circle selection. "All sites" scope still excludes non-On-Air sites from USD by design. |
 | Permissions | Project-wide assignments include circles added to the project later. NOC Lead gets View/Export on new datasets automatically. CI users without assignments see nothing. |
 | RCA edit rules | Register forbids editing imported RCA facts; the Data Panel allows it (recorded as events; a later re-import shows them as conflicts). |
 | Data Panel | Saves are limited to 500 rows; the browser Back button is not intercepted by the unsaved-changes guard (links and reload are); each save becomes the "latest import", so the dashboard source label shows "Data Panel edit". |
 | Operations | The backend must be started separately (`start_backend.bat`); when it is not running the frontend shows "The reporting API could not be reached". The alert worker is another separate process. |
-| Docs out of date | docs/rca.md "Current data" still describes the first import (1,819 records, 26 Oct 2026); the database now holds about 177,690 records (October 2026). |
+| Docs out of date | docs/rca.md "Current data" still describes the first import (1,819 records, 26 Oct 2026); the production database held 178,692 records at the 4 Nov 2026 backup (before that day's November RCA upload). docs/site-portfolio.md still describes Site Portfolio's legacy sources (Master workbook flags, the escalation file); the current implementation is in section 4 of this file. |
 | Accounts on the dev DB | Not verified beyond what is listed: the developer database had 2 Admin accounts (one still with a temporary password) and 1 CI account without assignments on 31 Oct 2026. |
-| Handle with care | `dashboard/metrics.py` (all KPIs), `rca/breakdown.py` + `taxonomy.py` (business-approved), `accounts/access.py` (security), `uptimedb/importer.py` and `rca/importer.py` (data writes), migrations with data steps (`accounts.0006/0007`, `organization.0002/0003`). |
+| Handle with care | `dashboard/metrics.py` (all KPIs, shared by both data layers), `rca/breakdown.py` + `taxonomy.py` (business-approved), `accounts/access.py` (security), `uptimedb/importer.py`, `sitedata/*` importers and `rca/importer.py` (data writes), migrations with data steps (`accounts.0006/0007`, `organization.0002/0003`). |
+| Legacy table reset | Clearing the legacy `uptimedb` site and performance tables is a **future, separately approved** step, only after every consumer (including RCA's site validation, cycles and Site Scope) no longer reads them, with a fresh verified backup (`docs/phase3-production-readiness-audit.md`). Nothing has been cleared. |
 
 ---
 

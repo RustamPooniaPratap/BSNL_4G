@@ -28,7 +28,7 @@ export const CI_USER: AuthUser = { username: 'ravi.ci', name: 'Ravi', role: 'ci'
 export function authValue(overrides: Partial<AuthContextValue> = {}): AuthContextValue {
   return {
     status: 'signed_in', user: ADMIN_USER, notice: null,
-    signIn: vi.fn(), devSignIn: vi.fn(), signOut: vi.fn(async () => {}), setUser: vi.fn(),
+    signIn: vi.fn(), signOut: vi.fn(async () => {}), setUser: vi.fn(),
     ...overrides,
   };
 }

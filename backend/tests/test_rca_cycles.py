@@ -20,10 +20,10 @@ from tests.test_rca import RcaTestCase, uptime_sites, workbook
 DAY = datetime(2026, 10, 21)
 OD = [
     [DAY, '4G Satu', 'Odisha', 'OD0001', 'Bravo', 'KORAPUT', 'KORAPUT', 'Yes', 90, 'IaasP OFC', 'BSNL MEDIA', 'Media Fluctuation'],
-    [DAY, '4G Satu', 'Odisha', 'OD0002', 'Echo', 'KORAPUT', 'KORAPUT', 'Yes', 30, 'Other Media', '', ''],
+    [DAY, '4G Satu', 'Odisha', 'OD0002', 'Echo', 'KORAPUT', 'KORAPUT', 'Yes', 30, 'Others', '', ''],
 ]
 RJ = [[DAY, '4G Satu', 'Rajasthan', 'RJ0001', 'Charlie', 'Jaisalmer', 'JODHPUR', 'Yes', 5, 'BSNL OFC', '', '']]
-BH = [[DAY, 'LWE', 'Bihar', 'LWEBH0063', 'Haibatpur', 'Gaya', 'Gaya', 'Yes', 20.6, 'Other Media', 'BSNL Media', 'Media Flacuatation']]
+BH = [[DAY, 'LWE', 'Bihar', 'LWEBH0063', 'Haibatpur', 'Gaya', 'Gaya', 'Yes', 20.6, 'BSNL Media', 'BSNL Media', 'Media Flacuatation']]
 LWE_OD = [[DAY, 'LWE', 'Odisha', 'LWEOD0001', 'Lima', '', '', 'Yes', 4, 'BSNL OFC', 'Fiber', 'Cut']]
 WORKBOOK = OD + RJ + BH
 DETAILS = {'upload_type': 'consolidated', 'report_name': 'October 2026 RCA Report', 'period_start': '2026-10-21', 'period_end': '', 'project_scope': 'both', 'remarks': ''}
@@ -82,7 +82,8 @@ class NocLeadUploadTests(UploadTestCase):
                          ('previewed', 'noc-lead', 'October 2026 RCA Report', 'First submission'))
         self.assertEqual(RcaRecord.objects.count(), 0)  # nothing is written before the confirmation
         self.assertEqual(preview['units'], [['4G Saturation', 'OD'], ['4G Saturation', 'RJ'], ['LWE', 'BH']])
-        self.assertEqual((preview['report']['rca_not_applicable_rows'], preview['report']['missing_rca_rows']), (2, 1))
+        # No Other Media rows (not an approved Final Bucket); OD0002 and RJ0001 have blank Bucket - 2 and RCA.
+        self.assertEqual((preview['report']['rca_not_applicable_rows'], preview['report']['missing_rca_rows']), (0, 2))
         result = self.commit(preview['id']).json()
         c = result['counts']
         self.assertEqual((c['total'], c['inserted'], c['updated'], c['skipped'], c['rejected']), (4, 4, 0, 0, 0))
@@ -307,7 +308,8 @@ class CoverageTests(UploadTestCase):
         self.assertEqual(sorted(ids), sorted(RcaRecord.objects.values_list('pk', flat=True)))  # each accepted record exactly once
         self.assertEqual({row[header.index('Upload ID')] for row in master[1:]}, {first['id'], result['id']})  # traceable to uploads
         rows = {row[3]: row for row in master[1:]}
-        self.assertEqual(rows['OD0002'][header.index('RCA applicability')], 'Other Media — RCA Not Applicable')
+        # Other Media is not an approved Final Bucket, so an upload cannot add it: OD0002 (Others, blank Bucket - 2 and RCA) needs RCA.
+        self.assertEqual(rows['OD0002'][header.index('RCA applicability')], 'RCA Required — Missing Information')
         self.assertEqual(rows['RJ0001'][header.index('RCA applicability')], 'RCA Required — Missing Information')
         self.assertEqual((rows['OD0001'][1], rows['OD0001'][2]), ('4G Satu', 'Odisha'))  # source values as written
         self.assertEqual(book['Uploads'].max_row, 3)

@@ -30,10 +30,29 @@ class IsolatedDataRunner(DiscoverRunner):
         audit = logging.getLogger('audit')
         self._audit_handlers = audit.handlers[:]
         audit.handlers = [h for h in audit.handlers if not isinstance(h, logging.FileHandler)]
+        # The dashboard pages read the new data layer only (apps.sitedata.dashboard_source.load). Tests that create
+        # sitedata records get exactly that; the many API, permission and calculation tests built on a synthetic
+        # Master workbook (tests.workbook_factory) get that workbook's dataset through the same single entry point, so
+        # they keep testing the endpoints and dashboard.metrics. Test-only: the application has no such fallback.
+        from unittest import mock
+
+        from apps.sitedata import dashboard_source
+        original = dashboard_source.load
+
+        def load(variant: str = 'all'):
+            from apps.sitedata.models import Site
+            if Site.objects.exists():
+                return original(variant)
+            from apps.dashboard.workbook import get_dataset
+            return get_dataset()
+
+        self._load_patch = mock.patch.object(dashboard_source, 'load', load)
+        self._load_patch.start()
         super().setup_test_environment(**kwargs)
 
     def teardown_test_environment(self, **kwargs):
         super().teardown_test_environment(**kwargs)
+        self._load_patch.stop()
         logging.getLogger('audit').handlers = self._audit_handlers
         self._override.disable()
         self._tmp.cleanup()

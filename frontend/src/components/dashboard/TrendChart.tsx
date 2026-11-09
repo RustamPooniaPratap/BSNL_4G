@@ -61,6 +61,9 @@ interface TrendChartProps {
   onSelectCircle?: (key: string) => void;
 }
 
+/** A week without a value: not complete yet (in progress or ahead), or no data although it has passed. */
+const weekStatus = (w: { complete?: boolean }) => (w.complete === false ? 'Not complete yet' : 'Not reported');
+
 export type { UptimeChartView } from './constants';
 
 /** Uptime over time at three granularities: days in the trend range, workbook weeks, and months. */
@@ -282,12 +285,9 @@ function WeeklyView({ trend, weeks, style }: { trend: TrendResponse; weeks: Tren
           <div key={w.label} className="rounded-lg bg-muted/60 px-3 py-2">
             <dt className="text-[11px] text-muted-foreground">{w.label} · {formatShortDate(w.start)}–{formatShortDate(w.end)}</dt>
             <dd className="flex items-baseline gap-2 text-sm font-semibold tabular-nums">
-              {w.days_reported ? formatPct(w.uptime_pct) : <span className="font-normal text-muted-foreground">Not reported</span>}
+              {w.days_reported ? formatPct(w.uptime_pct) : <span className="font-normal text-muted-foreground">{weekStatus(w)}</span>}
               <Change value={w.change_pts} unit="vs previous week shown" />
             </dd>
-            {w.days_reported > 0 && w.days_reported < w.days_in_week && (
-              <dd className="text-[11px] text-muted-foreground">{w.days_reported} of {w.days_in_week} days so far</dd>
-            )}
           </div>
         ))}
       </dl>
@@ -296,7 +296,7 @@ function WeeklyView({ trend, weeks, style }: { trend: TrendResponse; weeks: Tren
         columns={['Week', ...keys.map(style.name), 'Change', 'Days reported']}
         rows={weeks.map((w) => [
           `${w.label} (${formatShortDate(w.start)}–${formatShortDate(w.end)})`,
-          ...keys.map((k) => (w.days_reported ? formatPct(k === COMBINED ? w.uptime_pct : w.by_report_type[k]) : 'Not reported')),
+          ...keys.map((k) => (w.days_reported ? formatPct(k === COMBINED ? w.uptime_pct : w.by_report_type[k]) : weekStatus(w))),
           formatChange(w.change_pts),
           `${w.days_reported} / ${w.days_in_week}`,
         ])}

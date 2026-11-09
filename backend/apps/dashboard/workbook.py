@@ -98,6 +98,9 @@ class Dataset:
     reference_formulas: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
     # Previous month's O&M Start flag (sites column 'om_start_previous'); None when the source has no such column.
     previous_om_label: str | None = None
+    # Complete reporting dates of the month (every technology / circle of the site master has values), when the source
+    # knows them (the new data layer); None: not known (a single workbook), so every date with data counts.
+    complete_dates: tuple[date, ...] | None = None
     _positions: dict = field(default_factory=dict, repr=False)
     _memo: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 

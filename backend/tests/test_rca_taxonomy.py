@@ -24,82 +24,133 @@ def record(final, b2, *, day=date(2026, 10, 21), project='4G Saturation', circle
                                     bucket_2=b2, bucket_2_key=text_key(b2), rca_text='Cause', rca_key='cause', source='import')
 
 
+# The final approved taxonomy (4 Nov 2026), written out independently of taxonomy.py so a change there is caught.
+EXPECTED = {
+    'IaaSP Power': ['CCU fault', 'EB power cut', 'Solar Panel fault', 'RM fail', 'MPPT issue', 'Contactor faulty', 'Power cable faulty',
+                    'LVD issue', 'Backplane faulty', 'High V & Low V'],
+    'IaaSP Others': ['Shadow issue', 'EB Cable fault', 'EB tx. Faulty', 'EB Bill not paid', 'IaaSP Theft', 'CT payment issue', 'Owner issue',
+                     'Natural Clamity', 'Tech Delay', 'IaaSP Link'],
+    'IaaSP Battery': ['Battery issue', 'BB Theft', 'Low back Up', 'BMS faulty'],
+    'IaaSP OFC': ['Incremental Fibre'],
+    'BSNL OFC': ['SSA OFC', 'BSNL OFC', 'ETR OFC', 'BBNL OFC', 'WTR OFC', 'NTR', 'CNTX', 'JCNL', 'Maha IT', 'Pace OFC'],
+    'BSNL Media': ['Nokia mini link', 'NEC Mini link', 'CPAN issue', 'Maan Media issue', 'BSNL Link', 'Vsat Media', 'BSNL Hub', 'BSNL Others',
+                   'Fluctuation'],
+    'Others': ['4G Sat. link site', 'IP site link', 'Others site link', 'ATC site link', 'Non IaaSP Theft'],
+    'TCS': ['RAC Card', 'CEF Card', 'CEF12 Card', 'FTU', 'RRH Hardware', 'RRH Cable', 'RRH Cipri Cable', 'BBU', 'Partial band', 'S1 Link'],
+    'DMW': ['Ceragoan Radio', 'DMW Cipri Cable', 'DMW Power cable', 'DMW RSL Issue', 'DMW pole mount Issue', 'Fluctuation', 'Cascading Cable'],
+    'HFCL': ['HFCL Radio', 'HFCL Switch', 'HFCL POE', 'HFCL Power cable', 'HFCL RSL Issue', 'HFCL Pole mount Issue', 'HFCL Port', 'HFCL MCX0',
+             'Fluctuation'],
+}
+
+
 class TaxonomyTests(RcaTestCase):
-    def test_every_approved_pair_is_approved_and_kept_as_named(self):
-        pairs = [(f, c) for f, children in taxonomy.APPROVED.items() for c in children]
-        self.assertEqual(len(pairs), 10 + 10 + 4 + 1 + 10 + 9 + 5 + 10 + 7 + 9)
-        for final, child in pairs:
-            self.assertEqual(taxonomy.resolve(final, child), taxonomy.Resolution(final, child, 'approved'), (final, child))
+    def test_exactly_the_ten_approved_final_buckets_with_their_sub_buckets(self):
+        self.assertEqual(len(taxonomy.APPROVED), 10)
+        self.assertEqual({f: list(c) for f, c in taxonomy.APPROVED.items()}, EXPECTED)
+        self.assertEqual(list(taxonomy.APPROVED), list(EXPECTED))  # the approved order
+        self.assertEqual(taxonomy.classification(), [{'final_bucket': f, 'bucket_2': c} for f, c in EXPECTED.items()])
 
-    def test_spelling_only_differences_take_the_approved_name(self):
-        self.assertEqual(taxonomy.resolve('Iaasp Others', 'IAASP LINK'), taxonomy.Resolution('IaaSP Others', 'IaaSP Link', 'approved'))
-        self.assertEqual(taxonomy.resolve('BSNL OFC', 'BSNL-OFC'), taxonomy.Resolution('BSNL OFC', 'BSNL OFC', 'approved'))
-        self.assertEqual(taxonomy.resolve('HFCl', 'hfcl  radio'), taxonomy.Resolution('HFCL', 'HFCL Radio', 'approved'))
+    def test_every_sub_bucket_is_approved_under_its_own_final_bucket(self):
+        for final, children in EXPECTED.items():
+            for child in children:
+                self.assertEqual(taxonomy.resolve(final, child), taxonomy.Resolution(final, child, 'approved'), (final, child))
+                self.assertIn(final, taxonomy.finals_of_sub_bucket(child))
 
-    def test_invalid_pairs_typos_other_words_and_blanks_are_left_as_written(self):
-        self.assertEqual(taxonomy.resolve('BSNL Media', 'SSA OFC').status, 'final_only')  # SSA OFC belongs to BSNL OFC
-        self.assertEqual(taxonomy.resolve('Iaasp Others', 'Tech Deay'), taxonomy.Resolution('IaaSP Others', 'Tech Deay', 'final_only'))
-        self.assertEqual(taxonomy.resolve('BSNL OFC', 'JCNL OFC').bucket_2, 'JCNL OFC')  # not "JCNL": other words
-        self.assertEqual(taxonomy.resolve('Vsat', 'Vsat'), taxonomy.Resolution('Vsat', 'Vsat', 'unapproved'))
-        self.assertEqual(taxonomy.resolve('-', ''), taxonomy.Resolution('-', '', 'blank'))
-        self.assertEqual(taxonomy.resolve('TCS', '-').status, 'blank')
-        self.assertNotEqual(taxonomy.resolve('', 'Fluctuation').final_bucket, 'Others')  # a blank is never Others
+    def test_the_approved_spellings_are_accepted_and_the_old_ones_are_not(self):
+        self.assertEqual(taxonomy.resolve('DMW', 'Ceragoan Radio').status, 'approved')
+        self.assertEqual(taxonomy.resolve('IaaSP Others', 'Natural Clamity').status, 'approved')
+        self.assertEqual(taxonomy.resolve('DMW', 'Ceragon Radio').status, 'final_only')  # a warning, not corrected
+        self.assertEqual(taxonomy.resolve('IaaSP Others', 'Natural Calamity').status, 'final_only')
 
-    def test_fluctuation_is_valid_only_under_its_three_parents(self):
-        for parent in ('BSNL Media', 'DMW', 'HFCL'):
-            self.assertEqual(taxonomy.resolve(parent, 'fluctuation'), taxonomy.Resolution(parent, 'Fluctuation', 'approved'))
-        self.assertEqual(taxonomy.resolve('Others', 'Fluctuation').status, 'final_only')
-        self.assertEqual(taxonomy.resolve('Others', 'Flacuation').bucket_2, 'Flacuation')
-
-    def test_imports_apply_the_approved_spelling_and_flag_pairs_outside_it(self):
+    def test_ceragoan_radio_and_natural_clamity_upload_exactly_as_approved_with_no_warning(self):
         day = datetime(2026, 10, 21)
         row = lambda site, final, b2: [day, '4G Satu', 'Odisha', site, 'S', '', '', 'Yes', 5, final, b2, 'cause']  # noqa: E731
-        path = workbook(Path(self.tmp.name) / 'tax.xlsx', rows=[row('OD1', 'Iaasp Power', 'CCU FAULT'), row('OD2', 'DMW', 'Fluctuation'),
-                                                                 row('OD3', 'Others', 'Flacuation'), row('OD4', 'Vsat', 'Vsat'), row('OD5', 'TCS', '-')])
-        parsed = parse(path, 'tax.xlsx')
-        stored = {r['site_id']: (r['final_bucket'], r['bucket_2']) for r in parsed['rows']}
-        self.assertEqual(stored, {'OD1': ('IaaSP Power', 'CCU fault'), 'OD2': ('DMW', 'Fluctuation'), 'OD3': ('Others', 'Flacuation'),
-                                  'OD4': ('Vsat', 'Vsat'), 'OD5': ('TCS', '-')})
-        self.assertEqual(parsed['report']['classification'], {'approved': 2, 'final_only': 1, 'unapproved': 1, 'blank': 1})
-        self.assertEqual(parsed['report']['valid_rows'], 5)  # flagged for review, never rejected
-        self.assertEqual(parsed['report']['issue_counts']['bucket_pair_not_approved'], 2)
+        path = workbook(Path(self.tmp.name) / 'approved.xlsx', rows=[
+            row('OD1', 'DMW', 'Ceragoan Radio'), row('OD2', 'IaaSP Others', 'Natural Clamity'),
+            row('OD3', ' DMW ', ' Ceragoan Radio '), row('OD4', 'IaaSP Others', '  Natural Clamity')])  # surrounding spaces
+        result = parse(path, 'approved.xlsx')
+        rows, report = result['rows'], result['report']
+        self.assertEqual((report['valid_rows'], report['rejected_rows']), (4, 0))
+        self.assertEqual({r['bucket_2'] for r in rows}, {'Ceragoan Radio', 'Natural Clamity'})  # never rewritten to another spelling
+        self.assertEqual(report['classification'], {'approved': 4, 'final_only': 0, 'unapproved': 0, 'blank': 0})
+        self.assertEqual(report['sub_bucket_warnings']['rows'], 0)
+        # No warning or note of any kind about these values: no spelling, Sub Bucket or classification issue.
+        self.assertEqual([i['code'] for i in report['all_issues'] if i['code'] not in ('project_label_to_confirm', 'whitespace_trimmed')], [])
+        self.assertFalse(any('spelling' in i['message'].lower() for i in report['all_issues']))
+        self.assertEqual(report['label_variants'], {'final_bucket': [], 'bucket_2': [], 'om_start_raw': []})
+
+    def test_other_spellings_are_unapproved_values_not_spelling_mistakes(self):
+        day = datetime(2026, 10, 21)
+        row = lambda site, final, b2: [day, '4G Satu', 'Odisha', site, 'S', '', '', 'Yes', 5, final, b2, 'cause']  # noqa: E731
+        path = workbook(Path(self.tmp.name) / 'other.xlsx', rows=[row('OD1', 'DMW', 'Ceragon Radio'), row('OD2', 'IaaSP Others', 'Natural Calamity')])
+        result = parse(path, 'other.xlsx')
+        warnings = [i for i in result['report']['all_issues'] if i['severity'] == 'warning']
+        self.assertEqual([i['code'] for i in warnings], ['sub_bucket_not_approved', 'sub_bucket_not_approved'])
+        self.assertTrue(all('not an approved Sub Bucket' in i['message'] and 'spelling' not in i['message'].lower() for i in warnings))
+        self.assertEqual({r['bucket_2'] for r in result['rows']}, {'Ceragon Radio', 'Natural Calamity'})  # kept as uploaded, not corrected
+
+    def test_others_under_iaasp_power_is_accepted_with_a_sub_bucket_warning(self):
+        # "Others" is not one of IaaSP Power's Sub Buckets nor any other's: the record is kept (a warning, never a rejection).
+        self.assertEqual(taxonomy.resolve('IaaSP Power', 'Others'), taxonomy.Resolution('IaaSP Power', None, 'final_only'))
+
+    def test_an_approved_sub_bucket_under_another_final_bucket_is_a_classification_mismatch(self):
+        self.assertEqual(taxonomy.resolve('BSNL Media', 'SSA OFC'), taxonomy.Resolution('BSNL Media', None, 'mismatch', ('BSNL OFC',)))
+        self.assertEqual(taxonomy.resolve('IaaSP Power', 'EB Cable fault').other_final_buckets, ('IaaSP Others',))
+        self.assertEqual(taxonomy.resolve('Others', 'Fluctuation').other_final_buckets, ('BSNL Media', 'DMW', 'HFCL'))
+        for parent in ('BSNL Media', 'DMW', 'HFCL'):
+            self.assertEqual(taxonomy.resolve(parent, 'Fluctuation').status, 'approved')
+
+    def test_matching_ignores_surrounding_spaces_and_case_only_and_never_renames(self):
+        self.assertEqual(taxonomy.resolve('  iaasp power ', ' ccu FAULT '), taxonomy.Resolution('IaaSP Power', 'CCU fault', 'approved'))
+        self.assertEqual(taxonomy.resolve('BSNL-OFC', 'SSA OFC').status, 'unapproved')  # punctuation is not ignored
+        self.assertEqual(taxonomy.resolve('BSNL OFC', 'JCNL OFC').status, 'final_only')  # other words: not "JCNL"
+        self.assertEqual(taxonomy.resolve('Vsat', 'Vsat').status, 'unapproved')
+        self.assertEqual(taxonomy.resolve('Other Media', '').status, 'unapproved')  # not one of the 10
+
+    def test_blank_values(self):
+        self.assertEqual(taxonomy.resolve('-', '').status, 'blank')  # no Final Bucket: rejected at upload
+        self.assertIsNone(taxonomy.resolve('', 'Fluctuation').final_bucket)  # a blank is never Others
+        self.assertEqual(taxonomy.resolve('TCS', '-'), taxonomy.Resolution('TCS', None, 'blank'))  # Sub Bucket blank: a warning
+
+    def test_uploads_validate_against_the_taxonomy_and_keep_the_values_as_uploaded(self):
+        day = datetime(2026, 10, 21)
+        row = lambda site, final, b2: [day, '4G Satu', 'Odisha', site, 'S', '', '', 'Yes', 5, final, b2, 'cause']  # noqa: E731
+        path = workbook(Path(self.tmp.name) / 'tax.xlsx', rows=[
+            row('OD1', 'Iaasp Power', 'CCU FAULT'), row('OD2', 'DMW', 'Fluctuation'), row('OD3', 'Others', 'Flacuation'),
+            row('OD4', 'Vsat', 'Vsat'), row('OD5', 'TCS', '-'), row('OD6', 'BSNL Media', 'SSA OFC'), row('OD7', 'IaaSP Power', 'Others'),
+            row('OD8', 'DMW', 'Ceragoan Radio'), row('OD9', 'IaaSP Others', 'Natural Clamity'), row('OD10', '', 'BBU')])
+        report = parse(path, 'tax.xlsx')
+        parsed, r = report['rows'], report['report']
+        stored = {x['site_id']: (x['final_bucket'], x['bucket_2']) for x in parsed}
+        self.assertEqual(stored, {'OD1': ('Iaasp Power', 'CCU FAULT'), 'OD2': ('DMW', 'Fluctuation'), 'OD3': ('Others', 'Flacuation'),
+                                  'OD5': ('TCS', '-'), 'OD7': ('IaaSP Power', 'Others'), 'OD8': ('DMW', 'Ceragoan Radio'),
+                                  'OD9': ('IaaSP Others', 'Natural Clamity')})  # as uploaded: nothing renamed
+        self.assertEqual((r['valid_rows'], r['rejected_rows']), (7, 3))
+        errors = {i['site_id']: i['code'] for i in r['all_issues'] if i['severity'] == 'error'}
+        self.assertEqual(errors, {'OD4': 'final_bucket_not_approved', 'OD6': 'sub_bucket_classification_mismatch', 'OD10': 'missing_final_bucket'})
+        self.assertEqual(r['classification_mismatches'], [{'final_bucket': 'BSNL Media', 'value': 'SSA OFC', 'belongs_to': ['BSNL OFC'],
+                                                           'rows': 1, 'example_rows': [7]}])
+        warnings = {i['site_id']: i['code'] for i in r['all_issues'] if i['severity'] == 'warning' and i['code'].startswith('sub_bucket')}
+        self.assertEqual(warnings, {'OD3': 'sub_bucket_not_approved', 'OD5': 'sub_bucket_missing', 'OD7': 'sub_bucket_not_approved'})
+        self.assertEqual(r['classification'], {'approved': 4, 'final_only': 2, 'unapproved': 0, 'blank': 1})
+        self.assertNotIn('bucket_spelling_approved', r['issue_counts'])
 
 
-class CorrectionTests(RcaTestCase):
-    def test_only_certain_corrections_are_written_with_history_and_a_rerun_changes_nothing(self):
-        fixable = record('Iaasp Others', 'IAASP LINK', site='OD1')
-        final_only = record('Iaasp Power', 'BB', site='OD2')
-        ambiguous = record('Others', 'Flacuation', site='OD3')
-        correct = record('BSNL OFC', 'SSA OFC', site='OD4')
-        blank = record('-', '', site='OD5')
-        untouched = {r.pk: (r.reporting_date, r.project, r.circle, r.site_id, r.outage_minutes, r.rca_text) for r in RcaRecord.objects.all()}
+class ReportCommandTests(RcaTestCase):
+    def test_the_command_reports_the_taxonomy_status_and_changes_nothing(self):
+        record('Iaasp Others', 'IAASP LINK', site='OD1')
+        record('BSNL Media', 'SSA OFC', site='OD2')
+        record('Vsat', 'Vsat', site='OD3')
+        before = list(RcaRecord.objects.order_by('id').values_list('final_bucket', 'bucket_2', 'final_bucket_key', 'bucket_2_key'))
         plan = {(i['final_bucket'], i['bucket_2']): i for i in rca_bucketization.plan()}
-        self.assertEqual((plan[('Others', 'Flacuation')]['status'], plan[('Others', 'Flacuation')]['correction']), ('final_only', False))
-        result = rca_bucketization.apply()
-        self.assertEqual(result, {'corrected': 2, 'approved_now': 1, 'already_correct': 1, 'unresolved': 3})
-        for rec, expected in ((fixable, ('IaaSP Others', 'IaaSP Link')), (final_only, ('IaaSP Power', 'BB')), (ambiguous, ('Others', 'Flacuation')),
-                              (correct, ('BSNL OFC', 'SSA OFC')), (blank, ('-', ''))):
-            rec.refresh_from_db()
-            self.assertEqual((rec.final_bucket, rec.bucket_2), expected)
-        fixable.refresh_from_db()
-        self.assertEqual((fixable.final_bucket_key, fixable.bucket_2_key), ('iaasp others', 'iaasp link'))
-        event = RcaEvent.objects.get(record=fixable, action='classification_corrected')
-        self.assertEqual(event.changes['final_bucket'], {'from': 'Iaasp Others', 'to': 'IaaSP Others'})
-        self.assertEqual({r.pk: (r.reporting_date, r.project, r.circle, r.site_id, r.outage_minutes, r.rca_text) for r in RcaRecord.objects.all()}, untouched)
-        self.assertEqual(RcaRecord.objects.count(), 5)  # nothing deleted
-        again = rca_bucketization.apply()
-        self.assertEqual((again.get('corrected', 0), RcaEvent.objects.filter(action='classification_corrected').count()), (0, 2))
-
-    def test_the_command_is_a_dry_run_unless_told_to_apply(self):
-        rec = record('HFCl', 'HFCL Radio')
+        self.assertEqual(plan[('Iaasp Others', 'IAASP LINK')]['status'], 'approved')
+        self.assertEqual((plan[('BSNL Media', 'SSA OFC')]['status'], plan[('BSNL Media', 'SSA OFC')]['sub_bucket_belongs_to']), ('mismatch', 'BSNL OFC'))
+        self.assertEqual(plan[('Vsat', 'Vsat')]['status'], 'unapproved')
         out = StringIO()
         call_command('rca_bucketization', stdout=out)
-        rec.refresh_from_db()
-        self.assertEqual(rec.final_bucket, 'HFCl')
-        self.assertIn('Dry run', out.getvalue())
-        call_command('rca_bucketization', '--apply', stdout=StringIO())
-        rec.refresh_from_db()
-        self.assertEqual(rec.final_bucket, 'HFCL')
+        self.assertIn('Report only: nothing was changed.', out.getvalue())
+        self.assertEqual(list(RcaRecord.objects.order_by('id').values_list('final_bucket', 'bucket_2', 'final_bucket_key', 'bucket_2_key')), before)
+        self.assertFalse(RcaEvent.objects.exists())
 
 
 class DatabaseSummaryTests(RcaTestCase):
@@ -125,8 +176,12 @@ class DatabaseSummaryTests(RcaTestCase):
         self.assertFalse(vsat['approved'])
         options = self.options()
         self.assertEqual((options['projects'], options['dates']), (['4G Saturation', 'LWE'], ['2026-10-21', '2026-10-22']))
+        # The dropdowns offer exactly the taxonomy the validation uses: the 10 Final Buckets and their Sub Buckets.
         self.assertEqual(options['classification'], taxonomy.classification())
-        self.assertEqual([o['label'] for o in options['final_buckets']][-1:], ['Vsat'])  # unapproved after the approved ones
+        self.assertEqual([o['label'] for o in options['final_buckets']], list(EXPECTED))
+        subs = {o['label']: o['final_buckets'] for o in options['bucket_2'] if not o['unclassified']}
+        self.assertEqual(subs, {c: [f for f, cs in EXPECTED.items() if c in cs] for cs in EXPECTED.values() for c in cs})
+        self.assertNotIn('Vsat', [o['label'] for o in options['final_buckets']])  # a stored unapproved value is not offered
         dmw = next(i for i in data['bucket_2'] if i['final_bucket'] == 'DMW')
         self.assertEqual(self.summary(**dmw['filter'])['kpis']['records'], 1)  # a pair's filter selects exactly that pair
         self.assertEqual(self.summary(project='LWE')['kpis']['records'], 1)
@@ -152,7 +207,8 @@ class DatabaseSummaryTests(RcaTestCase):
     def test_no_records_means_empty_results_never_sample_data(self):
         data = self.summary()
         self.assertEqual((data['kpis']['records'], data['final_buckets'], data['bucket_2'], data['circles'], data['dates']), (0, [], [], [], []))
-        self.assertEqual((self.options()['dates'], self.options()['final_buckets']), ([], []))
+        # The dropdowns still offer the approved taxonomy (it never comes from the records).
+        self.assertEqual((self.options()['dates'], [o['label'] for o in self.options()['final_buckets']]), ([], list(EXPECTED)))
 
     def test_in_postgresql_mode_no_workbook_is_read(self):
         AppSetting.objects.update_or_create(key='dashboard_data_source', defaults={'value': 'database'})

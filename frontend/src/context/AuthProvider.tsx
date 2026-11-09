@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AUTH_EVENT, devSignIn as apiDevSignIn, fetchMe, signIn as apiSignIn, signOut as apiSignOut, type AuthEvent } from '../services/api';
+import { AUTH_EVENT, fetchMe, signIn as apiSignIn, signOut as apiSignOut, type AuthEvent } from '../services/api';
 import type { AuthUser } from '../types';
 import { AuthContext, type AuthContextValue } from './auth';
 
@@ -43,14 +43,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return me;
   }, []);
 
-  const devSignIn = useCallback(async () => {
-    const me = await apiDevSignIn();
-    setUserState(me);
-    setStatus('signed_in');
-    setNotice(null);
-    return me;
-  }, []);
-
   const signOut = useCallback(async () => {
     try {
       await apiSignOut();
@@ -62,6 +54,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setUser = useCallback((me: AuthUser) => setUserState(me), []);
-  const value = useMemo(() => ({ status, user, notice, signIn, devSignIn, signOut, setUser }), [status, user, notice, signIn, devSignIn, signOut, setUser]);
+  const value = useMemo(() => ({ status, user, notice, signIn, signOut, setUser }), [status, user, notice, signIn, signOut, setUser]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

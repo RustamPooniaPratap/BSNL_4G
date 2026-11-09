@@ -112,9 +112,7 @@ export function RcaImportPreview({ batch, busy, onCommit, onDiscard }: {
           {Object.entries(r.new_final_buckets).map(([label, count]) => `“${label}” (${formatNumber(count)})`).join(', ')}.
         </p>
       )}
-      {(r.sites_with_several_rows ?? 0) > 0 && (
-        <p className="text-xs text-muted-foreground">{formatNumber(r.sites_with_several_rows!)} sites have more than one RCA row on a date; each row is a separate record (several outages).</p>
-      )}
+      <ValidationGroups r={r} />
       <div className="space-y-1 text-sm">
         <h3 className="font-semibold">Validation</h3>
         <p className="text-xs text-muted-foreground">
@@ -172,6 +170,51 @@ export function RcaImportPreview({ batch, busy, onCommit, onDiscard }: {
         </div>
       )}
     </Card>
+  );
+}
+
+const rowsText = (rows: number[], total: number) => `row${rows.length === 1 ? '' : 's'} ${rows.join(', ')}${total > rows.length ? ', …' : ''}`;
+
+/** The validation priorities: duplicates and Final Bucket reject rows; Sub Bucket and RCA description never block. */
+function ValidationGroups({ r }: { r: NonNullable<RcaImportBatch['report']> }) {
+  const dup = r.duplicates;
+  const finals = r.final_bucket_problems ?? [];
+  const subs = r.sub_bucket_warnings;
+  return (
+    <div className="space-y-2 text-xs" aria-label="Validation priorities">
+      {dup && dup.rows > 0 && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+          <p><span className="font-semibold">{formatNumber(dup.rows)} duplicate rows rejected</span> ({formatNumber(dup.groups)} duplicate groups, {formatNumber(dup.sites)} sites;
+            {' '}{formatNumber(dup.identical_rows)} identical, {formatNumber(dup.differing_rows)} with another RCA description, outage or other column).
+            A duplicate has the same Site ID, date, Final Bucket and Sub Bucket as an earlier row; the first row is kept. The full list is in the validation report.</p>
+          <ul className="mt-1 space-y-0.5">
+            {dup.examples.slice(0, 8).map((g) => <li key={`${g.project}|${g.site_id}|${g.reporting_date}|${g.final_bucket}|${g.sub_bucket}`}>{g.site_id} ({g.project}), {formatDate(g.reporting_date)}, {g.final_bucket} / {g.sub_bucket || 'blank'}: kept row {g.first_row}, rejected {rowsText(g.rejected_rows.slice(0, 5), g.rejected_rows.length)}</li>)}
+          </ul>
+        </div>
+      )}
+      {finals.length > 0 && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+          <p className="font-semibold">{formatNumber(r.final_bucket_error_rows ?? 0)} rows with a missing or unapproved Final Bucket: the workbook cannot be imported until they are corrected.</p>
+          <ul className="mt-1 space-y-0.5">
+            {finals.map((p) => <li key={p.code + p.value}>“{p.value || 'blank'}”: {formatNumber(p.rows)} rows ({rowsText(p.example_rows, p.rows)})</li>)}
+          </ul>
+        </div>
+      )}
+      {subs && subs.rows > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <p><span className="font-semibold">{formatNumber(subs.rows)} Sub Bucket warnings</span> ({formatNumber(subs.not_approved_rows)} not an approved sub-bucket of their Final Bucket, {formatNumber(subs.missing_rows)} blank). Kept as written; they do not block the import.</p>
+          <ul className="mt-1 space-y-0.5">
+            {subs.values.slice(0, 8).map((p) => <li key={p.final_bucket + p.code + p.value}>{p.final_bucket} / “{p.value || 'blank'}”: {formatNumber(p.rows)} rows ({rowsText(p.example_rows, p.rows)})</li>)}
+          </ul>
+        </div>
+      )}
+      {(r.sites_with_several_records ?? 0) > 0 && (
+        <p className="text-muted-foreground">{formatNumber(r.sites_with_several_records!)} sites have more than one RCA record on a date, each with another Final Bucket or Sub Bucket.</p>
+      )}
+      {(r.rca_description_warnings ?? 0) > 0 && (
+        <p className="text-muted-foreground">{formatNumber(r.rca_description_warnings!)} rows have a blank or placeholder RCA description: kept as written; they do not block the import.</p>
+      )}
+    </div>
   );
 }
 

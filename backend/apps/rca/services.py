@@ -41,6 +41,7 @@ from rest_framework.exceptions import ValidationError
 
 
 from . import taxonomy
+from .parser import text_key
 
 from . import sitescope
 
@@ -248,23 +249,18 @@ def options(pairs=None) -> dict:
 
     qs = in_scope(pairs)
 
-    # Values present in the records (the filters only offer what can match), each flagged against the approved
-
-    # classification: a Final Bucket by its name, a Bucket - 2 if it is an approved sub-bucket of some Final Bucket.
-
-    approved_children = {taxonomy.match_key(c) for children in taxonomy.APPROVED.values() for c in children}
-
-    approved = {'final_bucket': lambda v: taxonomy.is_approved_final(v), 'bucket_2': lambda v: taxonomy.match_key(v) in approved_children}
-
-    buckets = lambda key, label: [  # noqa: E731
-
-        {'value': k or UNCLASSIFIED, 'label': v if k else 'Unclassified (blank or "-")', 'unclassified': not k,
-
-         'approved': bool(k) and approved[label](v)}
-
-        for k, v in sorted(_labels(qs, key, label).items(), key=lambda kv: (kv[0] == '', not approved[label](kv[1]), kv[1].casefold()))
-
-    ]
+    # The Final Bucket and Sub Bucket filters offer the approved taxonomy only (apps.rca.taxonomy), with the approved names.
+    # A Sub Bucket lists the Final Buckets it belongs to ("Fluctuation": BSNL Media, DMW and HFCL); blank Sub Buckets
+    # (a warning at upload, never a category) keep their own "Unclassified" choice.
+    final_buckets = [{'value': text_key(f), 'label': f, 'unclassified': False, 'approved': True} for f in taxonomy.APPROVED]
+    sub_buckets: dict[str, dict] = {}
+    for final, children in taxonomy.APPROVED.items():
+        for child in children:
+            item = sub_buckets.setdefault(text_key(child), {'value': text_key(child), 'label': child, 'unclassified': False,
+                                                            'approved': True, 'final_buckets': []})
+            item['final_buckets'].append(final)
+    bucket_2 = [*sub_buckets.values(), {'value': UNCLASSIFIED, 'label': 'Unclassified (blank or "-")', 'unclassified': True, 'approved': False,
+                                        'final_buckets': []}]
 
     return {
 
@@ -282,9 +278,9 @@ def options(pairs=None) -> dict:
 
                     qs.values_list('project', 'circle', 'circle_raw').distinct().order_by('project', 'circle')],
 
-        'final_buckets': buckets('final_bucket_key', 'final_bucket'),
+        'final_buckets': final_buckets,
 
-        'bucket_2': buckets('bucket_2_key', 'bucket_2'),
+        'bucket_2': bucket_2,
 
         'categories': [{'value': str(c.pk), 'label': c.name} for c in RcaCauseCategory.objects.all()],
 
@@ -494,6 +490,10 @@ def summary(params, pairs=None) -> dict:
 
             i['approved'] = key == 'final_bucket_key' and not i['unclassified'] and taxonomy.is_approved_final(i['label'])
 
+            if i['approved']:  # shown with the approved name; the uploaded spellings stay listed as variants
+
+                i['label'] = taxonomy.approved_final(i['label'])
+
         # Technical causes first (ranked), then RCA-not-applicable groups, then unclassified.
 
         return sorted(items, key=lambda i: (i['unclassified'], i['rca_not_applicable'], -i['records'], i['label'].casefold()))
@@ -522,7 +522,11 @@ def summary(params, pairs=None) -> dict:
 
             final, child = finals.get(fk, ''), children.get(ck, '')
 
-            status = taxonomy.resolve(final, child).status if ck else 'blank'
+            resolved = taxonomy.resolve(final, child)
+
+            status = resolved.status if ck else 'blank'
+
+            final, child = resolved.final_bucket or final, resolved.bucket_2 or child  # approved names where they match
 
             items.append({'key': f'{fk or UNCLASSIFIED}||{ck or UNCLASSIFIED}', 'label': f'{child} · {final or "no Final Bucket"}' if ck else
 
@@ -542,7 +546,7 @@ def summary(params, pairs=None) -> dict:
 
     for r in qs.values('final_bucket', 'bucket_2').annotate(n=Count('id')):
 
-        pair_status[taxonomy.resolve(r['final_bucket'], r['bucket_2']).status] += r['n']
+        pair_status[taxonomy.count_status(taxonomy.resolve(r['final_bucket'], r['bucket_2']).status)] += r['n']
 
 
 

@@ -1,12 +1,12 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { CircleAlert, Eye, EyeOff, FlaskConical, Info, Loader2 } from 'lucide-react';
+import { CircleAlert, Eye, EyeOff, Info, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '../../context/auth';
-import { ApiError, fetchDevLogin } from '../../services/api';
+import { ApiError } from '../../services/api';
 
 /** Fibre-route style lines with nodes: decoration only. */
 function RouteArtwork() {
@@ -59,7 +59,7 @@ export function AuthShell({ title, subtitle, children }: { title: string; subtit
 }
 
 export function LoginPage() {
-  const { status, user, notice, signIn, devSignIn } = useAuth();
+  const { status, user, notice, signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? '/portfolio';
@@ -70,13 +70,6 @@ export function LoginPage() {
   const [forgot, setForgot] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Development bypass: offered only when the backend says it is enabled for this computer.
-  const [bypass, setBypass] = useState<{ username: string; role: string } | null>(null);
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchDevLogin(controller.signal).then((b) => setBypass(b?.enabled ? b : null)).catch(() => setBypass(null));
-    return () => controller.abort();
-  }, []);
 
   if (status === 'signed_in' && user) return <Navigate to={user.must_change_password ? '/change-password' : from} replace />;
 
@@ -93,19 +86,6 @@ export function LoginPage() {
       setError(e instanceof ApiError && e.status === 429 ? 'Too many sign-in attempts. Wait a minute and try again.'
         : e instanceof ApiError && e.status !== 0 ? 'Invalid email ID or password.' : (e as Error).message);
       setPassword('');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const continueWithoutSignIn = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const me = await devSignIn();
-      navigate(me.must_change_password ? '/change-password' : from, { replace: true });
-    } catch (e) {
-      setError((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -151,17 +131,6 @@ export function LoginPage() {
         <Button type="submit" className="h-11 w-full bg-sky-700 text-base hover:bg-sky-800" disabled={busy || status === 'loading'}>
           {busy && <Loader2 className="animate-spin" />} Sign in
         </Button>
-        {bypass && (
-          <div className="space-y-2 rounded-lg border border-dashed border-amber-300 bg-amber-50/60 p-3">
-            <Button type="button" variant="outline" className="h-10 w-full" disabled={busy} onClick={() => { void continueWithoutSignIn(); }}>
-              <FlaskConical /> Continue without signing in
-            </Button>
-            <p className="text-xs text-amber-900">
-              Development only: signs in as <strong>{bypass.username}</strong> ({bypass.role === 'admin' ? 'Admin' : bypass.role === 'noc_lead' ? 'NOC Lead' : 'CI'}). Shown only on this
-              computer while the backend runs in debug mode with DEV_LOGIN_BYPASS on.
-            </p>
-          </div>
-        )}
       </form>
     </AuthShell>
   );

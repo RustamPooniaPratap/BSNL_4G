@@ -1,11 +1,12 @@
 """All KPI's: read-only calculations for the optional All KPI's module (see README.md in this folder).
 
 Everything is computed from existing data through existing interfaces, without changing them:
-- Sites and daily outage: the dashboard dataset (``uptimedb.datasource.current_dataset``), limited to the user's
-  project/circle pairs (``dashboard.scope.restrict``). Daily values of earlier months come from its ``daily_history``,
-  so weekly and monthly figures are derived from the canonical daily records (never ``SiteMonthlyPerformance`` totals).
-- O&M Start: ``SiteMonthlyPerformance.om_start`` of each day's own month, read directly. A month without O&M Start
-  values is "not available": no other month's flags are carried forward.
+- Sites and daily outage: the new data layer (``sitedata.dashboard_source``: Consolidation Matrix sites, the central
+  daily table, complete continuous reporting dates), limited to the user's Dashboard project/circle pairs. Weekly and
+  monthly figures are derived from the daily records. The old uptimedb tables are not read.
+- On-Air and O&M Start: the matrix effective dates of each site, day by day: a site counts as On-Air (availability,
+  buckets) and as O&M Start (USD, NSLA) from its date on, never for days before it. Without O&M Start dates in the
+  matrix the O&M-dependent values are not available (never estimated).
 - Shared formulas reused as they are: ``metrics.uptime_pct`` (outage-weighted availability), ``metrics.bucket_ids``
   (threshold buckets), ``metrics.WEEKS``, ``metrics.team_names``; RCA: ``rca.services.filtered`` and the approved
   Final Bucket mapping ``rca.breakdown.FINAL_BUCKET_CATEGORIES``.
@@ -64,10 +65,11 @@ def _date(value: str | None, name: str) -> date | None:
 
 
 def dataset(user):
-    """The dashboard dataset limited to the user's Dashboard View pairs (the same rule as every dashboard page)."""
+    """The new layer's dataset ("all" variant) for the user's Dashboard pairs; the effective dates are applied per day
+    in per_site."""
     from apps.accounts.access import pairs_for
-    from apps.uptimedb.datasource import current_dataset
-    return restrict(current_dataset(), pairs_for(user, 'dashboard', 'view'))
+    from apps.sitedata import dashboard_source
+    return dashboard_source.dataset(pairs_for(user, 'dashboard', 'view'))
 
 
 def daily_columns(ds) -> dict[date, tuple[np.ndarray, int]]:
@@ -134,58 +136,51 @@ def outage_block(ds, rows: np.ndarray, dates: list[date]) -> np.ndarray:
     return np.column_stack([cols[d][0][rows, cols[d][1]] for d in dates])
 
 
-def om_start_by_month(ds, months: set[date]) -> dict[date, dict[tuple, bool] | None]:
-    """O&M Start of each site for each month, from that month's own Site Master monthly values (None: no data).
-    Kept on the dataset object, which is rebuilt after every import, so a month is read once per dataset."""
-    from apps.uptimedb.models import SiteMonthlyPerformance
-    memo = ds._memo.setdefault('allkpis_om_start', {})
-    for month in months - memo.keys():
-        rows = SiteMonthlyPerformance.objects.filter(month=month, om_start__isnull=False).values_list(
-            'site__project', 'site__circle', 'site__site_key', 'om_start')
-        memo[month] = {(p, c, k): v for p, c, k, v in rows} or None
-    return {m: memo[m] for m in months}
+def _effective(sites: pd.DataFrame, column: str, dates: list[date]) -> np.ndarray:
+    """[sites x dates]: True on the dates on or after the site's matrix date (``on_air_date`` / ``om_start_date``)."""
+    starts = sites[column].tolist() if column in sites else [None] * len(sites)
+    return np.array([[bool(s) and d >= s for d in dates] for s in starts], dtype=bool).reshape(len(sites), len(dates))
 
 
 def per_site(ds, rows: np.ndarray, dates: list[date]) -> pd.DataFrame:
     """One row per site: its outage over the period, reported days, USD / NSLA flags and its period availability."""
     sites = ds.sites.iloc[rows]
-    block = outage_block(ds, rows, dates)
-    months = {d.replace(day=1) for d in dates}
-    om = om_start_by_month(ds, months)
-    keys = list(zip(sites['report_type'], sites['circle'], sites['site_id'].map(site_key)))
-    # O&M Start = Yes for the site in each day's own month (False when that month has no O&M Start data).
-    day_flags = [om[d.replace(day=1)] or {} for d in dates]
-    om_yes = np.array([[bool(f.get(k)) for f in day_flags] for k in keys], dtype=bool).reshape(len(rows), len(dates))
-    reported = ~np.isnan(block)
+    all_values = outage_block(ds, rows, dates)
+    # Effective dates (Consolidation Matrix): On-Air for availability and buckets, O&M Start for USD and NSLA.
+    on_yes = _effective(sites, 'on_air_date', dates)
+    om_yes = _effective(sites, 'om_start_date', dates)
+    down_all = ~np.isnan(all_values) & (np.nan_to_num(all_values, nan=0.0) > 0)
     with np.errstate(invalid='ignore'):
-        down = reported & (block > 0)
-        availability = np.round(100.0 * (1.0 - block / MINUTES_PER_DAY), 6)
-        below = reported & (availability < NSLA_THRESHOLD)
-    on_air = sites['on_air'].to_numpy(dtype=bool)
+        below_all = ~np.isnan(all_values) & (np.round(100.0 * (1.0 - all_values / MINUTES_PER_DAY), 6) < NSLA_THRESHOLD)
+    block = np.where(on_yes, all_values, np.nan)  # a site's values before its On-Air date are left out
+    reported = ~np.isnan(block)
+    # On-Air / O&M Start in the period: on its last date (the current flag without dates).
+    on_air = on_yes[:, -1] if len(dates) else sites['on_air'].to_numpy(dtype=bool)
     out_sum = np.where(reported, block, 0.0).sum(axis=1)
     days = reported.sum(axis=1)
     with np.errstate(invalid='ignore', divide='ignore'):
         site_avail = np.where(days > 0, 100.0 * (1.0 - out_sum / (MINUTES_PER_DAY * np.maximum(days, 1))), np.nan)
-    latest_month = max(months) if months else None
-    latest_flags = om.get(latest_month) if latest_month else None
+    om_known = bool(getattr(ds, 'has_om_start', False)) and 'om_start_date' in sites
+    om_last = om_yes[:, -1] if len(dates) else np.zeros(len(rows), dtype=bool)
     return pd.DataFrame({
         'row': rows, 'site_id': sites['site_id'].to_numpy(), 'site_name': sites['site_name'].to_numpy(),
         'project': sites['report_type'].to_numpy(), 'circle': sites['circle'].to_numpy(),
         'ci': team_names(sites['ci_name']).to_numpy(), 'ie': team_names(sites['ie_name']).to_numpy(), 'oa': sites['oa'].to_numpy(),
         'on_air': on_air, 'outage': out_sum, 'days': days, 'expected_days': len(dates), 'availability': site_avail,
         'bucket': bucket_ids(site_avail),
-        # O&M Start in the latest month of the period (None: that month has no O&M Start data).
-        'om_start': [None if latest_flags is None else bool(latest_flags.get(k)) for k in keys],
-        'usd': (down & om_yes).any(axis=1), 'nsla': (below & om_yes).any(axis=1),
+        # O&M Start on the last date of the period (None: the matrix has no O&M Start dates).
+        'om_start': [bool(v) if om_known else None for v in om_last],
+        'usd': (down_all & om_yes).any(axis=1), 'nsla': (below_all & om_yes).any(axis=1),
     })
 
 
 def om_status(ds, dates: list[date]) -> dict:
+    """O&M Start availability for the period: from the matrix O&M Start dates (all months, or none)."""
     months = sorted({d.replace(day=1) for d in dates})
-    om = om_start_by_month(ds, set(months))
-    missing = [m for m in months if om[m] is None]
+    known = bool(getattr(ds, 'has_om_start', False))
+    missing = [] if known else months
     return {'months': [m.strftime('%Y-%m') for m in months], 'missing_months': [m.strftime('%b %Y') for m in missing],
-            'available': bool(months) and len(missing) < len(months), 'complete': not missing}
+            'available': bool(months) and known, 'complete': known}
 
 
 def aggregate(table: pd.DataFrame, om: dict) -> dict:
@@ -246,7 +241,6 @@ def summary(params, user) -> dict:
         'previous_period': {'start': p_start.isoformat(), 'end': p_end.isoformat(), 'label': period_label(p_start, p_end), 'days_with_data': len(p_dates)},
         'current': current, 'previous': previous, 'om_start': om, 'previous_om_start': p_om,
         'pending': {
-            'site_handover_status': 'Pending clarification: Site Handover Status is not defined yet.',
             'rca_ownership': 'Not configured: no approved mapping from Final Buckets to Own / Customer / Third Party / Pending.',
         },
     }

@@ -145,6 +145,8 @@ export interface WeekSummary {
   end: string;
   days_in_week: number;
   days_reported: number;
+  /** Every day of the week is reported. An incomplete week (in progress) has no value: there is no week to date. */
+  complete?: boolean;
   uptime_pct: number | null;
   /** Percentage points versus the previous week with data. */
   change_pts: number | null;
@@ -789,66 +791,6 @@ export interface DataSourceState {
   label: string;
   options: { value: DataSourceKind; label: string }[];
   database: DatabaseCompleteness;
-}
-
-export interface ImportFileSummary {
-  filename: string;
-  checksum: string;
-  sheet: string;
-  has_project_column: boolean;
-  data_rows: number;
-  sites: number;
-  distinct_site_ids: number;
-  by_project: Record<string, number>;
-  by_circle: Record<string, number>;
-  months: Record<string, { label: string; sites_with_values: number }>;
-  daily: Record<string, { outage_columns: string; uptime_columns: string | null; dates: string[]; reported_dates: string[]; missing_values: Record<string, number>; site_day_values: number }>;
-  skipped: Record<string, number>;
-  rejected: number;
-  flagged: number;
-  issues: Record<string, { severity: 'rejected' | 'flagged'; count: number; examples: { row: number | null; site_id: string; message: string }[] }>;
-}
-
-export interface ImportComparison {
-  primary: string;
-  reconciliation: string;
-  overlapping_sites: number;
-  only_in_primary: number;
-  only_in_reconciliation: number;
-  sites_with_differences: number;
-  differences: Record<string, { count: number; examples: { circle: string; site_id: string; where: string; primary: unknown; reconciliation: unknown }[] }>;
-  dates_only_in_reconciliation: string[];
-}
-
-export interface ImportBatch {
-  id: number;
-  status: 'previewed' | 'committed' | 'failed' | 'discarded';
-  file: string;
-  checksum: string;
-  sheet: string;
-  reconciliation_file: string | null;
-  conflict_source: 'primary' | 'reconciliation' | null;
-  uploaded_at: string;
-  committed_at: string | null;
-  imported_by: string | null;
-  via: string;
-  counts: Record<string, { inserted: number; updated: number; unchanged: number } | number>;
-  rejected: number;
-  skipped: number;
-  error: string | null;
-  report?: {
-    primary: ImportFileSummary;
-    reconciliation?: ImportFileSummary;
-    comparison?: ImportComparison;
-    database_effect: { sites_in_database: number; new_sites: number; existing_sites: number; database_sites_not_in_file: number };
-    options?: { project: string | null; daily_only: boolean };
-    /** Daily-values-only import: sites that can receive values, and whether the days add up to the monthly totals. */
-    daily_effect?: {
-      months: string[]; sites_in_file: number; sites_in_database: number; sites_not_in_database: number;
-      monthly_total_checks: Record<string, { sites_compared: number; file_monthly_total_differs: number; database_monthly_total_differs: number }>;
-    };
-    already_imported?: { batch: number; committed_at: string };
-  };
 }
 
 /** O&M Head per circle from the reference sheet in Data/reference (null = no name given). */

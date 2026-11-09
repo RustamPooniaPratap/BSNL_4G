@@ -288,8 +288,8 @@ class MonthlyAndTeamTests(UploadTestCase):
         self.assertEqual(days['uptime_pct'], round(100 * (1 - 4392 / (1440 * 6)), 4))
         self.assertEqual(days['outage_minutes'], 4392)
         self.assertEqual((days['sites_below_60'], days['sites_at_or_above_98_5']), (2, 0))  # Alpha 50%, Charlie 0%; Bravo 97.5%
-        week = self.period(period='weeks', weeks='1').json()
-        self.assertEqual((week['label'], week['days_reported']), ('Week 1', 3))
+        week = self.period(period='weeks', weeks='1').json()  # in progress: only complete weeks count
+        self.assertEqual((week['label'], week['days_reported'], week['uptime_pct']), ('Week 1 (complete weeks only)', 0, None))
         sep = self.period(period='months', months='2026-09').json()
         # Sep-26: 4,320 minutes over 2 sites with a value x 30 days; Charlie (blank) is not counted.
         self.assertEqual((sep['label'], sep['days_reported'], sep['sites_reported']), ('Sep-26', 0, 2))

@@ -16,7 +16,7 @@ export interface KpiCardSpec {
   higherIsBetter?: boolean | null;
   /** Short context under the value; for an unavailable value, why it is unavailable. */
   note?: string;
-  /** Informational value (e.g. pending clarification): shown in the neutral style. */
+  /** Informational value (e.g. not configured): shown in the neutral style. */
   muted?: boolean;
   /** Status of the value (status.ts); neutral when omitted. */
   tone?: Tone;
@@ -92,7 +92,8 @@ export function KpiGroup({ title, icon: Icon, cards, period, compareLabel, onOpe
         </h2>
         <p className="text-[11px] text-muted-foreground">{period}</p>
       </div>
-      <div className="grid auto-rows-fr grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {/* Three cards fill three columns, so a group never ends with an empty slot. */}
+      <div className={cn('grid auto-rows-fr grid-cols-1 gap-3 sm:grid-cols-2', cards.length === 3 ? 'xl:grid-cols-3' : 'xl:grid-cols-4')}>
         {cards.map((c) => <KpiCard key={c.label} spec={c} period={period} compareLabel={compareLabel} onOpen={onOpen} />)}
       </div>
     </section>

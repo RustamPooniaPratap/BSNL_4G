@@ -209,9 +209,12 @@ class ApiTests(ImportTestCase):
         switched = self.client.put(reverse('data-source'), {'source': 'database', 'confirm': True, 'acknowledge_warnings': True},
                                    content_type='application/json')
         self.assertEqual(switched.json()['active'], 'database')
-        summary = self.client.get(reverse('dashboard-summary')).json()
-        self.assertTrue(summary['source']['workbook'].startswith('PostgreSQL'))
-        self.assertTrue(self.client.get(reverse('dashboard-workbook')).json()['active']['workbook'].startswith('PostgreSQL'))
+        # The dashboard pages read only the new data layer (sitedata): the imported uptimedb tables are never used, whatever
+        # this legacy switch says. Here the new layer is empty, so the page reports that instead of showing old data.
+        summary = self.client.get(reverse('dashboard-summary'))
+        self.assertEqual(summary.status_code, 503)
+        self.assertIn('new data layer', summary.json()['error'])
+        self.assertIsNone(self.client.get(reverse('dashboard-workbook')).json()['active'])
 
     def test_ci_cannot_import_or_switch_the_source_but_sees_which_is_active(self):
         self.client.force_login(portal_user('ravi.ci', 'ci'))

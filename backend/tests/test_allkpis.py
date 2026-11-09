@@ -1,16 +1,13 @@
-"""All KPI's (optional module, apps/allkpis): approved definitions on an isolated test workbook and test database."""
-import tempfile
-from datetime import date
-from pathlib import Path
+"""All KPI's (optional module, apps/allkpis): approved definitions on the new data layer (sitedata), test database only."""
+from datetime import date, datetime
 
-from django.test import override_settings
 from django.urls import reverse
 
-from apps.dashboard import workbook
 from apps.rca.models import RcaRecord
 from apps.rca.parser import text_key
-from apps.uptimedb.models import DataImportBatch, SiteMonthlyPerformance, UptimeSite
+from apps.sitedata import portfolio, uptime_master
 from tests.auth_helpers import SignedInTestCase, portal_user
+from tests.test_sitedata import SiteDataTestCase
 from tests.workbook_factory import write_workbook
 
 G4 = '4G Saturation'
@@ -23,31 +20,31 @@ SITES = [
     ('4G Satu.', 'RJ', 'UVRJ101', 'Rajasthan', 'Yes', 'Yes', [0, 0, 0]),
 ]
 OCT = date(2026, 10, 1)
+CIRCLES = {'MP': 'Madhya Pradesh', 'RJ': 'Rajasthan'}
 
 
-class AllKpisTests(SignedInTestCase):
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls._tmp = tempfile.TemporaryDirectory()
-        cls._override = override_settings(MASTER_WORKBOOK_PATH=str(write_workbook(Path(cls._tmp.name) / 'kpi.xlsx', SITES)))
-        cls._override.enable()
-        workbook.clear_cache()
+def matrix(om_dates=True):
+    """The Consolidation Matrix of SITES: On-Air from 2025, O&M Start dates where the site is O&M Start (the source of
+    truth for both); CI East / West alternate as in the workbook factory, one IE per circle."""
+    rows = []
+    for index, (_, circle, sid, name, _on_air, om, _) in enumerate(SITES):
+        rows.append(['4G Saturation', CIRCLES[circle], sid, name, 'B', 'O', 'D', datetime(2025, 1, 1) if om and om_dates else None,
+                     'Yes', datetime(2025, 1, 1), f'IE {circle}', 'CI East' if index % 2 == 0 else 'CI West', '', ''])
+    return rows
 
-    @classmethod
-    def tearDownClass(cls):
-        cls._override.disable()
-        workbook.clear_cache()
-        cls._tmp.cleanup()
-        super().tearDownClass()
 
+class AllKpisTests(SignedInTestCase, SiteDataTestCase):
     def setUp(self):
         super().setUp()
-        workbook.clear_cache()
-        batch = DataImportBatch.objects.create(original_filename='m.xlsx', checksum_sha256='x', sheet_name='s', stored_path='-', status='committed')
-        for _, circle, sid, _, _, om, _ in SITES:  # O&M Start for October (the Site Master's monthly values)
-            site = UptimeSite.objects.create(project=G4, circle=circle, site_id=sid, site_key=sid, on_air=True, batch=batch, source_row=1)
-            SiteMonthlyPerformance.objects.create(site=site, month=OCT, om_start=om == 'Yes', om_start_raw=om or 'No', batch=batch)
+        portfolio.clear_cache()
+        self.addCleanup(portfolio.clear_cache)
+        self.load()
+
+    def load(self, om_dates=True):
+        self.load_matrix(matrix(om_dates))
+        path = write_workbook(self.tmp / 'kpi.xlsx', SITES)
+        uptime_master.commit(uptime_master.preview(path, 'kpi.xlsx', user=self.admin), user=self.admin)
+        portfolio.clear_cache()
 
     def get(self, name, **params):
         response = self.client.get(reverse(name), params)
@@ -80,8 +77,10 @@ class AllKpisTests(SignedInTestCase):
         self.assertEqual([p['nsla_sites'] for p in days], [1, 0, 0])
 
     def test_no_o_and_m_start_data_means_not_available_never_carried_forward(self):
-        SiteMonthlyPerformance.objects.all().delete()  # test database only: October without O&M Start values
-        workbook.clear_cache()
+        # No O&M Start dates in the site master (test database only; a matrix import never blanks stored dates).
+        from apps.sitedata.models import Site
+        Site.objects.update(om_start_date=None, om_start_raw='')
+        portfolio.clear_cache()
         r = self.get('allkpis-summary', circle='MP', date_from='2026-10-01', date_to='2026-10-03')
         self.assertEqual((r['current']['om_start_sites'], r['current']['usd_sites'], r['current']['nsla_sites']), (None, None, None))
         self.assertEqual((r['om_start']['available'], r['om_start']['missing_months']), (False, ['Oct 2026']))
@@ -98,7 +97,7 @@ class AllKpisTests(SignedInTestCase):
         self.assertEqual(east['total_sites'], 2)
 
     def test_rca_uses_the_approved_final_bucket_mapping_and_ownership_is_not_configured(self):
-        for bucket in ('BBNL OFC', 'TCS', 'Unknown thing'):
+        for bucket in ('bsnl ofc', 'TCS', 'BBNL OFC'):  # BBNL OFC is a Sub Bucket, not a Final Bucket: Not mapped
             RcaRecord.objects.create(reporting_date=date(2026, 10, 2), project=G4, project_raw=G4, circle='MP', circle_raw='MP', site_id='UVMP101',
                                      site_key='UVMP101', occurrence=RcaRecord.objects.count() + 1, final_bucket=bucket, final_bucket_key=text_key(bucket),
                                      rca_text='x', rca_key='x')
@@ -121,3 +120,15 @@ class AllKpisTests(SignedInTestCase):
         self.assertEqual(self.client.get(reverse('allkpis-rca')).status_code, 403)  # no RCA Summary View
         self.client.force_login(portal_user('nobody-kpi', 'member'))
         self.assertEqual(self.client.get(reverse('allkpis-summary')).status_code, 403)
+
+    def test_no_site_handover_in_any_response(self):
+        """Site Handover is not a project concept: no All KPI's response contains site_handover_status or a handover label."""
+        import json
+        period = {'date_from': '2026-10-01', 'date_to': '2026-10-03'}
+        responses = [self.get('allkpis-filters'), self.get('allkpis-summary', **period), self.get('allkpis-trends', granularity='day', **period),
+                     self.get('allkpis-hierarchy', level='circle', **period), self.get('allkpis-sites', **period), self.get('allkpis-rca', **period)]
+        for body in responses:
+            self.assertNotIn('handover', json.dumps(body).lower())
+        pending = responses[1]['pending']
+        self.assertEqual(list(pending), ['rca_ownership'])  # the RCA ownership status stays "Not configured"
+        self.assertTrue(pending['rca_ownership'].startswith('Not configured'))

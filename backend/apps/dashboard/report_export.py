@@ -171,14 +171,16 @@ _details_cache: dict = {'key': None, 'value': None}
 
 
 def source_details(ds: Dataset) -> dict:
-    """{(project, circle, site key): {'site': {...}, 'monthly': {month: {...}}}} from the active source.
+    """{(project, circle, site key): {'site': {...}, 'monthly': {month: {...}}}}: the descriptive columns of the Up-Time
+    Report that the Dataset does not carry (contacts, OD EB working status, Solar Logic Done Date, O&M Start by month).
 
-    PostgreSQL: the imported site master and monthly records. Excel: the active workbook read with the importer's
-    parser (no database access). Used only for descriptive columns (contacts, O&M Start by month, FF counts…).
+    The dashboard's dataset (new data layer): from sitedata.Site (the Consolidation Matrix and the Uptime Master columns
+    stored with it). O&M Start by month is "Yes" when the matrix O&M Start Date is on or before the month's last day,
+    "No" otherwise (the same rule as every O&M Start figure); FF Count is not in the new layer and stays blank. A single
+    workbook's dataset (tests, the workbook check): that workbook, read with the Up-Time Report parser.
     """
-    from apps.uptimedb.datasource import DATABASE, active_source
-    if active_source() == DATABASE:
-        return _database_details()
+    if 'om_start_date' in ds.sites:
+        return _new_layer_details(ds)
     from apps.uptimedb.parser import parse_workbook
     from .workbook import resolve_workbook
     path = resolve_workbook()[0]
@@ -190,14 +192,27 @@ def source_details(ds: Dataset) -> dict:
         return _details_cache['value']
 
 
-def _database_details() -> dict:
-    from apps.uptimedb.models import SiteMonthlyPerformance, UptimeSite
-    from apps.uptimedb.parser import SITE_FIELDS
-    sites = {s['id']: s for s in UptimeSite.objects.values('id', 'site_key', *SITE_FIELDS)}
-    out = {(s['project'], s['circle'], s['site_key']): {'site': s, 'monthly': {}} for s in sites.values()}
-    by_id = {s['id']: out[(s['project'], s['circle'], s['site_key'])] for s in sites.values()}
-    for m in SiteMonthlyPerformance.objects.values('site_id', 'month', 'ff_count', 'om_start_raw', 'om_start'):
-        by_id[m['site_id']]['monthly'][m['month']] = m
+def _new_layer_details(ds: Dataset) -> dict:
+    import calendar
+
+    from apps.sitedata.models import Site
+    months = [m['start'] for m in ds.months] + [ds.dates[0]]
+    out = {}
+    for s in Site.objects.filter(reporting_scope=Site.Scope.DASHBOARD).values(
+            'technology', 'circle', 'circle_raw', 'site_key', 'on_air_raw', 'on_air_status', 'om_start_date', 'ie_contact', 'ci_contact',
+            'uptime_master_fields'):
+        fields = s['uptime_master_fields'] or {}
+        monthly = {}
+        for month in months:
+            end = month.replace(day=calendar.monthrange(month.year, month.month)[1])
+            started = bool(s['om_start_date']) and s['om_start_date'] <= end
+            monthly[month] = {'om_start_raw': 'Yes' if started else 'No', 'om_start': started, 'ff_count': None}
+        out[(s['technology'], s['circle'], s['site_key'].upper())] = {
+            'site': {'circle_raw': s['circle_raw'], 'on_air_raw': s['on_air_raw'] or s['on_air_status'],
+                     'od_eb_working_status': fields.get('OD EB working status'), 'solar_logic_done': fields.get('Solar Logic Done Date'),
+                     'ie_contact': s['ie_contact'], 'ci_contact': s['ci_contact']},
+            'monthly': monthly,
+        }
     return out
 
 

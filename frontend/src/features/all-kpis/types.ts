@@ -18,7 +18,7 @@ export interface KpiSummary {
   period: KpiPeriod | null; previous_period?: KpiPeriod;
   current: KpiValues | null; previous: KpiValues | null;
   om_start?: KpiOmStatus; previous_om_start?: KpiOmStatus;
-  pending?: { site_handover_status: string; rca_ownership: string };
+  pending?: { rca_ownership: string };
   notes?: string[];
 }
 

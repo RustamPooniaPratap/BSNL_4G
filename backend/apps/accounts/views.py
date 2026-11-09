@@ -138,40 +138,6 @@ class LoginView(APIView):
         return Response({'user': me_payload(user), 'csrf_token': get_token(request)})
 
 
-LOCAL_ADDRESSES = {'127.0.0.1', '::1'}
-
-
-def dev_login_user(request):
-    """The account the development bypass signs in as, or None when the bypass is not allowed here."""
-    if not (settings.DEBUG and settings.DEV_LOGIN_BYPASS and settings.DEV_LOGIN_USER):
-        return None
-    if request.META.get('REMOTE_ADDR') not in LOCAL_ADDRESSES:
-        return None
-    user = User.objects.filter(username=settings.DEV_LOGIN_USER, is_active=True).first()
-    return user if user is not None and role_of(user) is not None else None
-
-
-@method_decorator(csrf_protect, name='dispatch')
-class DevLoginView(APIView):
-    """Development only: sign in without a password as DEV_LOGIN_USER. 404 unless DEBUG, DEV_LOGIN_BYPASS and a local request."""
-    permission_classes = [AllowAny]
-    authentication_classes = []
-
-    def get(self, request):
-        user = dev_login_user(request)
-        if user is None:
-            raise NotFound()
-        return Response({'enabled': True, 'username': user.get_username(), 'role': role_of(user)})
-
-    def post(self, request):
-        user = dev_login_user(request)
-        if user is None:
-            raise NotFound()
-        login(request, user, backend='django.contrib.auth.backends.ModelBackend')
-        audit('login_bypass', request, login_id=user.get_username(), user_id=user.pk)
-        return Response({'user': me_payload(user), 'csrf_token': get_token(request)})
-
-
 class LogoutView(APIView):
     permission_classes = [IsSignedIn]
 

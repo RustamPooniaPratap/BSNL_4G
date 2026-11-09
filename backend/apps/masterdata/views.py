@@ -142,7 +142,7 @@ def _rows(qs: QuerySet, ds: Dataset, columns: list[Column]) -> list[dict]:
         for c, v in zip(columns, values[1:]):
             row[c.key] = v.isoformat() if isinstance(v, (date, datetime)) else v
         if ds.key == 'rca' and 'final_bucket' in row and 'bucket_2' in row:  # the approved bucketization (apps.rca.taxonomy), never a stored guess
-            row['classification'] = taxonomy.STATUS_LABELS[taxonomy.resolve(row['final_bucket'], row['bucket_2']).status]
+            row['classification'] = taxonomy.status_label(taxonomy.resolve(row['final_bucket'], row['bucket_2']).status)
         out.append(row)
     return out
 

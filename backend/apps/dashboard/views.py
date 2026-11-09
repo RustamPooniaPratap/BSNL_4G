@@ -20,19 +20,23 @@ from .upload import UploadRejected, accept_upload
 from .workbook import SHEET_NAME, SHEET_ROLES, WorkbookError, get_dataset
 
 
-def _dataset(request, action: str = 'view'):
-    """The dataset of the active source (Excel workbook or PostgreSQL), the same for every endpoint, limited to the
+def _dataset(request, action: str = 'view', scope: str | None = None):
+    """The dataset of the new data layer (apps.sitedata.dashboard_source), the same for every endpoint, limited to the
     project/circle pairs on which the user has the Dashboard permission (accounts.access): KPIs, charts, tables,
-    searches, filter options and exports never include other circles."""
-    from apps.uptimedb.datasource import current_dataset
-
-    from .scope import restrict
+    searches, filter options and exports never include other circles. ``scope`` (on_air / om_start) picks the variant
+    that counts each site from its effective date; parameters are validated on the "all" variant (same sites and dates).
+    The old uptimedb tables are never read, and nothing falls back to them."""
+    from apps.sitedata import dashboard_source
     try:
-        dataset = current_dataset()
+        dataset = dashboard_source.dataset(pairs_for(request.user, 'dashboard', action), scope)
     except WorkbookError as exc:
-        raise ServiceUnavailable(str(exc), error_code=exc.code) from exc
-    dataset = restrict(dataset, pairs_for(request.user, 'dashboard', action))
+        raise ServiceUnavailable(f'Dashboard data (new data layer) is unavailable: {exc}', error_code=exc.code) from exc
     return _team(request, dataset)
+
+
+def _scoped(request, params: dict, action: str = 'view'):
+    """The dataset variant of the validated scope (see _dataset)."""
+    return _dataset(request, action, params['selection'].scope)
 
 
 def _team(request, dataset):
@@ -63,6 +67,9 @@ def _source(dataset) -> dict:
         'loaded_at': dataset.loaded_at.isoformat(timespec='seconds'),
         'uploaded_at': dataset.uploaded_at.isoformat(timespec='seconds') if dataset.uploaded_at else None,
         'latest_reporting_date': dataset.latest_date.isoformat() if dataset.latest_date else None,
+        'data_layer': 'sitedata',
+        # Dates with data, the last continuous complete date, and dates left out (after a gap or incomplete).
+        'continuity': dataset._memo.get('continuity'),
     }
 
 
@@ -85,6 +92,7 @@ def filters_view(request):
 def summary_view(request):
     dataset = _dataset(request)
     params = _validated(SnapshotSerializer, request, dataset)
+    dataset = _scoped(request, params)
     result = metrics.summary(dataset, params['selection'], params['reporting_date'])
     return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
 
@@ -94,6 +102,7 @@ def summary_view(request):
 def trends_view(request):
     dataset = _dataset(request)
     params = _validated(TrendSerializer, request, dataset)
+    dataset = _scoped(request, params)
     result = metrics.trend(dataset, params['selection'], params['start_date'], params['end_date'])
     return Response({
         **result,
@@ -108,6 +117,7 @@ def trends_view(request):
 def breakdowns_view(request):
     dataset = _dataset(request)
     params = _validated(SnapshotSerializer, request, dataset)
+    dataset = _scoped(request, params)
     result = metrics.breakdown(dataset, params['selection'], params['reporting_date'])
     return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
 
@@ -117,6 +127,7 @@ def breakdowns_view(request):
 def records_view(request):
     dataset = _dataset(request)
     params = _validated(RecordsSerializer, request, dataset)
+    dataset = _scoped(request, params)
     table = metrics.site_table(dataset, params['selection'], params['reporting_date'])
     table = metrics.search_sites(table, params['search'], params['bucket'] or None, params['bucket_basis'])
     table = metrics.filter_team(table, params['ci_name'], params['ie_name'])
@@ -203,6 +214,7 @@ def period_view(request):
     """KPI for the trend period selected in the filter bar."""
     dataset = _dataset(request)
     params = _validated(PeriodSerializer, request, dataset)
+    dataset = _scoped(request, params)
     result = metrics.period_summary(dataset, params['selection'], dates=params['dates'],
                                     month_keys=params['month_keys'], label=params['label'])
     return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
@@ -213,6 +225,7 @@ def period_view(request):
 def thresholds_view(request):
     dataset = _dataset(request)
     params = _validated(SnapshotSerializer, request, dataset)
+    dataset = _scoped(request, params)
     result = metrics.threshold_analysis(dataset, params['selection'], params['reporting_date'],
                                         period=request.query_params.get('period') or None,
                                         compare=request.query_params.get('vs') or None)
@@ -224,6 +237,7 @@ def thresholds_view(request):
 def monthly_view(request):
     dataset = _dataset(request)
     params = _validated(MonthlySerializer, request, dataset)
+    dataset = _scoped(request, params)
     result = metrics.monthly(dataset, params['selection'], params['reporting_date'], params['months'])
     return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
 
@@ -233,6 +247,7 @@ def monthly_view(request):
 def teams_view(request):
     dataset = _dataset(request)
     params = _validated(TeamSerializer, request, dataset)
+    dataset = _scoped(request, params)
     result = metrics.team_performance(dataset, params['selection'], params['reporting_date'], params['group'])
     return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
 
@@ -243,6 +258,7 @@ def teams_view(request):
 def team_monthly_view(request):
     dataset = _dataset(request)
     params = _validated(TeamMonthlySerializer, request, dataset)
+    dataset = _scoped(request, params)
     try:
         result = metrics.team_monthly_nsla(dataset, params['selection'], params['reporting_date'], params['group'],
                                            month=params['month'] or None)
@@ -256,6 +272,7 @@ def team_monthly_view(request):
 def team_top_view(request):
     dataset = _dataset(request)
     params = _validated(TeamMonthlySerializer, request, dataset)
+    dataset = _scoped(request, params)
     try:
         result = metrics.circle_top_performers(dataset, params['selection'], params['reporting_date'],
                                                month=params['month'] or None)
@@ -390,8 +407,7 @@ def _export_scope(request, dataset, selection):
 
 
 def _source_label(dataset) -> str:
-    from apps.uptimedb.datasource import SOURCES, active_source
-    return f'{SOURCES[active_source()]} ({dataset.workbook_name})'
+    return dataset.workbook_name
 
 
 def _xlsx(name: str, data: bytes):
@@ -413,6 +429,7 @@ def export_daily_view(request):
     from apps.accounts.audit import audit
     dataset = _dataset(request, 'export')
     params = _validated(DailyExportSerializer, request, dataset)
+    dataset = _scoped(request, params, 'export')
     try:
         scope = _export_scope(request, dataset, params['selection'])
         name, data = report_export.daily_report(dataset, scope, params['date'], _source_label(dataset))
@@ -429,6 +446,7 @@ def export_consolidated_view(request):
     from apps.accounts.audit import audit
     dataset = _dataset(request, 'export')
     params = _validated(SnapshotSerializer, request, dataset)
+    dataset = _scoped(request, params, 'export')
     try:
         scope = _export_scope(request, dataset, params['selection'])
         name, data = report_export.consolidated_report(dataset, scope, params['reporting_date'], _source_label(dataset))

@@ -23,7 +23,7 @@ const SUMMARY: KpiSummary = {
   previous_period: { start: '2026-10-31', end: '2026-10-31', label: '31 Oct 2026', days_with_data: 1 },
   current: values(), previous: values({ om_start_sites: 100, usd_sites: 40, nsla_sites: 20 }),
   om_start: { months: ['2026-11'], missing_months: ['Nov 2026'], available: false, complete: false },
-  pending: { site_handover_status: 'Pending clarification', rca_ownership: 'Not configured' },
+  pending: { rca_ownership: 'Not configured' },
 };
 const OPTIONS: KpiFilterOptions = {
   dates: ['2026-10-31', '2026-11-01'], default_period: { start: '2026-11-01', end: '2026-11-01' }, projects: ['4G Saturation', 'LWE'], circles: ['MP', 'RJ'],
@@ -44,13 +44,14 @@ beforeEach(() => {
 });
 
 describe("All KPI's", () => {
-  it('shows backend KPIs, marks O&M-dependent values Not available and lists the pending items', async () => {
+  it('shows backend KPIs and marks O&M-dependent values Not available', async () => {
     renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis' });
     const usd = await screen.findByRole('group', { name: 'USD sites' });
     expect(usd).toHaveTextContent('Not available');
     expect(screen.getByRole('group', { name: 'O&M Start sites' })).toHaveTextContent('Not available');
     expect(screen.getByRole('status')).toHaveTextContent('O&M Start data is not available for Nov 2026');
-    expect(screen.getByRole('group', { name: 'Site Handover Status' })).toHaveTextContent('Pending clarification');
+    expect(screen.queryByText(/handover/i)).not.toBeInTheDocument();  // not a project concept: no card, label or placeholder
+    expect(within(screen.getByRole('region', { name: 'Site Portfolio' })).getAllByRole('group')).toHaveLength(3);
     expect(screen.getByRole('group', { name: 'Availability (selected period)' })).toHaveTextContent('98.745%');
     expect(screen.getByRole('group', { name: 'Missing availability (site-days)' })).toHaveTextContent('2');
   });

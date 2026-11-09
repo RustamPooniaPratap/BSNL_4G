@@ -1,17 +1,11 @@
-"""Circle-wise Root Cause Breakdown (RCA Summary): RCA records per circle and Final Bucket reporting category.
+"""Circle-wise Root Cause Breakdown (RCA Summary): RCA records per circle and Final Bucket.
 
-The layout follows the RCA workbook's "RCA Analysis - Updated" table. In the workbook every column counts the
-"RCA Backup" rows whose **Final Bucket** equals the column header with "-" read as a space, ignoring case
-(COUNTIFS). The workbook's BSNL-Link and PTPL-Techn columns are out of scope and not shown (removed 30 Oct 2026; a
-PTPL Techn record would be listed under Not mapped). Rules here:
+The columns are the 10 approved Final Buckets of the taxonomy (apps.rca.taxonomy), in its order, with the approved
+names. A record is counted in the column of its Final Bucket (spaces and case ignored, ``parser.text_key``); no other
+value is read as a Final Bucket (no aliases or equivalents).
 
-- ``FINAL_BUCKET_CATEGORIES`` is the one mapping from Final Bucket (case and spacing ignored, ``parser.text_key``)
-  to a column. It holds the workbook rule for each column plus the equivalents confirmed on 29 Oct 2026:
-  Above 98.5% / Others / Other Media / NC -> Others; BSNL OFC / SSA OFC -> BSNL OFC; BBNL Media / BBNL OFC -> BBNL OFC;
-  Iaasp Others / Iaasp Other -> Iaasp Others; and on 30 Oct 2026 BSNL OFC Break / ETR/SSA OFC -> BSNL OFC,
-  Vsat-Media / bsnl Hub site -> BSNL Media, Ceragon -> DMW. Nothing else is inferred from similar spelling.
 - A record is counted in one column only.
-- Final Bucket values that map to no column (and blank values) are never put in Others: they are counted under
+- Final Bucket values that are not approved (and blank values) are never put in Others: they are counted under
   "Not mapped", listed with their raw values, and kept out of the Grand Total, so every record is accounted for.
 - Rows: one per circle (projects combined, as the workbook keys rows on the circle), for every circle of the selected
   project in the site master and every circle with records. A circle without records has empty cells, not zeros.
@@ -22,21 +16,11 @@ from collections import Counter, defaultdict
 
 from django.db.models import Count, Max, QuerySet
 
+from . import taxonomy
 from .parser import text_key
 
-# (column label, Final Bucket values counted in it, as written in the workbook or confirmed). None: shown, not filled.
-COLUMNS: tuple[tuple[str, tuple[str, ...] | None], ...] = (
-    ('IaaSP Power', ('IaaSP Power',)),
-    ('IaaSP Others', ('IaaSP Others', 'Iaasp Other', 'IaaSP Link', 'Tech Delay')),
-    ('IaaSP Battery', ('IaaSP Battery', 'BB', 'PTPL Battery')),
-    ('IaaSP OFC', ('IaaSP OFC', 'PTPL OFC')),
-    ('BSNL OFC', ('BSNL OFC', 'SSA OFC', 'BSNL OFC Break', 'ETR/SSA OFC', 'BBNL OFC', 'BBNL Media')),
-    ('BSNL Media', ('BSNL Media', 'Vsat', 'Vsat-Media', 'bsnl Hub site', 'BSNL Others')),
-    ('Others', ('Others', 'Other Media', 'Above 98.5%', 'NC', 'Theft', 'PTPL Others')),
-    ('TCS', ('TCS',)),
-    ('DMW', ('DMW', 'Ceragon')),
-    ('HFCL', ('HFCL',)),
-)
+# (column label, Final Bucket values counted in it): the approved Final Buckets, each counting only itself.
+COLUMNS: tuple[tuple[str, tuple[str, ...] | None], ...] = tuple((final, (final,)) for final in taxonomy.APPROVED)
 PENDING = tuple(label for label, values in COLUMNS if values is None)
 FINAL_BUCKET_CATEGORIES: dict[str, str] = {text_key(value): label for label, values in COLUMNS if values for value in values}
 NOT_MAPPED = 'Not mapped'

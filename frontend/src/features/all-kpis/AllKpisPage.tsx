@@ -134,7 +134,6 @@ const portfolioCards = (s: KpiSummary): KpiCardSpec[] => [
   { label: 'On-Air sites', icon: RadioTower, value: count(s.current!.on_air_sites), current: s.current!.on_air_sites, previous: s.previous?.on_air_sites, higherIsBetter: null, tab: 'drilldown', note: 'Basis of availability and thresholds' },
   { label: 'O&M Start sites', icon: Wrench, value: count(s.current!.om_start_sites), current: s.current!.om_start_sites, previous: s.previous?.om_start_sites, higherIsBetter: null, tab: 'drilldown',
     note: omReason(s, s.current!.om_start_sites) ?? 'Latest month in the period; basis of USD and NSLA' },
-  { label: 'Site Handover Status', value: 'Pending clarification', muted: true, note: 'Definition not confirmed yet' },
 ];
 const availabilityCards = (s: KpiSummary): KpiCardSpec[] => [
   { label: 'Availability (selected period)', icon: Gauge, value: pct(s.current!.availability_pct, 3), current: s.current!.availability_pct, previous: s.previous?.availability_pct, unit: 'pts',

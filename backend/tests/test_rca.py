@@ -20,11 +20,11 @@ HEADERS = ['Date', 'Project', 'Circle', 'Site ID', 'Site Name', 'OA', 'BA', 'O&M
            'Final Bucket', 'Bucket - 2', 'RCA']
 DAY = datetime(2026, 10, 21)
 ROWS = [
-    [DAY, 'LWE', 'Bihar', 'LWEBH0063', 'Haibatpur', 'Gaya', 'Gaya', 'Yes', 20.6, 'Other Media', 'BSNL Media', 'Media Flacuatation'],
+    [DAY, 'LWE', 'Bihar', 'LWEBH0063', 'Haibatpur', 'Gaya', 'Gaya', 'Yes', 20.6, 'BSNL Media', 'BSNL Media', 'Media Flacuatation'],
     [DAY, 'LWE', 'Jharkhand', 'LWEJH0001', 'Alpha', 'Ranchi', 'Ranchi', 'YES', 1442.55, 'BSNL OFC', '-', 'SSA OFC Break'],
     [DAY, '4G Satu', 'Odisha', 'OD0001 ', 'Bravo', 'KORAPUT', 'KORAPUT', 'No', 90, 'IaasP OFC', 'BSNL MEDIA', 'Media Fluctuation'],
     [DAY, '4G Satu', 'Rajasthan', 'RJ0001', 'Charlie', 'Jaisalmer', 'JODHPUR', 'Yes', 5, 'Iaasp OFC', 'BSNL Media', 'media  fluctuation'],
-    [DAY, '4G Satu', 'Madhya Pradesh', 'MP0001', 'Delta', 'Indore', 'Indore', 'Yes', 0.5, 'Other', '', ''],
+    [DAY, '4G Satu', 'Madhya Pradesh', 'MP0001', 'Delta', 'Indore', 'Indore', 'Yes', 0.5, 'Others', '', ''],
 ]
 
 
@@ -87,9 +87,9 @@ class ParserTests(RcaTestCase):
         self.assertEqual(report['issue_counts']['outage_over_day'], 1)
         # Case variants share a key; the source spellings are kept.
         self.assertEqual(od['final_bucket_key'], next(r for r in rows if r['site_key'] == 'RJ0001')['final_bucket_key'])
-        # Final Bucket takes the approved spelling ("IaasP OFC" and "Iaasp OFC" are "IaaSP OFC"); the change is reported.
-        self.assertEqual({r['final_bucket'] for r in rows if r['final_bucket_key'] == 'iaasp ofc'}, {'IaaSP OFC'})
-        self.assertGreaterEqual(report['issue_counts']['bucket_spelling_approved'], 1)
+        # "IaasP OFC" and "Iaasp OFC" are the approved IaaSP OFC (case ignored) and are kept exactly as uploaded: never renamed.
+        self.assertEqual({r['final_bucket'] for r in rows if r['final_bucket_key'] == 'iaasp ofc'}, {'IaasP OFC', 'Iaasp OFC'})
+        self.assertNotIn('bucket_spelling_approved', report['issue_counts'])
         self.assertEqual(next(r for r in rows if r['site_key'] == 'RJ0001')['rca_key'], 'media fluctuation')
 
     def test_rejects_bad_rows_with_reasons_and_never_repairs_them(self):
@@ -104,10 +104,12 @@ class ParserTests(RcaTestCase):
         report = parser.parse(self.path(rows=bad), 'rca.xlsx')['report']
         self.assertEqual((report['valid_rows'], report['rejected_rows']), (5, 6))
         self.assertEqual({c for c, n in report['issue_counts'].items() if c in {
-            'invalid_date', 'unknown_project', 'unknown_circle', 'missing_site_id', 'invalid_outage', 'duplicate_row'}},
-            {'invalid_date', 'unknown_project', 'unknown_circle', 'missing_site_id', 'invalid_outage', 'duplicate_row'})
-        duplicate = next(i for i in report['all_issues'] if i['code'] == 'duplicate_row')
-        self.assertEqual(duplicate['row'], 12)
+            'invalid_date', 'unknown_project', 'unknown_circle', 'missing_site_id', 'invalid_outage', 'duplicate_record'}},
+            {'invalid_date', 'unknown_project', 'unknown_circle', 'missing_site_id', 'invalid_outage', 'duplicate_record'})
+        duplicate = next(i for i in report['all_issues'] if i['code'] == 'duplicate_record')
+        self.assertEqual((duplicate['row'], duplicate['site_id']), (12, 'LWEBH0063'))
+        self.assertIn('Duplicate of Excel row 2', duplicate['message'])
+        self.assertIn('(identical in every column)', duplicate['message'])
 
     def test_missing_columns_or_sheet_reject_the_file(self):
         with self.assertRaisesRegex(parser.ParseError, 'missing required columns: RCA'):
@@ -128,8 +130,8 @@ class ParserTests(RcaTestCase):
         data.append(HEADERS)
         rows = [
             [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 846, 'BSNL OFC', 'BSNL OFC', 'Ofc cut'],
-            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 27, 'Others', 'BSNL Link', 'Media issue'],  # a second outage
-            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 27, 'Others', 'BSNL Link', 'Media issue'],  # an exact copy
+            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 27, 'Others', 'IP site link', 'Media issue'],  # a second outage
+            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 27, 'Others', 'IP site link', 'Media issue'],  # an exact copy
         ]
         for row in rows:
             data.append(row)
@@ -138,10 +140,127 @@ class ParserTests(RcaTestCase):
         parsed = parser.parse(path, 'daily.xlsx')
         report = parsed['report']
         self.assertEqual((report['sheet'], report['header_row'], report['valid_rows'], report['rejected_rows']), ('RCA Backup', 2, 2, 1))
-        self.assertEqual(report['all_issues'][0]['message'], 'Identical in every column to Excel row 4.')
-        # Each outage of the site on the date is its own record, ranked by cause, not by file order.
+        # Other buckets on the same date are a record of their own; the exact copy is a duplicate.
+        self.assertEqual([(i['row'], i['code']) for i in report['all_issues'] if i['severity'] == 'error'], [(5, 'duplicate_record')])
         self.assertEqual(sorted((r['occurrence'], r['final_bucket']) for r in parsed['rows']), [(1, 'BSNL OFC'), (2, 'Others')])
         self.assertEqual({(r['circle'], r['circle_raw']) for r in parsed['rows']}, {('CG', 'Chhatisgarh')})
+
+
+class ValidationPriorityTests(RcaTestCase):
+    """Duplicates and Final Bucket reject rows; Sub Bucket and RCA description never block (business rules, 4 Nov 2026)."""
+
+    def rows(self, *specs):
+        return [[DAY, '4G Satu', 'Odisha', site, 'S', '', '', 'Yes', minutes, final, b2, rca] for site, minutes, final, b2, rca in specs]
+
+    def test_missing_or_unapproved_final_bucket_rejects_rows_is_reported_and_blocks_the_file(self):
+        rows = self.rows(('OD0001', 5, 'TCS', 'BBU', 'Card'), ('OD0002', 5, 'Vsat', 'Vsat', 'x'), ('OD0003', 5, 'Vsat', '', 'y'),
+                         ('OD0004', 5, '', 'BBU', 'z'), ('OD0005', 5, '-', 'BBU', 'w'), ('OD0006', 5, 'Other Media', 'BSNL Media', 'm'))
+        path = self.path(rows=rows)
+        report = parser.parse(path, 'rca.xlsx')['report']
+        self.assertEqual((report['valid_rows'], report['rejected_rows'], report['final_bucket_error_rows']), (1, 5, 5))
+        problems = {(p['value'], p['code']): (p['rows'], p['example_rows']) for p in report['final_bucket_problems']}
+        self.assertEqual(problems, {('Vsat', 'final_bucket_not_approved'): (2, [3, 4]), ('', 'missing_final_bucket'): (1, [5]),
+                                    ('-', 'missing_final_bucket'): (1, [6]), ('Other Media', 'final_bucket_not_approved'): (1, [7])})
+        self.assertIn('Nothing can be imported', parser.final_bucket_file_error(report))
+        # Values are kept as written in the report, never renamed or reassigned.
+        self.assertIn('Final Bucket "Vsat" is not one of the approved Final Buckets', next(
+            i['message'] for i in report['all_issues'] if i['code'] == 'final_bucket_not_approved'))
+        with self.assertRaisesRegex(importer.ImportRejected, '5 rows have a missing or unapproved Final Bucket'):
+            importer.preview(path, 'rca.xlsx', user=self.admin)  # a command-line import is refused
+        uptime_sites(*[('4G Saturation', 'OD', f'OD000{n}') for n in range(1, 7)])
+        batch = importer.preview(path, 'rca.xlsx', user=self.admin, details={**DETAILS, 'period_start': DAY.date()})
+        self.assertEqual(batch.status, RcaImportBatch.Status.REJECTED)  # an upload is rejected as a whole
+        self.assertIn('missing or unapproved Final Bucket', batch.error)
+        self.assertEqual(RcaRecord.objects.count(), 0)
+
+    def test_a_batch_with_final_bucket_errors_is_never_committed(self):
+        batch = importer.preview(self.path(rows=self.rows(('OD0001', 5, 'TCS', 'BBU', 'Card'))), 'rca.xlsx', user=self.admin)
+        batch.report = {**batch.report, 'final_bucket_problems': [{'value': 'Vsat', 'code': 'final_bucket_not_approved', 'rows': 1, 'example_rows': [3]}]}
+        batch.save()
+        with self.assertRaisesRegex(importer.ImportRejected, 'missing or unapproved Final Bucket'):
+            importer.commit(batch, user=self.admin)
+        self.assertEqual(RcaRecord.objects.count(), 0)
+
+    def test_sub_bucket_and_rca_description_problems_are_warnings_that_never_block(self):
+        rows = self.rows(('OD0001', 5, 'TCS', 'BBU', 'Card'), ('OD0002', 5, 'IaaSP Others', 'Natural Clamity', 'Storm'),
+                         ('OD0003', 5, 'DMW', '', 'Radio'), ('OD0004', 5, 'HFCL', 'HFCL Radio', ''), ('OD0005', 5, 'TCS', 'TCS', '-'))
+        batch = importer.preview(self.path(rows=rows), 'rca.xlsx', user=self.admin)
+        report = batch.report
+        self.assertEqual((report['valid_rows'], report['rejected_rows'], report['final_bucket_error_rows']), (5, 0, 0))
+        # "Natural Clamity" is the approved spelling (no warning); "TCS" is no Sub Bucket of TCS; DMW's is blank.
+        self.assertEqual({k: v for k, v in report['sub_bucket_warnings'].items() if k != 'values'},
+                         {'rows': 2, 'missing_rows': 1, 'not_approved_rows': 1})
+        self.assertEqual({(v['final_bucket'], v['value'], v['code']) for v in report['sub_bucket_warnings']['values']},
+                         {('TCS', 'TCS', 'sub_bucket_not_approved'), ('DMW', '', 'sub_bucket_missing')})
+        self.assertEqual(report['rca_description_warnings'], 2)
+        self.assertEqual({i['severity'] for i in report['all_issues'] if i['code'].startswith('sub_bucket_')}, {'warning'})
+        self.assertEqual({i['severity'] for i in report['all_issues'] if i['code'] == 'unclassified_rca_text'}, {'info'})
+        importer.commit(batch, user=self.admin)
+        stored = dict(RcaRecord.objects.values_list('site_key', 'bucket_2'))
+        self.assertEqual((stored['OD0002'], stored['OD0003'], stored['OD0005']), ('Natural Clamity', '', 'TCS'))  # kept as written
+        self.assertEqual(dict(RcaRecord.objects.values_list('site_key', 'rca_text'))['OD0005'], '-')
+
+    def test_duplicate_key_is_site_date_final_bucket_and_sub_bucket(self):
+        # The business example: one site, one date.
+        rows = self.rows(('OD0001', 30, 'BSNL Media', 'Nokia mini link', 'Link fail'),    # row 2: valid
+                         ('OD0001', 40, 'BSNL OFC', 'SSA OFC', 'Fibre cut'),               # row 3: valid (other Final Bucket)
+                         ('OD0001', 50, 'BSNL Media', 'BSNL Link', 'Link fail'),          # row 4: valid (other Sub Bucket)
+                         ('OD0001', 30, 'BSNL Media', 'Nokia mini link', 'Link fail'))    # row 5: duplicate of row 2
+        report = parser.parse(self.path(rows=rows), 'rca.xlsx')['report']
+        self.assertEqual((report['valid_rows'], report['rejected_rows']), (3, 1))
+        self.assertEqual([(i['row'], i['site_id']) for i in report['all_issues'] if i['code'] == 'duplicate_record'], [(5, 'OD0001')])
+        self.assertEqual(report['sites_with_several_records'], 1)
+
+    def test_a_different_description_or_outage_does_not_make_a_duplicate_valid(self):
+        rows = self.rows(('OD0001', 30, 'BSNL Media', 'Nokia mini link', 'Link fail'),
+                         ('OD0001', 30, 'BSNL Media', 'Nokia mini link', 'Radio replaced'),   # other description
+                         ('OD0001', 999, 'BSNL Media', 'Nokia mini link', 'Link fail'),       # other outage
+                         ('OD0001', 5, 'BSNL Media', 'Nokia mini link', 'Another cause'),     # both differ
+                         ('OD0001', 30, 'Bsnl media', 'NOKIA MINI LINK', 'Link fail'))       # spelling: the same buckets
+        report = parser.parse(self.path(rows=rows), 'rca.xlsx')['report']
+        self.assertEqual((report['valid_rows'], report['rejected_rows']), (1, 4))
+        dup = report['duplicates']
+        self.assertEqual({k: v for k, v in dup.items() if k != 'examples'},
+                         {'rows': 4, 'groups': 1, 'sites': 1, 'identical_rows': 0, 'differing_rows': 4})
+        self.assertEqual(dup['examples'][0], {'site_id': 'OD0001', 'project': '4G Saturation', 'reporting_date': '2026-10-21',
+                                              'final_bucket': 'BSNL Media', 'sub_bucket': 'Nokia mini link', 'first_row': 2,
+                                              'rejected_rows': [3, 4, 5, 6], 'identical': 0})
+        message = next(i['message'] for i in report['all_issues'] if i['row'] == 3)
+        self.assertIn('Duplicate of Excel row 2: same Site ID OD0001, date 2026-10-21, Final Bucket "BSNL Media" and Sub Bucket "Nokia mini link"', message)
+
+    def test_a_blank_sub_bucket_is_a_value_for_duplicates(self):
+        rows = self.rows(('OD0001', 5, 'TCS', '', 'a'), ('OD0001', 6, 'TCS', '-', 'b'), ('OD0001', 7, 'TCS', 'BBU', 'c'),
+                         ('OD0002', 5, 'TCS', '', 'a'))  # another site: its own record
+        rows.append([datetime(2026, 10, 22), *rows[0][1:]])  # another date: its own record
+        report = parser.parse(self.path(rows=rows), 'rca.xlsx')['report']
+        self.assertEqual((report['valid_rows'], report['rejected_rows']), (4, 1))
+        self.assertEqual(report['duplicates']['examples'][0]['sub_bucket'], '')
+        self.assertIn('Sub Bucket "blank"', next(i['message'] for i in report['all_issues'] if i['code'] == 'duplicate_record'))
+
+    def test_duplicates_with_other_errors_are_counted_once_per_row(self):
+        rows = self.rows(('OD0001', 5, 'TCS', 'BBU', 'Card'), ('OD0001', 5, 'TCS', 'BBU', 'Card'),
+                         ('OD0002', 5, 'Vsat', 'Vsat', 'x'), ('OD0002', 7, 'Vsat', 'Vsat', 'y'))  # also Final Bucket errors
+        report = parser.parse(self.path(rows=rows), 'rca.xlsx')['report']
+        self.assertEqual((report['rows_read'], report['valid_rows'], report['rejected_rows']), (4, 1, 3))
+        self.assertEqual({k: v for k, v in report['duplicates'].items() if k != 'examples'},
+                         {'rows': 2, 'groups': 2, 'sites': 2, 'identical_rows': 1, 'differing_rows': 1})
+        self.assertEqual(report['final_bucket_error_rows'], 2)
+
+    def test_preview_and_import_apply_the_same_key_and_an_older_batch_with_duplicates_is_refused(self):
+        rows = self.rows(('OD0001', 30, 'BSNL Media', 'Nokia mini link', 'Link fail'), ('OD0001', 31, 'BSNL Media', 'Nokia mini link', 'Other text'))
+        batch = importer.preview(self.path(rows=rows), 'rca.xlsx', user=self.admin)
+        self.assertEqual((len(batch.rows), batch.report['rejected_rows']), (1, 1))
+        # A batch validated before this rule could still hold both rows: the import refuses it instead of storing two.
+        batch.rows = batch.rows + [{**batch.rows[0], 'rca_text': 'Other text', 'rca_key': 'other text', 'source_row': 3}]
+        batch.save()
+        with self.assertRaisesRegex(importer.ImportRejected, 'earlier duplicate rule'):
+            importer.commit(batch, user=self.admin)
+        self.assertEqual(RcaRecord.objects.count(), 0)
+
+    def test_outage_over_a_day_is_a_separate_warning_and_kept(self):
+        report = parser.parse(self.path(rows=self.rows(('OD0001', 1500, 'TCS', 'BBU', 'Card'))), 'rca.xlsx')['report']
+        self.assertEqual((report['valid_rows'], report['outage_over_day_rows']), (1, 1))
+        self.assertEqual(report['issue_counts'], {**report['issue_counts'], 'outage_over_day': 1})
 
 
 class ImportTests(RcaTestCase):
@@ -182,13 +301,23 @@ class ImportTests(RcaTestCase):
         self.assertEqual(rec.rca_text, 'Power failure')
         self.assertEqual(RcaEvent.objects.get(record=rec, action='source_overwritten').changes['rca_text']['database'], 'Media Flacuatation')
 
-    def test_several_outages_of_a_site_on_one_date_are_separate_records_and_reimport_adds_none(self):
+    def test_records_of_a_site_and_date_differ_by_bucket_and_import_matches_them_by_the_same_key(self):
         rows = [ROWS[0], [DAY, 'LWE', 'Bihar', 'LWEBH0063', 'Haibatpur', 'Gaya', 'Gaya', 'Yes', 300, 'BSNL OFC', 'BSNL OFC', 'Ofc cut']]
         first = self.imported(rows=rows)
-        self.assertEqual(first.counts['inserted'], 2)
+        self.assertEqual((first.counts['inserted'], first.report['rejected_rows']), (2, 0))
         again = self.imported(name='again.xlsx', rows=list(reversed(rows)))  # row order does not matter
         self.assertEqual((again.counts['inserted'], again.counts['unchanged']), (0, 2))
-        self.assertEqual(sorted(RcaRecord.objects.values_list('occurrence', 'final_bucket')), [(1, 'BSNL OFC'), (2, 'Other Media')])
+        self.assertEqual(sorted(RcaRecord.objects.values_list('occurrence', 'final_bucket')), [(1, 'BSNL Media'), (2, 'BSNL OFC')])
+        # A new bucket pair later is a new record numbered after the stored ones; a changed description is a difference to review.
+        later = [[DAY, 'LWE', 'Bihar', 'LWEBH0063', 'Haibatpur', 'Gaya', 'Gaya', 'Yes', 45, 'BSNL Media', 'BSNL Link', 'Link down'],
+                 [*rows[1][:11], 'Fibre cut near pole']]
+        batch = importer.preview(self.path(name='later.xlsx', rows=later), 'later.xlsx', user=self.admin)
+        self.assertEqual((batch.report['new_rows'], batch.report['conflict_rows']), (1, 1))
+        self.assertEqual(batch.report['conflicts'][0]['differences']['rca_text'], {'database': 'Ofc cut', 'file': 'Fibre cut near pole'})
+        importer.commit(batch, user=self.admin, conflict_action='skip')
+        self.assertEqual(sorted(RcaRecord.objects.values_list('occurrence', 'final_bucket', 'bucket_2')),
+                         [(1, 'BSNL Media', 'BSNL Media'), (2, 'BSNL OFC', 'BSNL OFC'), (3, 'BSNL Media', 'BSNL Link')])
+        self.assertEqual(RcaRecord.objects.get(bucket_2='BSNL OFC').rca_text, 'Ofc cut')  # kept: skip was chosen
 
     def test_a_later_reporting_date_is_a_new_incident_for_the_same_site(self):
         self.imported()
@@ -245,24 +374,30 @@ class ApiTests(RcaTestCase):
         self.assertAlmostEqual(data['kpis']['outage_minutes'], 20.6 + 1442.55 + 90 + 5 + 0.5, places=2)
         self.assertEqual(data['kpis']['incomplete_records'], 2)
         self.assertEqual(data['kpis']['incomplete_by_field'], {'final_bucket': 0, 'bucket_2': 2, 'rca': 1})
-        self.assertEqual((data['kpis']['rca_applicable_records'], data['kpis']['completeness_pct']), (4, 50.0))
-        self.assertEqual(data['kpis']['rca_not_applicable']['records'], 1)
+        # No Other Media record: an upload accepts only the approved Final Buckets (see the Other Media test for its handling).
+        self.assertEqual((data['kpis']['rca_applicable_records'], data['kpis']['completeness_pct']), (5, 60.0))
+        self.assertEqual(data['kpis']['rca_not_applicable']['records'], 0)
         # Bucket - 2 is grouped per Final Bucket; the blank ones are listed per Final Bucket too, never as a cause.
         self.assertEqual(sum(i['records'] for i in data['bucket_2'] if i['unclassified']), 2)
         b2 = {i['bucket_2']: i['records'] for i in data['bucket_2'] if not i['unclassified']}
         self.assertNotIn('-', b2)
         self.assertTrue(data['bucket_2'][-1]['unclassified'])  # listed last, never ranked as a cause
         iaasp = next(i for i in data['final_buckets'] if i['key'] == 'iaasp ofc')
-        self.assertEqual((iaasp['records'], iaasp['variants'], iaasp['approved']), (2, ['IaaSP OFC'], True))  # stored with the approved spelling
+        self.assertEqual((iaasp['label'], iaasp['records'], iaasp['variants'], iaasp['approved']), ('IaaSP OFC', 2, ['IaasP OFC', 'Iaasp OFC'], True))  # approved label, uploaded spellings kept
         self.assertEqual(data['categories']['unreviewed']['records'], 4)
         self.assertEqual(data['top_records'][0]['site_id'], 'LWEJH0001')
         self.assertEqual(self.client.get(reverse('rca-summary'), {'project': 'LWE'}).json()['kpis']['records'], 2)
 
     def test_other_media_is_rca_not_applicable_by_final_bucket_not_by_a_blank_bucket_2(self):
-        rows = [list(r) for r in ROWS] + [
-            [DAY, '4G Satu', 'Odisha', 'OD0002', 'Echo', 'KORAPUT', 'KORAPUT', 'Yes', 30, 'Other Media', '-', 'Media fluctuation'],
-        ]
-        self.imported(rows=rows)
+        # Other Media is not an approved Final Bucket, so no upload can add it; records stored earlier keep this handling.
+        self.imported()
+        for site, minutes, b2, rca in (('LWEBH0063', 20.6, 'BSNL Media', 'Media Flacuatation'), ('OD0002', 30, '-', 'Media fluctuation')):
+            RcaRecord.objects.filter(site_key=site).delete()
+            project, circle = ('LWE', 'BH') if site.startswith('LWE') else ('4G Saturation', 'OD')
+            RcaRecord.objects.create(reporting_date=DAY.date(), project=project, project_raw=project, circle=circle, circle_raw=circle,
+                                     site_id=site, site_key=site, occurrence=1, outage_minutes=minutes, final_bucket='Other Media',
+                                     final_bucket_key='other media', bucket_2=b2, bucket_2_key=parser.text_key(b2), rca_text=rca,
+                                     rca_key=parser.text_key(rca), source='import')
         self.client.force_login(self.admin)
         data = self.client.get(reverse('rca-summary')).json()
         k = data['kpis']

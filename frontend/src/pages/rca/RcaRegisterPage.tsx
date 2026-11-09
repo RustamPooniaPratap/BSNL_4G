@@ -16,6 +16,7 @@ import { PageHeading } from '../../context/pageHeader';
 import { FILTER_KEYS, formatMin, rcaCoverageText, shortProject, type FilterKey } from '../../lib/rca';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { activeCirclesOf, useOrganization } from '../../hooks/useOrganization';
+import { approvedFinalBuckets, approvedSubBuckets } from '../../lib/rcaTaxonomy';
 import { formatDate, formatNumber } from '../../lib/format';
 import { createRcaRecord, fetchRcaOptions, fetchRcaRecords } from '../../services/api';
 import type { RcaOptions, RcaRecordInput } from '../../types/rca';
@@ -150,7 +151,9 @@ function NewRecordSheet({ open, options, onClose, onCreated }: { open: boolean; 
   const catalog = useOrganization();
   const projects = (catalog.data?.projects ?? []).filter((p) => p.is_active);
   const circles = activeCirclesOf(catalog.data, form.project);
-  const known = (list: { value: string; label: string; unclassified?: boolean }[]) => list.filter((o) => !o.unclassified).map((o) => o.label);
+  // The approved taxonomy only (from the server): the Sub Buckets of the chosen Final Bucket, or none.
+  const NO_SUB_BUCKET = '__none__';
+  const subBuckets = approvedSubBuckets(options, form.final_bucket ?? '');
 
   async function submit() {
     setSaving(true);
@@ -200,10 +203,15 @@ function NewRecordSheet({ open, options, onClose, onCreated }: { open: boolean; 
           <Field id="new-outage_minutes" label="Outage minutes" error={errors.outage_minutes} hint="Leave blank if not known (not 0).">
             <Input id="new-outage_minutes" type="number" min={0} step="any" value={String(form.outage_minutes ?? '')} onChange={(e) => set('outage_minutes', e.target.value)} />
           </Field>
-          {text('final_bucket', 'Final Bucket', false, 'rca-final-buckets')}
-          {text('bucket_2', 'Bucket - 2', false, 'rca-bucket-2')}
-          <datalist id="rca-final-buckets">{known(options.final_buckets).map((v) => <option key={v} value={v} />)}</datalist>
-          <datalist id="rca-bucket-2">{known(options.bucket_2).map((v) => <option key={v} value={v} />)}</datalist>
+          <Field id="new-final_bucket" label="Final Bucket" required error={errors.final_bucket}>
+            <SelectField id="new-final_bucket" value={form.final_bucket ?? ''} placeholder="Choose" error={errors.final_bucket}
+              onChange={(v) => setForm((f) => ({ ...f, final_bucket: v, bucket_2: '' }))} options={approvedFinalBuckets(options).map((v) => ({ value: v, label: v }))} />
+          </Field>
+          <Field id="new-bucket_2" label="Bucket - 2" error={errors.bucket_2}>
+            <SelectField id="new-bucket_2" value={form.bucket_2 || (form.final_bucket ? NO_SUB_BUCKET : '')} placeholder={form.final_bucket ? 'Choose' : 'Choose the Final Bucket first'}
+              disabled={!form.final_bucket} error={errors.bucket_2} onChange={(v) => set('bucket_2', v === NO_SUB_BUCKET ? '' : v)}
+              options={[{ value: NO_SUB_BUCKET, label: 'Not recorded' }, ...subBuckets.map((v) => ({ value: v, label: v }))]} />
+          </Field>
           <Field id="new-rca_text" label="RCA description" required error={errors.rca_text} className="sm:col-span-2">
             <textarea id="new-rca_text" className="min-h-20 w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs" value={form.rca_text} onChange={(e) => set('rca_text', e.target.value)} />
           </Field>

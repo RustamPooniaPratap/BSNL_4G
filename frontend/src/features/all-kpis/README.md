@@ -68,7 +68,6 @@ and circles (`dashboard.scope.restrict`, `rca.services.filtered`).
 
 ## Pending (shown as such in the page)
 
-- **Site Handover Status:** not defined yet.
 - **Own / Customer / Third Party / Pending:** no approved mapping; shown as "Not Configured".
 - **O&M Start for November 2026:** no source data yet, so "Not available".
 

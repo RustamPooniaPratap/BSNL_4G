@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { CircleAlert, Database, RotateCcw, Layers3 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { NoWorkbook, SelectField } from '../components/data/DataEntry';
+import { SelectField } from '../components/data/DataEntry';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { BUCKET_COLORS, BUCKET_ORDER } from '../components/dashboard/constants';
@@ -12,7 +12,6 @@ import { PeriodControls } from '../components/portfolio/PeriodControls';
 import { CompositeTile, ConversionActivityTile, KpiSection, KpiTile, SummaryMetricsTile, type Segment } from '../components/portfolio/PortfolioKpis';
 import { useTracking } from '../context/tracking';
 import { PageHeading } from '../context/pageHeader';
-import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { useOrganization } from '../hooks/useOrganization';
 import { useDashboardFilters } from '../hooks/useDashboardFilters';
@@ -23,15 +22,20 @@ import {
 import {
   applyChange, availability, monthPeriod, periodQuery, resolveSelection, type Period,
 } from '../lib/periods';
-import { fetchBreakdowns, fetchConversionActivity, fetchOmHeads, fetchPeriod, fetchFilterOptions, fetchSummary } from '../services/api';
+import { fetchOmHeads } from '../services/api';
+import {
+  fetchPortfolioActivity, fetchPortfolioBreakdowns, fetchPortfolioFilters, fetchPortfolioPeriod, fetchPortfolioSummary,
+} from '../services/sitePortfolioApi';
 
 const pctOf = (part: number, whole: number) => (whole ? formatPct((100 * part) / whole, 1) : '—');
 
-/** Executive landing page: portfolio KPIs and the circle-wise breakdown. */
+/**
+ * Executive landing page: portfolio KPIs and the circle-wise breakdown. Reads the new data layer (/api/site-portfolio/):
+ * sites, On-Air and O&M Start from the Consolidation Matrix and its dates, availability from the new daily records.
+ */
 export function PortfolioPage() {
-  const workbook = useWorkbook();
-  const { version } = workbook;
-  const options = useApiQuery(workbook.active ? `${version}|filters` : null, fetchFilterOptions);
+  const options = useApiQuery('site-portfolio|filters', fetchPortfolioFilters);
+  const version = options.data?.source.loaded_at ?? '';
   const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data);
   const [searchParams, setSearchParams] = useSearchParams();
   const { state: tracking, dispatch } = useTracking();
@@ -63,34 +67,34 @@ export function PortfolioPage() {
     previous: params('on_air', previousDate),
   };
 
-  const onAir = useApiQuery(k('onAir', q.onAir), (s) => fetchSummary(q.onAir, s));
-  const omStart = useApiQuery(omAvailable ? k('om', q.omStart) : null, (s) => fetchSummary(q.omStart, s));
-  const all = useApiQuery(k('all', q.all), (s) => fetchSummary(q.all, s));
-  const previous = useApiQuery(previousDate ? k('prev', q.previous) : null, (s) => fetchSummary(q.previous, s));
+  const onAir = useApiQuery(k('onAir', q.onAir), (s) => fetchPortfolioSummary(q.onAir, s));
+  const omStart = useApiQuery(omAvailable ? k('om', q.omStart) : null, (s) => fetchPortfolioSummary(q.omStart, s));
+  const all = useApiQuery(k('all', q.all), (s) => fetchPortfolioSummary(q.all, s));
+  const previous = useApiQuery(previousDate ? k('prev', q.previous) : null, (s) => fetchPortfolioSummary(q.previous, s));
   const pq = {
     sel: daily ? null : periodParams('on_air', sel?.selected), selOm: daily || !omAvailable ? null : periodParams('om_start', sel?.selected),
     cmp: daily ? null : periodParams('on_air', sel?.comparison), cmpOm: daily || !omAvailable ? null : periodParams('om_start', sel?.comparison),
   };
-  const periodSel = useApiQuery(pq.sel ? k('period', pq.sel) : null, (s) => fetchPeriod(pq.sel!, s));
-  const periodSelOm = useApiQuery(pq.selOm ? k('period', pq.selOm) : null, (s) => fetchPeriod(pq.selOm!, s));
-  const periodCmp = useApiQuery(pq.cmp ? k('period', pq.cmp) : null, (s) => fetchPeriod(pq.cmp!, s));
-  const periodCmpOm = useApiQuery(pq.cmpOm ? k('period', pq.cmpOm) : null, (s) => fetchPeriod(pq.cmpOm!, s));
-  const breakdown = useApiQuery(k('breakdown', q.onAir), (s) => fetchBreakdowns(q.onAir, s));
+  const periodSel = useApiQuery(pq.sel ? k('period', pq.sel) : null, (s) => fetchPortfolioPeriod(pq.sel!, s));
+  const periodSelOm = useApiQuery(pq.selOm ? k('period', pq.selOm) : null, (s) => fetchPortfolioPeriod(pq.selOm!, s));
+  const periodCmp = useApiQuery(pq.cmp ? k('period', pq.cmp) : null, (s) => fetchPortfolioPeriod(pq.cmp!, s));
+  const periodCmpOm = useApiQuery(pq.cmpOm ? k('period', pq.cmpOm) : null, (s) => fetchPortfolioPeriod(pq.cmpOm!, s));
+  const breakdown = useApiQuery(k('breakdown', q.onAir), (s) => fetchPortfolioBreakdowns(q.onAir, s));
   // Site Scope and O&M Start by circle: the same breakdown for the other two scopes.
-  const breakdownAll = useApiQuery(k('breakdownAll', q.all), (s) => fetchBreakdowns(q.all, s));
-  const breakdownOm = useApiQuery(omAvailable ? k('breakdownOm', q.omStart) : null, (s) => fetchBreakdowns(q.omStart, s));
-  const omHeadSheet = useApiQuery(workbook.active ? 'om-heads' : null, fetchOmHeads);
+  const breakdownAll = useApiQuery(k('breakdownAll', q.all), (s) => fetchPortfolioBreakdowns(q.all, s));
+  const breakdownOm = useApiQuery(omAvailable ? k('breakdownOm', q.omStart) : null, (s) => fetchPortfolioBreakdowns(q.omStart, s));
+  const omHeadSheet = useApiQuery('om-heads', fetchOmHeads);
   const organization = useOrganization();
   const omHeads = Object.fromEntries((omHeadSheet.data?.heads ?? []).map((h) => [`${h.report_type}|${h.circle}`, h.om_head]));
-  // On-Air / O&M Start this month vs last month (dated escalation matrix); the month is the selected date's.
+  // On-Air / O&M Start this month vs last month (Consolidation Matrix dates in the new data layer); the month is the selected date's.
   const activityParams = new URLSearchParams();
   if (f.reportType) activityParams.set('report_type', f.reportType);
   if (f.circle) activityParams.set('circle', f.circle);
   if (f.date) activityParams.set('month', f.date.slice(0, 7));
-  const activity = useApiQuery(workbook.active ? `activity|${activityParams}` : null, (s) => fetchConversionActivity(activityParams, s));
+  const activity = useApiQuery(options.data ? `portfolio-activity|${activityParams}` : null, (s) => fetchPortfolioActivity(activityParams, s));
 
-  if (!workbook.loading && !workbook.active) return <NoWorkbook />;
-  const fatal = workbook.error ?? options.error ?? onAir.error ?? all.error;
+  // No fallback: if the new data layer cannot serve the page, its error is shown and no figures.
+  const fatal = options.error ?? onAir.error ?? all.error;
   if (fatal) {
     return (
       <Alert variant="destructive" className="mx-auto mt-10 max-w-2xl">
@@ -173,11 +177,13 @@ export function PortfolioPage() {
   })) : null;
   const periodBucketed = (periodBucketSegments ?? []).reduce((sum, x) => sum + x.value, 0);
   const periodError = periodSel.error ?? periodCmp.error;
+  const continuity = options.data.source.continuity;
+  const daysUsed = periodSel.data ? ` · ${periodSel.data.days_reported} reporting days` : '';
 
   return (
     <div className="space-y-4">
       <PageHeading title="Site Portfolio — Summary"
-        subtitle={`${scopeText} · ${daily ? `${formatDate(summary.reporting_date)} · ${mtdLabel} (${summary.mtd_window.days_reported} days)` : sel.selected.label}`} />
+        subtitle={`${scopeText} · ${daily ? `${formatDate(summary.reporting_date)} · ${mtdLabel} (${summary.mtd_window.days_reported} days)` : `${sel.selected.label}${daysUsed}`}`} />
       <PeriodControls av={av} reportingDates={options.data.reporting_dates} sel={sel}
         onChange={(change) => setSearchParams((cur) => applyChange(cur, change), { replace: true })} monthEnabled={monthEnabled}
         notes={lengthsDiffer ? [`The periods cover a different number of days (${selDays} and ${cmpDays}): compare uptime and shares; outage minutes are not compared.`] : []}>
@@ -208,12 +214,23 @@ export function PortfolioPage() {
         </div>
       </PeriodControls>
 
+      {continuity && continuity.excluded_after_gap.length > 0 && (
+        <Alert className="border-amber-300 bg-amber-50/70">
+          <CircleAlert className="text-amber-700" />
+          <AlertTitle>MTD ends on {formatDate(continuity.continuous_until)}</AlertTitle>
+          <AlertDescription>
+            A reporting date after it has no data, so MTD stops there. Later dates with data ({continuity.excluded_after_gap.map(formatShortDate).join(', ')}) are
+            not used until the missing date is reported.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <KpiSection label="Site portfolio" columns="portfolio">
         {/* Total sites and On-Air vs O&M Start, in one compact card. */}
         <SummaryMetricsTile label="Total sites, On-Air & O&M Start"
-          definition={`Total sites: every site row in the Master workbook for the filter. On-Air sites: On-Air = "Yes". O&M Start sites: "O&M Start - ${month}" = "Yes". Percentages are of total sites. Difference = On-Air sites − O&M Start sites: On-Air sites not yet recorded as O&M Start (a blank or 0 flag means not recorded, not a confirmed failure). The 4G Saturation / LWE lines are the circle-wise counts summed per project (Difference per project = its On-Air − its O&M Start); they are shown only when they add up to the total.`}
+          definition={`Total sites: every dashboard site of the Consolidation Matrix for the filter. On-Air sites: Site On-Air Date on or before the end of ${month}. O&M Start sites: O&M Start Date on or before the end of ${month} (a site without a date is not counted and is flagged for review). Percentages are of total sites. Difference = On-Air sites − O&M Start sites: On-Air sites not yet recorded as O&M Start (a blank or 0 flag means not recorded, not a confirmed failure). The 4G Saturation / LWE lines are the circle-wise counts summed per project (Difference per project = its On-Air − its O&M Start); they are shown only when they add up to the total.`}
           metrics={[
-            { label: 'Total sites', value: total, tone: 'neutral', split: split(scopeBy, total), note: 'In the Master workbook' },
+            { label: 'Total sites', value: total, tone: 'neutral', split: split(scopeBy, total), note: 'In the Consolidation Matrix' },
             { label: 'On-Air sites', value: onAirSites, tone: 'onAir', split: split(onAirBy, onAirSites), pct: total ? (100 * onAirSites) / total : null, note: `of ${formatNumber(total)} sites` },
             { label: 'O&M Start sites', value: omSites, tone: 'omStart', missing: 'No O&M Start column', split: split(omBy, omSites),
               pct: omSites != null && total ? (100 * omSites) / total : null, note: omSites == null ? undefined : `${month} status` },
@@ -221,7 +238,7 @@ export function PortfolioPage() {
           ]}
           links={[{ to: detailLink('/', f, { scope: 'all' }), view: 'View all sites' }, { to: detailLink('/', f, { scope: 'om_start' }), view: 'View O&M Start sites' }]} />
         <ConversionActivityTile total={total} onAir={onAirSites} omStart={omSites} activity={activity.data}
-          definition={`Achievement against total site scope (${formatNumber(total)} sites in the filter, Master workbook): On-Air = "Yes" and O&M Start - ${month} = "Yes"; the gap is total scope minus that count (blank or 0 = not marked yet). Monthly additions count sites by their Site On Air Date and O&M Start Date in the escalation matrix (Data/reference); a month with no dates in that file yet shows "—", not 0.`}
+          definition={`Achievement against total site scope (${formatNumber(total)} sites in the filter, Consolidation Matrix): Site On-Air Date and O&M Start Date on or before the end of ${month}; the gap is total scope minus that count (a site without a date is not counted). Monthly additions count sites by their Site On-Air Date and O&M Start Date in the Consolidation Matrix; a month later than the latest date in the matrix shows "—", not 0.`}
           link={detailLink('/', f, { scope: 'om_start' })} view="View O&M Start sites" />
       </KpiSection>
 
@@ -248,7 +265,7 @@ export function PortfolioPage() {
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-busy="true" aria-label="Loading period figures">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-36" />)}</div>
       ) : (
       <>
-      <KpiSection label={`Uptime buckets · ${shortLabel}`}>
+      <KpiSection label={`Uptime buckets · ${shortLabel}${daysUsed}`}>
         <KpiTile kpi={periodKpis.gte_98_5} of={`of ${formatNumber(periodData.onAir.sites_in_scope)}`} compareOn={Boolean(cmpData)} vsLabel={vsLabel}
           sub={`${pctOf(periodData.onAir.sites_at_or_above_98_5, periodData.onAir.sites_in_scope)} of On-Air sites`} />
         <KpiTile kpi={periodKpis.lt_60} of={`of ${formatNumber(periodData.onAir.sites_in_scope)}`} compareOn={Boolean(cmpData)} vsLabel={vsLabel}
@@ -267,7 +284,7 @@ export function PortfolioPage() {
           notes={tracking.portfolioNotes} omHeads={omHeads} omHeadSource={omHeadSheet.data?.source ?? null}
           onSaveNote={(key, note) => dispatch({ type: 'saveNote', key, note })}
           loading={breakdownAll.loading || breakdown.loading}
-          periodNote={`Site counts come from the current On-Air and O&M Start flags in ${summary.source.workbook}; the reporting date does not change them.`} />
+          periodNote={`Site counts come from the Site On-Air and O&M Start Dates in the Consolidation Matrix for ${month} (${summary.source.workbook}); the reporting date does not change them.`} />
       ) : breakdownAll.error ?? breakdownOm.error ? (
         <Alert variant="destructive"><AlertTitle>Circle-wise breakdown unavailable</AlertTitle><AlertDescription>{(breakdownAll.error ?? breakdownOm.error)!.message}</AlertDescription></Alert>
       ) : <Skeleton className="h-80 w-full" aria-label="Loading circle-wise breakdown" />}

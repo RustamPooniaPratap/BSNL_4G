@@ -7,7 +7,7 @@ import { TrackingProvider } from '../context/TrackingProvider';
 import { landsOnPortfolio } from '../lib/portfolio';
 import * as api from '../services/api';
 import { breakdown, filterOptions, period, source, summary, trend } from '../test/fixtures';
-import { renderWithWorkbook } from '../test/renderWithWorkbook';
+import { renderWithWorkbook, workbookValue } from '../test/renderWithWorkbook';
 import type { PeriodSummary, SummaryResponse } from '../types';
 import { PortfolioPage } from './PortfolioPage';
 
@@ -15,6 +15,17 @@ vi.mock('../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/api')>()),
   fetchFilterOptions: vi.fn(), fetchSummary: vi.fn(), fetchBreakdowns: vi.fn(), fetchTrends: vi.fn(), fetchAlerts: vi.fn(), fetchPeriod: vi.fn(), fetchOmHeads: vi.fn(), fetchConversionActivity: vi.fn(),
 }));
+// The page reads the new data layer through services/sitePortfolioApi; its calls are routed to the same mocks.
+vi.mock('../services/sitePortfolioApi', async () => {
+  const mocked = await import('../services/api');
+  return {
+    fetchPortfolioFilters: (signal?: AbortSignal) => mocked.fetchFilterOptions(signal),
+    fetchPortfolioSummary: (params: URLSearchParams, signal?: AbortSignal) => mocked.fetchSummary(params, signal),
+    fetchPortfolioBreakdowns: (params: URLSearchParams, signal?: AbortSignal) => mocked.fetchBreakdowns(params, signal),
+    fetchPortfolioPeriod: (params: URLSearchParams, signal?: AbortSignal) => mocked.fetchPeriod(params, signal),
+    fetchPortfolioActivity: (params: URLSearchParams, signal?: AbortSignal) => mocked.fetchConversionActivity(params, signal),
+  };
+});
 const m = vi.mocked(api);
 
 /** Each scope / date / report type gets distinguishable figures, so the page must use the right one. */
@@ -400,5 +411,27 @@ describe('Site Portfolio period filters', () => {
     await user.click(within(group()).getByRole('button', { name: 'Monthly' }));
     expect(screen.getByTestId('location')).toHaveTextContent('view=month');
     expect(within(group()).queryByRole('combobox', { name: 'Week' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Site Portfolio on the new data layer', () => {
+  it('reads the new data layer and does not depend on the old workbook status', async () => {
+    renderWithWorkbook(<TrackingProvider><PortfolioPage /></TrackingProvider>, { url: '/portfolio', workbook: workbookValue({ active: null, loading: false }) });
+    expect(await screen.findByText('Site Portfolio — Summary')).toBeInTheDocument();
+    expect(screen.queryByText('No Master workbook loaded')).not.toBeInTheDocument();
+    expect(m.fetchFilterOptions).toHaveBeenCalled();  // routed through services/sitePortfolioApi
+  });
+
+  it('says where MTD stops when a reporting date has no data', async () => {
+    m.fetchFilterOptions.mockResolvedValue({ ...filterOptions, source: { ...filterOptions.source,
+      continuity: { dates_with_data: ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-05'], continuous_until: '2026-10-03', excluded_after_gap: ['2026-10-05'] } } } as never);
+    renderPage();
+    const notice = await screen.findByText(/MTD ends on/);
+    expect(notice.closest('[role="alert"]')).toHaveTextContent('05 Oct');
+  });
+
+  it('shows the reporting days used for a week or month', async () => {
+    renderPage('/portfolio?view=week');
+    expect(await screen.findByText(/Uptime buckets · Wk-1 · 3 reporting days/)).toBeInTheDocument();
   });
 });

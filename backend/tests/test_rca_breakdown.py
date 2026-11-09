@@ -25,15 +25,16 @@ def record(circle: str, final_bucket: str, day=date(2026, 10, 21), project='4G S
 
 
 class MappingTests(SignedInTestCase):
-    def test_columns_in_the_workbook_order_with_confirmed_equivalents_only(self):
+    def test_columns_are_the_approved_final_buckets_and_count_only_themselves(self):
+        from apps.rca import taxonomy
         self.assertEqual([label for label, _ in breakdown.COLUMNS], LABELS)
-        cases = {'BSNL OFC': 'BSNL OFC', 'ssa ofc': 'BSNL OFC', 'IaasP OFC': 'IaaSP OFC', 'VSAT': 'BSNL Media', 'HFCl': 'HFCL',
-                 'Other Media': 'Others', 'Above 98.5%': 'Others', 'NC': 'Others', 'Others': 'Others', 'BBNL Media': 'BSNL OFC',
-                 'BBNL OFC': 'BSNL OFC', 'Iaasp Other': 'IaaSP Others', 'Iaasp Link': 'IaaSP Others', 'Tech Delay': 'IaaSP Others',
-                 'IaaSP Battery': 'IaaSP Battery', 'BB': 'IaaSP Battery', 'Theft': 'Others',
-                 'BSNL OFC Break': 'BSNL OFC', 'ETR/SSA OFC': 'BSNL OFC', 'Vsat-Media': 'BSNL Media', 'bsnl Hub site': 'BSNL Media', 'Ceragon': 'DMW'}
+        self.assertEqual([label for label, _ in breakdown.COLUMNS], list(taxonomy.APPROVED))  # the one taxonomy
+        cases = {'BSNL OFC': 'BSNL OFC', 'IaasP OFC': 'IaaSP OFC', 'HFCl': 'HFCL', ' Others ': 'Others', 'IaaSP Battery': 'IaaSP Battery'}
         self.assertEqual({raw: breakdown.category_of(raw) for raw in cases}, cases)
-        for unknown in ('Other', 'Below 60%', '71-90%', 'BSNL Link', 'PTPL Techn', '', '-', 'Solar'):  # Other: genuinely ambiguous EMS discrepancy
+        # No aliases or equivalents: former legacy values and anything else are Not mapped, never put in a column.
+        for unknown in ('ssa ofc', 'VSAT', 'Other Media', 'Above 98.5%', 'NC', 'BBNL Media', 'BBNL OFC', 'Iaasp Other', 'Iaasp Link',
+                        'Tech Delay', 'BB', 'Theft', 'BSNL OFC Break', 'ETR/SSA OFC', 'Vsat-Media', 'bsnl Hub site', 'Ceragon',
+                        'Other', 'BSNL Link', 'PTPL Techn', '', '-', 'Solar'):
             self.assertIsNone(breakdown.category_of(unknown), unknown)
         self.assertEqual(breakdown.PENDING, ())
         values = [v for _, vs in breakdown.COLUMNS if vs for v in vs]
@@ -43,8 +44,8 @@ class MappingTests(SignedInTestCase):
 class SummaryBreakdownTests(SignedInTestCase):
     def setUp(self):
         super().setUp()
-        for circle, bucket, n in (('MP', 'BSNL OFC', 3), ('MP', 'SSA OFC', 1), ('MP', 'Other Media', 2), ('MP', 'BB', 1),
-                                  ('OD', 'TCS', 4), ('OD', 'Iaasp Link', 1), ('OD', '-', 1)):
+        for circle, bucket, n in (('MP', 'BSNL OFC', 3), ('MP', 'bsnl ofc', 1), ('MP', 'Others', 2), ('MP', 'IaaSP Battery', 1),
+                                  ('OD', 'TCS', 4), ('OD', 'IaaSP Others', 1), ('OD', '-', 1)):
             for _ in range(n):
                 record(circle, bucket)
         record('MP', 'TCS', day=date(2026, 10, 25), project='LWE')

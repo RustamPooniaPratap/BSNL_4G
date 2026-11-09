@@ -60,6 +60,9 @@ INSTALLED_APPS = [
     'apps.organization',
     'apps.masterdata',
     'apps.alerts',
+    # New site master and performance data layer (Phase 1). Not used by any page yet; its migrations are applied only
+    # after the approved cutover (docs/phase1-database-audit.md).
+    'apps.sitedata',
 ]
 
 MIDDLEWARE = [
@@ -199,10 +202,6 @@ SESSION_SAVE_EVERY_REQUEST = True
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 # "Remember me" at sign-in: the session lasts this many days instead (renewed on use, survives a browser restart).
 REMEMBER_ME_DAYS = int(os.getenv('REMEMBER_ME_DAYS', 7))
-# Development only: a "Continue without signing in" button that signs in as DEV_LOGIN_USER.
-# Never active unless DEBUG is on, and only for requests from this computer (see accounts.views.DevLoginView).
-DEV_LOGIN_BYPASS = DEBUG and os.getenv('DEV_LOGIN_BYPASS', 'False').lower() in ('true', '1', 'yes')
-DEV_LOGIN_USER = os.getenv('DEV_LOGIN_USER', '').strip()
 # Lax suits the Vite dev server and a same-site deployment; set None (with HTTPS) only for a cross-site frontend.
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 CSRF_COOKIE_SAMESITE = os.getenv('CSRF_COOKIE_SAMESITE', SESSION_COOKIE_SAMESITE)

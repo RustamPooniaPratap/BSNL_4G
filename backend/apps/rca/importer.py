@@ -1,8 +1,9 @@
 """Preview and commit an RCA workbook.
 
-Preview parses and validates the file and compares every valid row with the database by its identity
-(reporting date, project, site, occurrence): a site can have several RCA records on one date (separate outages),
-ranked by cause and outage (see parser). Site ID alone never identifies a record. It writes only an RcaImportBatch. Commit runs in one transaction: new rows are inserted, identical
+Preview parses and validates the file and compares every valid row with the database by its identity, the
+parser's duplicate key: reporting date, project and site, Final Bucket and Sub Bucket. A site can have several RCA
+records on one date with different buckets; the RCA description and the outage are facts of a record, never part of
+its identity (a change there is a difference to review, not a new record). Site ID alone never identifies a record. It writes only an RcaImportBatch. Commit runs in one transaction: new rows are inserted, identical
 rows are left alone (so a repeat upload changes nothing), and rows whose source facts differ are never
 overwritten silently: the uploader chooses to keep the stored values or to update them, and an update is
 recorded in each record's history.
@@ -40,6 +41,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from . import parser
@@ -63,7 +65,11 @@ class ImportRejected(Exception):
 
 
 def _identity(row: dict) -> tuple:
-    return (row['reporting_date'], row['project'], row['site_key'], row.get('occurrence', 1))
+    return parser.row_key(row)
+
+
+def _record_identity(rec: RcaRecord) -> tuple:
+    return parser.duplicate_key(rec.reporting_date.isoformat(), rec.project, rec.site_key, rec.final_bucket_key, rec.bucket_2_key)
 
 
 def _compare(rows: list[dict], *, units: set[tuple[str, str, str]] | None = None) -> dict:
@@ -76,7 +82,9 @@ def _compare(rows: list[dict], *, units: set[tuple[str, str, str]] | None = None
     units = units or set()
     days = {date.fromisoformat(r['reporting_date']) for r in rows} | {date.fromisoformat(u[0]) for u in units}
     existing_qs = RcaRecord.all_objects.filter(source=RcaRecord.Source.IMPORT, reporting_date__in=days)
-    existing = {(rec.reporting_date.isoformat(), rec.project, rec.site_key, rec.occurrence): rec for rec in existing_qs}
+    existing = {}
+    for rec in existing_qs.order_by(F('withdrawn_at').asc(nulls_first=True), 'id'):  # an active record before a withdrawn one of the same key
+        existing.setdefault(_record_identity(rec), rec)
     new, restored, unchanged, conflicts = [], [], [], []
     for row in rows:
         record = existing.get(_identity(row))
@@ -174,6 +182,10 @@ def preview(path: Path, filename: str, *, user=None, details: dict | None = None
             _store(path, batch)
         raise ImportRejected(str(exc)) from exc
     rows, report = parsed['rows'], parsed['report']
+    # Final Bucket has the highest priority: a file with any missing or unapproved Final Bucket is not imported at all.
+    final_bucket_error = parser.final_bucket_file_error(report)
+    if final_bucket_error and not details:
+        raise ImportRejected(final_bucket_error)
     if not rows and not details:
         raise ImportRejected('The workbook has no valid RCA rows to import. Download the issue report for the reasons.')
     if details and fields['period_start'] is None:
@@ -191,6 +203,8 @@ def preview(path: Path, filename: str, *, user=None, details: dict | None = None
     if kind == RcaImportBatch.UploadType.CIRCLE and other_dates:
         report['file_error'] = (f'{other_dates} rows are of another date than the reporting date {fields["period_start"]:%d %b %Y}. '
                                 'A circle file holds one reporting date: upload each date separately, or use Upload Consolidated RCA.')
+    if final_bucket_error:
+        report['file_error'] = ' '.join(filter(None, (final_bucket_error, report.get('file_error'))))
     units = scope_units(kind, rows, day=fields.get('period_start'), project=fields.get('project_scope', ''), circle=fields.get('circle'))
     comparison = _compare(rows, units=units)
     previous = RcaImportBatch.objects.filter(checksum_sha256=checksum, status=RcaImportBatch.Status.COMMITTED).first()
@@ -246,6 +260,12 @@ def commit(batch: RcaImportBatch, *, user=None, conflict_action: str = '', missi
         raise ImportRejected('Choose "skip" or "overwrite" for conflicting rows.')
     if missing_action and missing_action not in MISSING_ACTIONS:
         raise ImportRejected('Choose "keep" or "withdraw" for stored records the file no longer lists.')
+    final_bucket_error = parser.final_bucket_file_error(batch.report)
+    if final_bucket_error:  # also for a batch validated before this rule existed
+        raise ImportRejected(final_bucket_error, 409)
+    if parser.repeated_keys(batch.rows):  # validated before the duplicate rule: never imported as it is
+        raise ImportRejected(f'Import #{batch.pk} was validated with an earlier duplicate rule and holds duplicate records '
+                             '(same site, date, Final Bucket and Sub Bucket). Upload the workbook again to validate it.', 409)
     rejected = batch.report.get('rejected_rows', 0)
     period = _period(batch)
     if period and rejected and not accept_rejected:
@@ -275,9 +295,19 @@ def commit(batch: RcaImportBatch, *, user=None, conflict_action: str = '', missi
             raise ImportRejected(f'{len(missing)} stored records of this period are not in the workbook. '
                                  'Choose whether to keep them or withdraw them.', 409)
         now = timezone.now()
+        # New records are numbered after the site's records of the date already stored (the unique incident number).
+        taken: dict[tuple, int] = {}
+        for rec in RcaRecord.all_objects.filter(source=RcaRecord.Source.IMPORT,
+                                                reporting_date__in={r['reporting_date'] for r in comparison['new']}):
+            site = (rec.reporting_date.isoformat(), rec.project, rec.site_key)
+            taken[site] = max(taken.get(site, 0), rec.occurrence)
+        for row in sorted(comparison['new'], key=lambda r: (r['final_bucket_key'], r['bucket_2_key'])):
+            site = (row['reporting_date'], row['project'], row['site_key'])
+            taken[site] = taken.get(site, 0) + 1
+            row['occurrence'] = taken[site]
         RcaRecord.objects.bulk_create([
             RcaRecord(**_fields(row), reporting_date=date.fromisoformat(row['reporting_date']), project=row['project'],
-                      site_key=row['site_key'], occurrence=row.get('occurrence', 1), source=RcaRecord.Source.IMPORT, batch=batch,
+                      site_key=row['site_key'], occurrence=row['occurrence'], source=RcaRecord.Source.IMPORT, batch=batch,
                       source_file=batch.original_filename, source_row=row['source_row'], created_by=user)
             for row in comparison['new']
         ], batch_size=500)

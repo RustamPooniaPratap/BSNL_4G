@@ -8,6 +8,7 @@ import { SelectField } from '../data/DataEntry';
 import { Field, FilterCard } from '../dashboard/FilterBar';
 import { formatNumber } from '../../lib/format';
 import { ALL, FILTER_KEYS, NOT_RECORDED, SITE_SCOPES, type FilterKey } from '../../lib/rca';
+import { approvedSubBuckets } from '../../lib/rcaTaxonomy';
 import type { RcaCycleCode, RcaOptions, RcaSiteScope, RcaStatus, RcaUnitCode } from '../../types/rca';
 
 const CYCLE_TONE: Record<RcaCycleCode | RcaUnitCode, string> = {
@@ -48,9 +49,14 @@ export function SourceValue({ value, unclassified, notApplicable }: { value: str
   return <span className="text-muted-foreground italic" title={`Source value: "${value || 'blank'}"`}>Unclassified{value ? ` (${value})` : ''}</span>;
 }
 
-/** Bucket options outside the approved bucketization are still offered (they exist in the records), marked for review. */
-const notApproved = (items: RcaOptions['final_buckets']) =>
-  items.map((o) => (o.approved === false && !o.unclassified ? { ...o, label: `${o.label} (not approved)` } : o));
+/** The Sub Bucket filter offers the approved Sub Buckets of the chosen Final Bucket (all of them when none is chosen). */
+const subBucketOptions = (options: RcaOptions, finalBucket: string) => {
+  const final = options.final_buckets.find((o) => o.value === finalBucket)?.label;
+  if (!final) return options.bucket_2;
+  // In the chosen Final Bucket's own taxonomy order, then the blank choice.
+  const byLabel = new Map(options.bucket_2.map((o) => [o.label, o]));
+  return [...approvedSubBuckets(options, final).flatMap((label) => byLabel.get(label) ?? []), ...options.bucket_2.filter((o) => o.unclassified)];
+};
 
 /** The RCA filters, in the same compact filter card and label style as the dashboard pages. */
 export function RcaFilterBar({ options, params, onChange, onReset, search = false, statusFilter = false, actions, lead }: {
@@ -91,8 +97,8 @@ export function RcaFilterBar({ options, params, onChange, onReset, search = fals
       {select('circle', 'Circle', 'All circles', [...new Map(circles.map((c) => [c.circle, c])).values()]
         .map((c) => ({ value: c.circle, label: `${c.circle} · ${c.circle_raw}` })), 'w-44')}
       <SiteScopeField value={get('site_scope')} onChange={(v) => onChange('site_scope', v)} />
-      {select('final_bucket', 'Final Bucket', 'All Final Buckets', notApproved(options.final_buckets), 'w-44')}
-      {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', notApproved(options.bucket_2), 'w-44')}
+      {select('final_bucket', 'Final Bucket', 'All Final Buckets', options.final_buckets, 'w-44')}
+      {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', subBucketOptions(options, get('final_bucket')), 'w-44')}
       {select('category', 'Cause category', 'All categories', [
         ...options.categories, { value: 'unreviewed', label: 'Unreviewed descriptions' },
       ], 'w-48')}

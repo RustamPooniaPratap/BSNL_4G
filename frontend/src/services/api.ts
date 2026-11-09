@@ -1,3 +1,4 @@
+import type { MatrixImportBatch, NewLayerUpload, UnmatchedReport, UptimeImportBatch } from '../types/matrixImport';
 import type {
   AlertsResponse,
   BreakdownResponse,
@@ -27,8 +28,6 @@ import type {
   ConversionActivity,
   DataSourceKind,
   DataSourceState,
-  DatabaseCompleteness,
-  ImportBatch,
   PortalUser,
   Role,
   AccessAssignment,
@@ -232,23 +231,6 @@ export async function signIn(email: string, password: string, remember = false) 
   return result.user;
 }
 
-/** Development bypass: the account it would sign in as, or null when the backend does not allow it here. */
-export async function fetchDevLogin(signal?: AbortSignal) {
-  try {
-    return await request<{ enabled: boolean; username: string; role: Role }>('/auth/dev-login/', undefined, { signal });
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404) return null;
-    throw error;
-  }
-}
-
-export async function devSignIn() {
-  await ensureCsrf();
-  const result = await send<{ user: AuthUser; csrf_token: string }>('/auth/dev-login/');
-  setCsrfToken(result.csrf_token);
-  return result.user;
-}
-
 export async function signOut() {
   try {
     await send('/auth/logout/');
@@ -293,19 +275,42 @@ export const revokeUserSessions = (id: number) => send<{ sessions_revoked: numbe
 export const fetchDataSource = (signal?: AbortSignal) => request<DataSourceState>('/data-source/', undefined, { signal });
 export const setDataSource = (source: DataSourceKind, acknowledgeWarnings: boolean) =>
   send<DataSourceState>('/data-source/', { source, confirm: true, acknowledge_warnings: acknowledgeWarnings }, 'PUT');
-export const fetchImports = (signal?: AbortSignal) => request<{ imports: ImportBatch[]; database: DatabaseCompleteness }>('/imports/', undefined, { signal });
-export async function previewImport(file: File, reconciliation: File | null, options: { project?: string; dailyOnly?: boolean } = {}) {
+
+// Consolidation Matrix (site master of the new data layer): a separate pipeline from the Up-Time Report import above.
+export async function previewMatrixImport(file: File) {
   const form = new FormData();
   form.append('file', file);
-  if (reconciliation) form.append('reconciliation_file', reconciliation);
-  if (options.project) form.append('project', options.project);
-  if (options.dailyOnly) form.append('daily_only', 'true');
-  return request<ImportBatch>('/imports/preview/', undefined, { method: 'POST', body: form });
+  return request<MatrixImportBatch>('/sitedata/matrix/preview/', undefined, { method: 'POST', body: form });
 }
-export const commitImport = (id: number, conflictSource: 'primary' | 'reconciliation' | '') =>
-  send<ImportBatch & { database: DatabaseCompleteness }>(`/imports/${id}/commit/`, { conflict_source: conflictSource });
-export const discardImport = (id: number) => send<ImportBatch>(`/imports/${id}/discard/`);
-export const importIssuesUrl = (id: number) => `${API_BASE_URL}/imports/${id}/issues.csv`;
+export const commitMatrixImport = (id: number) => send<MatrixImportBatch>(`/sitedata/matrix/${id}/commit/`, { confirm: true });
+export const discardMatrixImport = (id: number) => send<MatrixImportBatch>(`/sitedata/matrix/${id}/discard/`);
+export const matrixIssuesUrl = (id: number) => `${API_BASE_URL}/sitedata/matrix/${id}/issues.csv`;
+
+// Up-Time Report into the new data layer (the daily table every dashboard page reads); /imports/ above is the legacy destination.
+export async function previewSitedataUptime(file: File, project: string) {
+  const form = new FormData();
+  form.append('file', file);
+  if (project) form.append('project', project);
+  return request<UptimeImportBatch>('/sitedata/uptime/preview/', undefined, { method: 'POST', body: form });
+}
+export const commitSitedataUptime = (id: number) => send<UptimeImportBatch>(`/sitedata/uptime/${id}/commit/`, { confirm: true });
+export const discardSitedataUptime = (id: number) => send<UptimeImportBatch>(`/sitedata/uptime/${id}/discard/`);
+export const sitedataUptimeIssuesUrl = (id: number) => `${API_BASE_URL}/sitedata/uptime/${id}/issues.csv`;
+// Up-Time Report sites not in the site master: the data-quality report and the Admin's resolution actions.
+export const fetchUnmatchedSites = (signal?: AbortSignal) => request<UnmatchedReport>('/sitedata/uptime/unmatched/', undefined, { signal });
+export const refreshUnmatchedDetails = () => send<UnmatchedReport & { uploads_updated: number }>('/sitedata/uptime/unmatched/refresh/');
+export const mapAlternateIdentifier = (identifier: string, siteId: string, reason: string) =>
+  send<UnmatchedReport>('/sitedata/uptime/unmatched/map/', { identifier, site_id: siteId, reason });
+export const processPendingRecords = () =>
+  send<UnmatchedReport & { counts: Record<string, number> }>('/sitedata/uptime/unmatched/process/', { confirm: true });
+/** Recent uploads into the new data layer, both workbook types, newest first. */
+export async function fetchNewLayerUploads(signal?: AbortSignal) {
+  const [uptime, matrix] = await Promise.all([
+    request<{ imports: NewLayerUpload[] }>('/sitedata/uptime/', undefined, { signal }),
+    request<{ imports: NewLayerUpload[] }>('/sitedata/matrix/', undefined, { signal }),
+  ]);
+  return [...uptime.imports, ...matrix.imports].sort((a, b) => (b.uploaded_at ?? '').localeCompare(a.uploaded_at ?? ''));
+}
 
 export const fetchConversionActivity = (params: URLSearchParams, signal?: AbortSignal) =>
   request<ConversionActivity>('/dashboard/conversion-activity/', params, { signal });

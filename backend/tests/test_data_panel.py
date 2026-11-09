@@ -99,14 +99,20 @@ class AdminEditingTests(DataPanelCase):
     def test_rca_edits_follow_the_register_rules_and_are_recorded(self):
         rec = RcaRecord.objects.create(reporting_date=date(2026, 10, 1), project=G4, project_raw='4G Satu', circle='MP', circle_raw='Madhya Pradesh',
                                        site_id='UVMP1', site_key='UVMP1', final_bucket='TCS', final_bucket_key='tcs', rca_text='', rca_key='')
-        ok = self.save('rca', changes=[{'id': rec.pk, 'values': {'final_bucket': 'BSNL  OFC'}}])  # an old blank RCA text is not this edit's fault
+        ok = self.save('rca', changes=[{'id': rec.pk, 'values': {'final_bucket': 'bsnl ofc '}}])  # an old blank RCA text is not this edit's fault
         self.assertEqual(ok.status_code, 200, ok.content)
         rec.refresh_from_db()
-        self.assertEqual((rec.final_bucket, rec.final_bucket_key, rec.project_raw), ('BSNL  OFC', 'bsnl ofc', '4G Satu'))
-        self.assertEqual(RcaEvent.objects.get(record=rec).changes['final_bucket'], {'from': 'TCS', 'to': 'BSNL  OFC'})
+        # The approved BSNL OFC (case and surrounding spaces ignored), kept as entered (trimmed), never renamed.
+        self.assertEqual((rec.final_bucket, rec.final_bucket_key, rec.project_raw), ('bsnl ofc', 'bsnl ofc', '4G Satu'))
+        self.assertEqual(RcaEvent.objects.get(record=rec).changes['final_bucket'], {'from': 'TCS', 'to': 'bsnl ofc'})
         refused = self.save('rca', changes=[{'id': rec.pk, 'values': {'rca_text': ''}}])
         self.assertEqual(refused.status_code, 400)
-        added = self.save('rca', additions=[{'values': {'reporting_date': '2026-10-02', 'project': G4, 'circle': 'MP', 'site_id': 'UVMP1', 'rca_text': 'Fiber cut'}}])
+        # The approved taxonomy, as for an upload: an unapproved Final Bucket and a Sub Bucket of another Final Bucket are refused.
+        for values in ({'final_bucket': 'BSNL  OFC'}, {'final_bucket': 'TCS', 'bucket_2': 'SSA OFC'}):
+            self.assertEqual(self.save('rca', changes=[{'id': rec.pk, 'values': values}]).status_code, 400, values)
+        base = {'reporting_date': '2026-10-02', 'project': G4, 'circle': 'MP', 'site_id': 'UVMP1', 'rca_text': 'Fiber cut'}
+        self.assertEqual(self.save('rca', additions=[{'values': base}]).status_code, 400)  # no Final Bucket
+        added = self.save('rca', additions=[{'values': {**base, 'final_bucket': 'BSNL OFC'}}])
         self.assertEqual(added.status_code, 200, added.content)
         self.assertEqual(RcaRecord.objects.get(rca_text='Fiber cut').source, RcaRecord.Source.MANUAL)
 

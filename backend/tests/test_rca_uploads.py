@@ -17,7 +17,7 @@ from tests.test_rca import RcaTestCase, uptime_sites, workbook
 
 D21, D22 = datetime(2026, 10, 21), datetime(2026, 10, 22)
 OD_21 = [[D21, '4G Satu', 'Odisha', 'OD0001', 'Bravo', 'KORAPUT', 'KORAPUT', 'Yes', 90, 'BSNL OFC', 'Fiber', 'Cut'],
-         [D21, '4G Satu', 'Odisha', 'OD0002', 'Echo', 'KORAPUT', 'KORAPUT', 'Yes', 30, 'Other Media', '', '']]
+         [D21, '4G Satu', 'Odisha', 'OD0002', 'Echo', 'KORAPUT', 'KORAPUT', 'Yes', 30, 'Others', '', '']]
 RJ_21 = [[D21, '4G Satu', 'Rajasthan', 'RJ0001', 'Charlie', 'Jaisalmer', 'JODHPUR', 'Yes', 5, 'TCS', 'TCS', 'TCS issue']]
 LWE_OD_21 = [[D21, 'LWE', 'Odisha', 'LWEOD0001', 'Lima', '', '', 'Yes', 4, 'BSNL OFC', 'Fiber', 'Cut']]
 OD_22 = [[D22, '4G Satu', 'Odisha', 'OD0001', 'Bravo', '', '', 'Yes', 60, 'HFCL', 'HFCL', 'UBR alignment']]

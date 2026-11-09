@@ -124,10 +124,10 @@ class TrendTests(MetricsTestCase):
             'LWE': 90.0,
         })
 
-    def test_weekly_uses_reported_days_only(self):
+    def test_a_week_in_progress_has_no_value(self):
+        # Week 1 has 3 of its 7 days reported: no week to date (a complete week is tested in test_dashboard_source).
         weeks = metrics.trend(self.ds, Selection('4G Saturation', None, 'on_air'), OCT1, OCT3)['weeks']
-        self.assertEqual(weeks[0]['days_reported'], 3)
-        self.assertEqual(weeks[0]['uptime_pct'], round(100 * (1 - 1656 / (1440 * 9)), 4))
+        self.assertEqual((weeks[0]['days_reported'], weeks[0]['complete'], weeks[0]['uptime_pct']), (0, False, None))
         self.assertIsNone(weeks[1]['uptime_pct'])
         self.assertEqual(weeks[3]['days_in_week'], 10)
 
@@ -140,9 +140,8 @@ class OutageByPeriodTests(MetricsTestCase):
         self.assertEqual(day1['outage_by_report_type'], {'4G Saturation': 72, 'LWE': 288})
         self.assertEqual(day1['outage_minutes'], 360)
         self.assertEqual(result['series'][3]['outage_by_report_type'], {'4G Saturation': None, 'LWE': None})  # not reported
-        week1 = result['weeks'][0]
-        self.assertEqual(week1['outage_minutes'], 1656 + 1008)
-        self.assertEqual(week1['outage_by_report_type'], {'4G Saturation': 1656, 'LWE': 1008})
+        week1 = result['weeks'][0]  # 3 of 7 days: in progress, so no week-to-date outage
+        self.assertEqual((week1['outage_minutes'], week1['outage_by_report_type']), (None, {'4G Saturation': None, 'LWE': None}))
         self.assertIsNone(result['weeks'][1]['outage_minutes'])  # no data is not zero
 
 
@@ -172,11 +171,8 @@ class CircleSeriesTests(MetricsTestCase):
 class WeeklyComparisonTests(MetricsTestCase):
     def test_weeks_split_by_report_type_with_change(self):
         weeks = metrics.trend(self.ds, Selection(None, None, 'on_air'), OCT1, OCT3)['weeks']
-        first = weeks[0]
-        self.assertEqual(first['by_report_type'], {
-            '4G Saturation': round(100 * (1 - 1656 / (1440 * 9)), 4),
-            'LWE': round(100 * (1 - 1008 / (1440 * 5)), 4),  # LWEMP01 288 + LWEOD01 720, 5 site-days
-        })
+        first = weeks[0]  # in progress (3 of 7 days): no value per report type either
+        self.assertEqual(first['by_report_type'], {'4G Saturation': None, 'LWE': None})
         self.assertIsNone(first['change_pts'])  # nothing earlier to compare with
         self.assertIsNone(weeks[1]['change_pts'])  # week 2 has no data
         self.assertEqual(weeks[1]['by_report_type'], {'4G Saturation': None, 'LWE': None})

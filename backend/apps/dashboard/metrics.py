@@ -130,6 +130,39 @@ def _window(block: np.ndarray) -> tuple[float, int]:
     return float(np.nansum(block)), int((~np.isnan(block)).sum())
 
 
+def month_values(ds: Dataset, i: int, rows: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per site of ``rows`` for history month ``i`` of ``ds.months``: (outage minutes, reported days, down at least once).
+
+    From the month's daily records when the source has them (``daily_history``): a missing day is excluded from both the
+    minutes and the days, never counted as zero outage, and values outside a site's effective dates are already left
+    out. Otherwise from the monthly total over the month's calendar days (sources without daily history). A site
+    without a value has 0 days (no uptime), never zero outage.
+    """
+    key = ds.months[i]['start'].strftime('%Y-%m')
+    entry = next((h for h in ds.daily_history if h['key'] == key), None)
+    if entry is not None and not np.isnan(entry['outage']).all():
+        block = entry['outage'][rows]
+        return np.nansum(block, axis=1), (~np.isnan(block)).sum(axis=1), (np.nan_to_num(block, nan=0.0) > 0).any(axis=1)
+    values = ds.monthly_outage[rows, i]
+    reported = ~np.isnan(values)
+    return np.where(reported, values, 0.0), np.where(reported, ds.months[i]['days'], 0), reported & (np.nan_to_num(values, nan=0.0) > 0)
+
+
+def _per_site_uptime(outage: np.ndarray, days: np.ndarray) -> np.ndarray:
+    with np.errstate(invalid='ignore', divide='ignore'):
+        return np.where(days > 0, 100.0 * (1.0 - outage / (MINUTES_PER_DAY * np.maximum(days, 1))), np.nan)
+
+
+def week_columns(ds: Dataset, first: int, last: int) -> tuple[list[int], bool]:
+    """Columns of the reported dates in a week (days ``first``..``last`` of the month, Week 4 to the month end) and
+    whether the week is complete: every day of it is a reporting date. An incomplete week (one in progress) has no
+    value anywhere: there is no week to date."""
+    last = min(last, ds.dates[-1].day)
+    days = [d for d in ds.dates if first <= d.day <= last]
+    cols = [i for i, d in enumerate(ds.dates) if first <= d.day <= last and d in ds.reported_dates]
+    return cols, bool(days) and len(cols) == len(days)
+
+
 def summary(ds: Dataset, selection: Selection, day: date) -> dict:
     rows = np.flatnonzero(scope_mask(ds, selection))
     column = ds.position(day)
@@ -291,7 +324,9 @@ def weekly(ds: Dataset, rows: np.ndarray, type_rows: dict[str, np.ndarray] | Non
     previous = None
     for label, first, last in WEEKS:
         last = min(last, month_end)
-        cols = [i for i, d in enumerate(ds.dates) if first <= d.day <= last and d in ds.reported_dates]
+        cols, complete = week_columns(ds, first, last)
+        if not complete:  # a week in progress: no week-to-date value
+            cols = []
         block = ds.outage[np.ix_(rows, cols)]
         value = uptime_pct(*_window(block))
         weeks.append({
@@ -300,6 +335,7 @@ def weekly(ds: Dataset, rows: np.ndarray, type_rows: dict[str, np.ndarray] | Non
             'end': ds.dates[0].replace(day=last).isoformat(),
             'days_in_week': last - first + 1,
             'days_reported': len(cols),
+            'complete': complete,
             'uptime_pct': value,
             'change_pts': _change(value, previous),
             'by_report_type': {
@@ -480,8 +516,8 @@ def threshold_analysis(ds: Dataset, selection: Selection, day: date, period: str
     periods: list[tuple[dict, np.ndarray]] = []
 
     for i, month in enumerate(ds.months):
-        values = ds.monthly_outage[rows, i]
-        uptime = 100.0 * (1.0 - values / (MINUTES_PER_DAY * month['days']))
+        m_outage, m_days, _down = month_values(ds, i, rows)
+        uptime = _per_site_uptime(m_outage, m_days)
         end = month['start'] + timedelta(days=month['days'] - 1)
         periods.append((_period(month['start'].strftime('%Y-%m'), month['label'], 'month', month['start'], end,
                                 month['days'], month['days']), uptime))
@@ -494,11 +530,12 @@ def threshold_analysis(ds: Dataset, selection: Selection, day: date, period: str
     month_end = ds.dates[-1].day
     for number, (label, first, last) in enumerate(WEEKS, start=1):
         start, end = ds.dates[0].replace(day=first), ds.dates[0].replace(day=min(last, month_end))
-        # Only days up to the reporting date count, so a week in progress is partial.
-        cols = [i for i, d in enumerate(ds.dates) if start <= d <= min(end, day) and d in ds.reported_dates]
-        uptime = site_uptime(ds.outage[np.ix_(rows, cols)]) if cols else np.full(len(rows), np.nan)
-        periods.append((_period(f'w{number}', f'Wk-{number}', 'week', start, end, (end - start).days + 1, len(cols),
-                                partial=0 < len(cols) and day < end),
+        # Only a complete week (every day reported, up to the reporting date) has values: no week to date.
+        cols, complete = week_columns(ds, first, last)
+        complete = complete and end <= day
+        uptime = site_uptime(ds.outage[np.ix_(rows, cols)]) if complete else np.full(len(rows), np.nan)
+        periods.append((_period(f'w{number}', f'Wk-{number}', 'week', start, end, (end - start).days + 1, len(cols) if complete else 0,
+                                partial=not complete),
                         uptime))
 
     for d in ds.reported_dates:
@@ -608,12 +645,11 @@ def period_summary(ds: Dataset, selection: Selection, *, dates: list[date] | Non
     if month_keys is not None:
         for i, month in enumerate(ds.months):
             if month['start'].strftime('%Y-%m') in month_keys:
-                values = ds.monthly_outage[rows, i]
-                reported = ~np.isnan(values)
-                outage[reported] += values[reported]
-                site_days[reported] += month['days']
-                down[reported] |= values[reported] > 0  # a month's total > 0: down at least once in it
-                months_used += bool(reported.any())
+                m_outage, m_days, m_down = month_values(ds, i, rows)
+                outage += m_outage
+                site_days += m_days
+                down |= m_down
+                months_used += bool((m_days > 0).any())
         if current_key in month_keys:
             cols = [ds.position(d) for d in ds.reported_dates]
     else:
@@ -696,6 +732,19 @@ def monthly(ds: Dataset, selection: Selection, day: date, keys: set[str] | None 
         """Like measure(), without adding to the period totals (circle series)."""
         return uptime_pct(float(np.nansum(values)), int((~np.isnan(values)).sum()) * (days if values.ndim == 1 else 1))
 
+    def history(i: int, r: np.ndarray, key=False) -> float | None:
+        """A history month of ``r`` from month_values (daily records where available); adds to the totals of ``key``."""
+        m_outage, m_days, _down = month_values(ds, i, r)
+        outage, site_days = float(m_outage.sum()), int(m_days.sum())
+        if key is not False:
+            totals[key][0] += outage
+            totals[key][1] += site_days
+        return uptime_pct(outage, site_days)
+
+    def history_outage(i: int, r: np.ndarray) -> float | None:
+        m_outage, m_days, _down = month_values(ds, i, r)
+        return round(float(m_outage.sum()), 2) if (m_days > 0).any() else None
+
     def measure(values: np.ndarray, days: int, key) -> float | None:
         """values: [sites] month totals, or [sites, days] daily values for the current month."""
         outage = float(np.nansum(values))
@@ -710,9 +759,9 @@ def monthly(ds: Dataset, selection: Selection, day: date, keys: set[str] | None 
         key = month['start'].strftime('%Y-%m')
         if keys is not None and key not in keys:
             continue
-        values = ds.monthly_outage[rows, i]
-        reported = int((~np.isnan(values)).sum())
-        value = measure(values, month['days'], None)
+        m_outage, m_days, _down = month_values(ds, i, rows)
+        reported = int((m_days > 0).sum())
+        value = history(i, rows, None)
         months.append({
             'key': key,
             'label': month['label'],
@@ -722,13 +771,13 @@ def monthly(ds: Dataset, selection: Selection, day: date, keys: set[str] | None 
             'sites_in_scope': len(rows),
             'sites_reported': reported,
             'uptime_pct': value,
-            'uptime_pct_blank_as_zero': uptime_pct(float(np.nansum(values)), len(rows) * month['days']) if reported else None,
+            'uptime_pct_blank_as_zero': uptime_pct(float(m_outage.sum()), len(rows) * month['days']) if reported else None,
             'change_pts': _change(value, previous),
-            'by_report_type': {t: measure(ds.monthly_outage[r, i], month['days'], t) for t, r in type_rows.items()},
-            'outage_minutes': outage_total(values),
-            'outage_by_report_type': {t: outage_total(ds.monthly_outage[r, i]) for t, r in type_rows.items()},
-            'by_circle': {k: month_uptime(ds.monthly_outage[r, i], month['days']) for k, r in c_rows.items()},
-            'outage_by_circle': {k: outage_total(ds.monthly_outage[r, i]) for k, r in c_rows.items()},
+            'by_report_type': {t: history(i, r, t) for t, r in type_rows.items()},
+            'outage_minutes': history_outage(i, rows),
+            'outage_by_report_type': {t: history_outage(i, r) for t, r in type_rows.items()},
+            'by_circle': {k: history(i, r) for k, r in c_rows.items()},
+            'outage_by_circle': {k: history_outage(i, r) for k, r in c_rows.items()},
         })
         if value is not None:
             previous = value
@@ -892,8 +941,8 @@ def team_monthly_nsla(ds: Dataset, selection: Selection, day: date, group: str, 
     rows = np.flatnonzero(scope_mask(ds, selection))
     periods: list[tuple[dict, np.ndarray]] = []
     for i, entry in enumerate(ds.months):
-        values = ds.monthly_outage[rows, i]
-        uptime = 100.0 * (1.0 - values / (MINUTES_PER_DAY * entry['days']))
+        m_outage, m_days, _down = month_values(ds, i, rows)  # daily records where available (missing days excluded)
+        uptime = _per_site_uptime(m_outage, m_days)
         if np.isnan(uptime).all():
             continue
         end = entry['start'] + timedelta(days=entry['days'] - 1)

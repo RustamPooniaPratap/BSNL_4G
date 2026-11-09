@@ -243,38 +243,80 @@ class UserAdministrationTests(AuthTestCase):
         self.assertEqual(role_of(root), 'admin')  # superusers are Admins
 
 
-class DevLoginBypassTests(AuthTestCase):
-    ON = {'DEBUG': True, 'DEV_LOGIN_BYPASS': True, 'DEV_LOGIN_USER': 'ravi.ci'}
+class NoLoginBypassTests(AuthTestCase):
+    """The development sign-in bypass is removed: only a valid login ID and password create a session."""
+    OLD = {'DEBUG': True, 'DEV_LOGIN_BYPASS': True, 'DEV_LOGIN_USER': 'asha.admin'}  # the former switches
 
-    def bypass(self, client=None, **extra):
-        client = client or self.client
-        return client.post(reverse('auth-dev-login'), {}, content_type='application/json', HTTP_X_CSRFTOKEN=self.csrf(client), **extra)
+    def signed_in(self, client=None) -> bool:
+        return '_auth_user_id' in (client or self.client).session
 
-    def test_off_by_default(self):
-        self.assertEqual(self.client.get(reverse('auth-dev-login')).status_code, 404)
-        self.assertEqual(self.bypass().status_code, 404)
-        self.assertEqual(self.client.get(reverse('auth-me')).status_code, 401)
+    def test_the_former_bypass_endpoint_does_not_exist_even_with_the_old_settings_on(self):
+        from django.urls import NoReverseMatch
+        with self.assertRaises(NoReverseMatch):
+            reverse('auth-dev-login')
+        with override_settings(**self.OLD):
+            for method in ('get', 'post'):
+                response = getattr(self.client, method)('/api/auth/dev-login/', {}, content_type='application/json',
+                                                        HTTP_X_CSRFTOKEN=self.csrf(), REMOTE_ADDR='127.0.0.1')
+                self.assertEqual(response.status_code, 404, method)
+            self.assertFalse(self.signed_in())
+            self.assertEqual(self.client.get(reverse('auth-me')).status_code, 401)
 
-    def test_signs_in_as_the_configured_account_with_its_own_role_when_every_guard_holds(self):
-        with override_settings(**self.ON), self.assertLogs('audit', level='INFO') as logs:
-            self.assertEqual(self.client.get(reverse('auth-dev-login')).json(), {'enabled': True, 'username': 'ravi.ci', 'role': 'ci'})
-            response = self.bypass()
-            self.assertEqual(response.json()['user']['role'], 'ci')
-            self.assertEqual(self.client.get(reverse('dashboard-summary')).status_code, 200)
-            self.assertEqual(self.client.get(reverse('dashboard-teams')).status_code, 403)  # still a CI
-        self.assertIn('login_bypass', '\n'.join(logs.output))
+    def test_no_setting_or_code_path_for_a_bypass_remains(self):
+        from pathlib import Path
 
-    def test_refused_without_debug_from_another_computer_without_csrf_or_for_an_inactive_account(self):
-        with override_settings(**{**self.ON, 'DEBUG': False}):
-            self.assertEqual(self.bypass().status_code, 404)
-        with override_settings(**self.ON):
-            self.assertEqual(self.bypass(REMOTE_ADDR='10.0.0.7').status_code, 404)
-            no_token = self.client.post(reverse('auth-dev-login'), {}, content_type='application/json')
-            self.assertEqual(no_token.status_code, 403)
-            self.ci.is_active = False
-            self.ci.save()
-            self.assertEqual(self.bypass().status_code, 404)
+        from django.conf import settings
+        self.assertFalse(hasattr(settings, 'DEV_LOGIN_BYPASS'))
+        self.assertFalse(hasattr(settings, 'DEV_LOGIN_USER'))
+        apps_dir = Path(settings.BASE_DIR) / 'apps'
+        sources = [*apps_dir.rglob('*.py'), Path(settings.BASE_DIR) / 'config' / 'settings.py', Path(settings.BASE_DIR) / 'config' / 'urls.py']
+        found = [str(p) for p in sources if 'DEV_LOGIN' in p.read_text(encoding='utf-8') or 'dev-login' in p.read_text(encoding='utf-8')]
+        self.assertEqual(found, [])
 
+    def test_valid_credentials_sign_in_and_invalid_ones_are_refused(self):
+        refused = self.sign_in('asha.admin', 'wrong-password')
+        self.assertEqual(refused.status_code, 400)
+        self.assertFalse(self.signed_in())
+        self.assertEqual(self.sign_in('nobody.here').status_code, 400)
+        self.assertFalse(self.signed_in())
+        ok = self.sign_in('asha.admin')
+        self.assertEqual((ok.status_code, ok.json()['user']['role']), (200, 'admin'))
+        self.assertTrue(self.signed_in())
+
+    def test_no_request_without_valid_credentials_creates_a_session_on_any_endpoint(self):
+        """Every URL of the project, GET and POST, anonymously: none signs the client in."""
+        from django.urls import URLPattern, URLResolver, get_resolver
+
+        def paths(patterns, prefix=''):
+            for p in patterns:
+                route = str(p.pattern)
+                if isinstance(p, URLResolver):
+                    yield from paths(p.url_patterns, prefix + route)
+                elif isinstance(p, URLPattern):
+                    yield prefix + route
+        import re
+        urls = sorted({'/' + re.sub(r'<(?:int:)?\w+>', '1', re.sub(r'<str:\w+>|<slug:\w+>|<path:\w+>', 'x', u)).lstrip('^').rstrip('$')
+                       for u in paths(get_resolver().url_patterns)})
+        self.assertGreater(len(urls), 50)
+        client = Client()  # no CSRF enforcement: the strictest case for a shortcut
+        with override_settings(**self.OLD):
+            for url in urls:
+                for method in ('get', 'post'):
+                    getattr(client, method)(url, {'username': 'asha.admin'}, content_type='application/json')
+                    self.assertFalse('_auth_user_id' in client.session, f'{method.upper()} {url} signed the client in')
+
+    def test_protected_apis_need_a_session_and_roles_stay_enforced(self):
+        anonymous = Client()
+        for name in ('dashboard-summary', 'allkpis-summary', 'site-portfolio-summary', 'sitedata-matrix-list', 'import-list', 'auth-users', 'rca-records'):
+            self.assertIn(anonymous.get(reverse(name)).status_code, (401, 403), name)
+        ci = Client()
+        self.sign_in('ravi.ci', client=ci)
+        for name in ('auth-users', 'sitedata-matrix-list', 'import-list', 'dashboard-teams'):  # Admin only
+            self.assertEqual(ci.get(reverse(name)).status_code, 403, name)
+        admin = Client()
+        self.sign_in('asha.admin', client=admin)
+        for name in ('auth-users', 'sitedata-matrix-list', 'import-list'):
+            self.assertEqual(admin.get(reverse(name)).status_code, 200, name)
 
 
 class EmailAuthenticationTests(AuthTestCase):
