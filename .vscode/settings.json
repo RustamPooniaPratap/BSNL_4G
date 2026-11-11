@@ -1,5 +1,6 @@
 {
     "powerquery.client.additionalSymbolsDirectories": [
         "c:/Users/gaura/OneDrive/Desktop/4G Saturation_Portal/.vscode/excel-pq-symbols"
-    ]
+    ],
+    "python.terminal.useEnvFile": true
 }
