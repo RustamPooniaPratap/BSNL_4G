@@ -38,6 +38,8 @@ class NotReady(Exception):
     pass
 
 
+HEARTBEAT = 'alerts_worker_heartbeat'  # common.Setting key: when the worker last ran
+
 def clean_emails(values) -> list[str]:
     """Valid, lower-cased, de-duplicated addresses (raises ValidationError naming the first invalid one)."""
     out = []
@@ -92,7 +94,7 @@ def plan(execution: Execution) -> list[Message]:
     """The emails of one run (stored as queued messages); none when nothing is pending."""
     a = execution.automation
     users, emails, cc, bcc = _recipients(a)
-    base = {'reports': a.attachments, 'day': a.report_day, 'extra_file': a.extra_file_id}
+    base = {'reports': a.attachments, 'day': a.report_day, 'extra_file': a.extra_file_id, 'population': a.population}
     project_name = a.project or 'All projects'
     circle_name = ', '.join(a.circles) or 'All circles'
     msgs = []
@@ -119,7 +121,8 @@ def plan(execution: Execution) -> list[Message]:
                                      'status': ev.get('status', 'Failed')}, spec={**base, 'reports': []}))
     else:  # uptime report, custom email
         values = {'project_name': project_name, 'circle_name': circle_name, 'report_name': a.name, 'report_period': _period_text(a),
-                  'notification_title': a.name, 'notification_message': '', 'report_date': _period_text(a), 'status': ''}
+                  'notification_title': a.name, 'notification_message': '', 'report_date': _period_text(a), 'status': '',
+                  'population': population_label(a.population)}
         scope = reports.scope_pairs(a.project, a.circles, None)
         if a.distribution == Automation.Distribution.PER_RECIPIENT:
             for u in users:
@@ -136,6 +139,12 @@ def plan(execution: Execution) -> list[Message]:
     return [m for m in msgs if m]
 
 
+def population_label(population: str | None) -> str:
+    """The label of an automation's site population (shown in the report email body)."""
+    from apps.dashboard.metrics import DEFAULT_SCOPE, population as info
+    return info(population or DEFAULT_SCOPE)['label']
+
+
 def _period_text(a: Automation) -> str:
     return {'today': 'Today', 'yesterday': 'Previous day', 'latest': 'Latest reporting date'}.get(a.report_day, a.report_day)
 
@@ -145,7 +154,7 @@ def pending(a: Automation) -> list[tuple[str, str, object, str]]:
     pairs = reports.scope_pairs(a.project, a.circles, None)
     out = []
     if a.kind == Automation.Kind.CSV_REMINDER:
-        from apps.uptimedb import arrivals
+        from apps.sitedata import arrivals
         day = reports.reporting_day(a.report_day, None)
         for i in arrivals.tracker(day, pairs)['items']:
             if i['sites_expected'] and i['data_state'] in ('none', 'partial') and i['upload_state'] != 'imported':
@@ -167,7 +176,7 @@ def attachments_for(msg: Message) -> list[tuple[str, bytes, str]]:
     pairs = None if spec.get('pairs') is None else {tuple(p) for p in spec['pairs']}
     files, meta = [], []
     for r in spec.get('reports', []):
-        name, data, mime, period = reports.build(r['report'], spec.get('day', 'yesterday'), pairs)
+        name, data, mime, period = reports.build(r['report'], spec.get('day', 'yesterday'), pairs, spec.get('population'))
         files.append((name, data, mime))
         meta.append({'name': name, 'report': r['report'], 'format': r.get('format', ''), 'period': period, 'size': len(data)})
     if spec.get('extra_file'):
@@ -279,7 +288,7 @@ def tick(now=None) -> dict:
         send_message(msg)
         finish(msg.execution)
         counts['retried'] += 1
-    from apps.uptimedb.models import AppSetting
-    AppSetting.objects.update_or_create(key='alerts_worker_heartbeat', defaults={'value': now.isoformat()})
+    from apps.common.models import Setting
+    Setting.put(HEARTBEAT, now.isoformat())
     return counts
 

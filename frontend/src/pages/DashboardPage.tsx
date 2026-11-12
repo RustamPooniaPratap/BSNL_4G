@@ -11,14 +11,17 @@ import { KpiCards } from '../components/dashboard/KpiCards';
 import { OutageChart } from '../components/dashboard/OutageChart';
 import { PeriodKpi } from '../components/dashboard/PeriodKpi';
 import { TrendChart } from '../components/dashboard/TrendChart';
+import { ProvisionalBanner } from '../components/reporting/ReportingStatus';
 import { UPTIME_VIEWS, type UptimeChartView } from '../components/dashboard/constants';
 import type { OutageChartView } from '../components/dashboard/OutageChart';
 import { cn } from '@/lib/utils';
 import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { useFilterOptions } from '../hooks/useFilterOptions';
 import { selectDays, useDashboardFilters } from '../hooks/useDashboardFilters';
-import { fetchBreakdowns, fetchFilterOptions, fetchMonthly, fetchPeriod, fetchSummary, fetchTrends } from '../services/api';
+import { fetchBreakdowns, fetchMonthly, fetchPeriod, fetchSummary, fetchTrends } from '../services/api';
 import { allCircleKeys, lowestCircles, parseSelection, selectedSeries } from '../lib/circleSeries';
+import { populationSites } from '../lib/population';
 
 /** Threshold Analysis › Uptime Buckets & Site Details (the bucket chart and site table moved there). */
 const BUCKETS_PATH = '/thresholds/buckets';
@@ -35,7 +38,7 @@ export function DashboardPage() {
   const workbook = useWorkbook();
   const { version } = workbook;
   // Every key includes the workbook version, so a new upload refreshes all panels.
-  const options = useApiQuery(workbook.active ? `${version}|filters` : null, fetchFilterOptions);
+  const options = useFilterOptions();
   const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -59,11 +62,11 @@ export function DashboardPage() {
     return (
       <Card className="mx-auto mt-10 max-w-xl items-center gap-3 px-8 py-10 text-center">
         <FileUp className="size-8 text-muted-foreground" aria-hidden="true" />
-        <h1 className="text-lg font-semibold">No Master workbook loaded</h1>
+        <h1 className="text-lg font-semibold">No reporting data loaded</h1>
         <p className="text-sm text-muted-foreground">
-          Upload the consolidated 4G Saturation &amp; LWE workbook to populate the dashboard. No sample data is shown until then.
+          Import the Uptime Master and Consolidation Matrix (Data Source page) to populate the dashboard. No sample data is shown until then.
         </p>
-        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Upload workbook</Link>
+        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Import data</Link>
       </Card>
     );
   }
@@ -97,7 +100,7 @@ export function DashboardPage() {
   // Picked dates apply to the outage chart too, so both charts show the same days.
   const pickedTrend = trend.data && filters.dayList.length
     ? { ...trend.data, series: selectDays(trend.data.series, filters.dayList) } : trend.data;
-  const scopeLabel = options.data.scopes.find((s) => s.value === filters.scope)?.label ?? filters.scope;
+  const scopeLabel = populationSites(filters.scope);
   // Chart views live in the URL (?uptime_view=circles&series=…&outage_view=circles), so links keep them.
   const allKeys = allCircleKeys(options.data.circles);
   // The circles in the current data (only LWE circles on the LWE page), in a stable order (4G first).
@@ -143,6 +146,9 @@ export function DashboardPage() {
         title="Network uptime overview"
         description={<>{options.data.month.label} reporting month · {filterSummary(filters.reportType, filters.circle, scopeLabel)}</>} />
 
+      {/* Month to date Provisional: the units still missing (the selection's own units, from the summary when loaded). */}
+      <ProvisionalBanner continuity={summary.data?.source.continuity ?? options.data.source.continuity} />
+
       {summary.error ? (
         <Alert variant="destructive"><AlertTriangle /><AlertTitle>Key indicators unavailable</AlertTitle><AlertDescription>{summary.error.message}</AlertDescription></Alert>
       ) : (
@@ -184,5 +190,5 @@ export function DashboardPage() {
 }
 
 function filterSummary(reportType: string, circle: string, scopeLabel: string) {
-  return [reportType || 'All projects', circle ? `Circle ${circle}` : 'All circles', scopeLabel].join(' · ');
+  return [reportType || 'All projects', circle ? `Circle ${circle}` : 'All circles', `Population: ${scopeLabel}`].join(' · ');
 }

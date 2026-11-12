@@ -1,192 +1,60 @@
-"""CSV arrival tracking (/daily-ingestion): stored daily-data coverage and raw CSV uploads per project, circle and date.
-
-Synthetic records only, in the isolated test database. Daily records written by the "Master workbook" batch stand in
-for the workbook import; raw uploads go through the real preview / commit endpoints.
-"""
+"""CSV arrival tracking on the data layer (/api/arrival-tracker/, apps.sitedata.arrivals): coverage of the daily table
+against the sites On-Air on each date (matrix Site On-Air Date), raw CSV upload states, and Admin-only access.
+Test database only."""
 from datetime import date
 
+from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from apps.organization.services import associations
-from apps.uptimedb import arrivals
-from apps.uptimedb.models import DataImportBatch, SiteDailyPerformance, UptimeSite
+from apps.sitedata import arrivals
+from apps.sitedata.models import UploadBatch
 from tests.auth_helpers import portal_user
-from tests.test_raw_upload import RawUploadTestCase, row
+from tests.sitedata_factory import make_daily, make_site
 
-OD_4G = ('UVOR001', 'UVOR002', 'UVOR003')
+G4, LWE = '4G Saturation', 'LWE'
+DAY = date(2026, 10, 5)
 
 
-class ArrivalTrackerTestCase(RawUploadTestCase):
+class ArrivalTrackerTests(TestCase):
     def setUp(self):
-        super().setUp()
-        # Not On-Air: in the master, but never an expected daily record.
-        self.off_air = UptimeSite.objects.create(project='4G Saturation', circle='OD', site_id='UVOR009', site_key='UVOR009',
-                                                 batch=self.master, source_row=9, on_air=False)
+        self.mp1 = make_site('UVMP001', technology=G4, circle='MP', on_air_date=date(2026, 1, 1))
+        self.mp2 = make_site('UVMP002', technology=G4, circle='MP', on_air_date=date(2026, 10, 5))  # On-Air from 5 Oct
+        self.mp3 = make_site('UVMP003', technology=G4, circle='MP', on_air_date=None)  # never On-Air: not expected
+        self.lwe = make_site('LWEMP01', technology=LWE, circle='MP', on_air_date=date(2026, 1, 1))
+        self.admin = portal_user('tracker-admin', 'admin')
+
+    def item(self, data, project, circle):
+        return next(i for i in data['items'] if (i['project'], i['circle']) == (project, circle))
+
+    def test_expected_sites_follow_the_matrix_on_air_dates(self):
+        make_daily(self.mp1, date(2026, 10, 4), 0)
+        make_daily(self.mp1, DAY, 0)
+        data = arrivals.tracker(DAY, None, date(2026, 10, 4), DAY)
+        mp = self.item(data, G4, 'MP')
+        self.assertEqual((mp['sites_total'], mp['sites_expected'], mp['sites_with_data'], mp['data_state']), (3, 2, 1, 'partial'))
+        self.assertEqual([(r['date'], r['state']) for r in mp['range']], [('2026-10-04', 'complete'), ('2026-10-05', 'partial')])
+        self.assertEqual(mp['latest_complete_date'], '2026-10-04')
+        self.assertEqual(mp['data_source']['master_workbook'], 1)  # set by the Uptime Master
+        # 4G data never satisfies LWE of the same circle.
+        self.assertEqual(self.item(data, LWE, 'MP')['data_state'], 'none')
+
+    def test_upload_states_of_the_date(self):
+        UploadBatch.objects.create(kind=UploadBatch.Kind.RAW_CSV_4G, original_filename='mp.csv', technology=G4, circle='MP', reporting_date=DAY,
+                                   processing_status='committed', committed_at=timezone.now(), records_accepted=2)
+        UploadBatch.objects.create(kind=UploadBatch.Kind.RAW_CSV_LWE, original_filename='lwe.csv', technology=LWE, circle='MP', reporting_date=DAY,
+                                   records_accepted=1)
+        data = arrivals.tracker(DAY, None)
+        self.assertEqual(self.item(data, G4, 'MP')['upload_state'], 'imported')
+        self.assertEqual(self.item(data, LWE, 'MP')['upload_state'], 'awaiting_confirmation')
+        self.assertEqual(self.item(data, G4, 'MP')['latest_import_date'], DAY.isoformat())
+
+    def test_admin_only_and_parameters(self):
         self.client.force_login(self.admin)
-
-    def store(self, sites, day, outage=10.0, batch=None):
-        for site in sites:
-            target = self.off_air if site == 'UVOR009' else self.sites[site]
-            SiteDailyPerformance.objects.create(site=target, date=day, outage_minutes=outage, batch=batch or self.master)
-
-    def get(self, day, **params):
-        response = self.client.get(reverse('arrival-tracker'), {'date': day, **params})
-        self.assertEqual(response.status_code, 200, response.content)
-        return response.json()
-
-    def item(self, body, circle='OD', project='4G Saturation'):
-        return next(i for i in body['items'] if i['project'] == project and i['circle'] == circle)
-
-
-class CoverageTests(ArrivalTrackerTestCase):
-    def test_master_workbook_data_is_recognised_without_any_raw_upload(self):
-        self.store(OD_4G, date(2026, 10, 12))
-        od = self.item(self.get('2026-10-12'))
-        self.assertEqual((od['data_state'], od['upload_state'], od['uploads']), ('complete', 'none', []))  # not "pending"
-        self.assertEqual((od['sites_expected'], od['sites_with_data'], od['sites_missing'], od['coverage_pct']), (3, 3, 0, 100.0))
-        self.assertEqual(od['data_source'], {'master_workbook': 3, 'raw_daily_csv': 0})
-        self.assertEqual(od['sites_total'], 4)  # the off-air site is in the master but not expected
-
-    def test_partial_coverage_is_not_complete(self):
-        self.store(OD_4G[:2], date(2026, 10, 12))
-        self.store(['UVOR009'], date(2026, 10, 12))  # an off-air site's record never fills an expected one
-        od = self.item(self.get('2026-10-12'))
-        self.assertEqual((od['data_state'], od['sites_with_data'], od['sites_missing'], od['coverage_pct']), ('partial', 2, 1, 66.67))
-        self.assertEqual(od['records_observed'], 3)
-
-    def test_no_usable_data_stays_no_data_and_invalid_values_are_never_usable(self):
-        day = date(2026, 10, 12)
-        self.store(['UVOR001'], day, outage=None)    # not reported
-        self.store(['UVOR002'], day, outage=-5)      # outside 0..1440
-        self.store(['UVOR003'], day, outage=1500)
-        od = self.item(self.get('2026-10-12'))
-        self.assertEqual((od['data_state'], od['sites_with_data'], od['sites_invalid'], od['sites_missing']), ('none', 0, 2, 1))
-        self.assertIsNone(od['latest_data_date'])
-        mp = self.item(self.get('2026-10-12'), circle='MP')
-        self.assertEqual((mp['data_state'], mp['upload_state'], mp['coverage_pct']), ('none', 'none', 0.0))
-
-    def test_latest_dates_come_from_stored_reporting_dates_not_upload_times(self):
-        self.store(OD_4G, date(2026, 10, 5))
-        self.store(OD_4G[:1], date(2026, 10, 9))  # later but partial
-        DataImportBatch.objects.create(kind='raw_daily_csv', project='4G Saturation', circle='OD', reporting_date=date(2026, 10, 2),
-                                       original_filename='old.csv', checksum_sha256='y', sheet_name='', stored_path='-',
-                                       status=DataImportBatch.Status.REJECTED)  # uploaded now, for an older date
-        od = self.item(self.get('2026-10-01'))
-        self.assertEqual((od['latest_data_date'], od['latest_complete_date'], od['latest_upload_date'], od['latest_import_date']),
-                         ('2026-10-09', '2026-10-05', '2026-10-02', None))
-        self.assertEqual(od['data_state'], 'none')  # data on other dates says nothing about the selected one
-
-    def test_the_same_rules_apply_to_lwe(self):
-        SiteDailyPerformance.objects.create(site=self.sites['LWEOD0001'], date=date(2026, 10, 12), outage_minutes=0, batch=self.master)
-        body = self.get('2026-10-12')
-        lwe = self.item(body, project='LWE')
-        self.assertEqual((lwe['data_state'], lwe['sites_with_data'], lwe['sites_expected'], lwe['upload_state']), ('complete', 1, 1, 'none'))
-        self.assertEqual(self.item(self.get('2026-10-13'), project='LWE')['data_state'], 'none')
-        with_sites = [(i['project'], i['circle']) for i in body['items'] if i['sites_total']]
-        self.assertEqual(with_sites, [('4G Saturation', 'MP'), ('4G Saturation', 'OD'), ('LWE', 'OD')])
-
-    def test_associations_without_master_sites_are_listed_without_any_obligation(self):
-        body = self.get('2026-10-12')
-        rj = self.item(body, circle='RJ')  # 4G Saturation RJ is an Organization association; this test has no RJ sites
-        self.assertEqual((rj['data_state'], rj['sites_total'], rj['sites_expected'], rj['coverage_pct'], rj['upload_state']),
-                         ('no_scope', 0, 0, None, 'none'))
-        self.assertEqual({(i['project'], i['circle']) for i in body['items']}, set(associations()) | {('4G Saturation', 'MP'), ('4G Saturation', 'OD'), ('LWE', 'OD')})
-
-    def test_a_project_s_upload_never_counts_for_the_other_project_of_the_same_circle(self):
-        DataImportBatch.objects.create(kind='raw_daily_csv', project='4G Saturation', circle='OD', reporting_date=date(2026, 10, 12),
-                                       original_filename='od-4g.csv', checksum_sha256='z', sheet_name='', stored_path='-',
-                                       status=DataImportBatch.Status.COMMITTED)
-        body = self.get('2026-10-12')
-        self.assertEqual(self.item(body, project='4G Saturation', circle='OD')['upload_state'], 'imported')
-        self.assertEqual(self.item(body, project='LWE', circle='OD')['upload_state'], 'none')
-
-    def test_each_date_returns_its_own_results(self):
-        self.store(OD_4G, date(2026, 10, 12))
-        self.store(OD_4G[:1], date(2026, 10, 13))
-        first, second, third = self.get('2026-10-12'), self.get('2026-10-13'), self.get('2026-10-14')
-        self.assertEqual([b['reporting_date'] for b in (first, second, third)], ['2026-10-12', '2026-10-13', '2026-10-14'])
-        self.assertEqual([self.item(b)['data_state'] for b in (first, second, third)], ['complete', 'partial', 'none'])
-
-    def test_the_daily_range_shows_gaps(self):
-        self.store(OD_4G, date(2026, 10, 10))
-        self.store(OD_4G[:2], date(2026, 10, 12))
-        od = self.item(self.get('2026-10-12', start='2026-10-10', end='2026-10-13'))
-        self.assertEqual([(r['date'], r['state'], r['sites_with_data']) for r in od['range']],
-                         [('2026-10-10', 'complete', 3), ('2026-10-11', 'none', 0), ('2026-10-12', 'partial', 2), ('2026-10-13', 'none', 0)])
-        default = self.get('2026-10-12')['range']
-        self.assertEqual((default['start'], default['end']), ('2026-09-29', '2026-10-12'))
-
-    def test_bad_dates_and_ranges_are_refused(self):
-        url = reverse('arrival-tracker')
-        for params in ({}, {'date': 'yesterday'}, {'date': '2026-10-12', 'start': '2026-10-12'},
-                       {'date': '2026-10-12', 'start': '2026-10-13', 'end': '2026-10-12'},
-                       {'date': '2026-10-12', 'start': '2026-01-01', 'end': '2026-10-12'}):
-            self.assertEqual(self.client.get(url, params).status_code, 400, params)
-
-    def test_reading_the_tracker_changes_nothing(self):
-        self.store(OD_4G, date(2026, 10, 12))
-        before = (SiteDailyPerformance.objects.count(), DataImportBatch.objects.count(), UptimeSite.objects.count())
-        self.get('2026-10-12', start='2026-10-01', end='2026-10-12')
-        self.assertEqual((SiteDailyPerformance.objects.count(), DataImportBatch.objects.count(), UptimeSite.objects.count()), before)
-
-
-class UploadStatusTests(ArrivalTrackerTestCase):
-    def upload_as(self, user, rows, **kwargs):
-        self.client.force_login(user)
-        body = self.upload(rows, **kwargs).json()
-        self.client.force_login(self.admin)
-        return body
-
-    def test_a_validated_upload_is_received_but_not_imported(self):
-        preview = self.upload_as(self.ci_od, [row('UVOR001', '99'), row('UVOR002', '98')])
-        od = self.item(self.get('2026-10-13'))
-        self.assertEqual((od['data_state'], od['upload_state']), ('none', 'awaiting_confirmation'))
-        upload = od['uploads'][0]
-        self.assertEqual((upload['id'], upload['file'], upload['uploaded_by'], upload['ready_to_import'], upload['imported']),
-                         (preview['id'], 'nw_aval_day.csv', 'raw-ci-od', 2, None))
-
-    def test_an_import_updates_both_indicators_independently(self):
-        preview = self.upload_as(self.ci_od, [row('UVOR001', '99'), row('UVOR002', '98')])
-        self.client.force_login(self.ci_od)
-        self.assertEqual(self.commit(preview['id']).status_code, 200)
-        self.client.force_login(self.admin)
-        od = self.item(self.get('2026-10-13'))
-        self.assertEqual((od['data_state'], od['upload_state'], od['sites_with_data']), ('partial', 'imported', 2))  # UVOR003 not in the file
-        self.assertEqual(od['data_source'], {'master_workbook': 0, 'raw_daily_csv': 2})
-        self.assertEqual((od['uploads'][0]['imported'], od['latest_import_date'], od['latest_upload_date']), (2, '2026-10-13', '2026-10-13'))
-
-    def test_blocked_and_discarded_uploads_stay_visible(self):
-        self.upload_as(self.ci_od, [row('UVOR001', '99', day='12-10-2026')])  # the file's date is not the entered date
-        od = self.item(self.get('2026-10-13'))
-        self.assertEqual((od['upload_state'], od['uploads'][0]['state']), ('blocked', 'blocked'))
-        self.assertTrue(od['uploads'][0]['error'])
-        preview = self.upload_as(self.ci_od, [row('UVOR001', '99')])
-        self.client.force_login(self.ci_od)
-        self.client.post(reverse('raw-upload-discard', args=[preview['id']]))
-        self.client.force_login(self.admin)
-        od = self.item(self.get('2026-10-13'))
-        self.assertEqual(sorted(u['state'] for u in od['uploads']), ['blocked', 'discarded'])
-        self.assertEqual(od['upload_state'], 'blocked')
-
-    def test_complete_master_data_with_a_file_that_adds_nothing(self):
-        self.store(OD_4G, date(2026, 10, 13), outage=0)  # 100% availability, as the file below says
-        self.upload_as(self.ci_od, [row('UVOR001', '100'), row('UVOR002', '100'), row('UVOR003', '100')])
-        od = self.item(self.get('2026-10-13'))
-        self.assertEqual((od['data_state'], od['upload_state'], od['data_source']['master_workbook']), ('complete', 'nothing_to_import', 3))
-
-
-class PermissionTests(ArrivalTrackerTestCase):
-    def test_only_admins_use_the_tracker(self):
-        url = reverse('arrival-tracker')
-        for user in (self.noc, self.ci_od, portal_user('tracker-ci-all', 'ci')):
-            self.client.force_login(user)
-            self.assertEqual(self.client.get(url, {'date': '2026-10-12'}).status_code, 403)
-        self.client.logout()
-        self.assertEqual(self.client.get(url, {'date': '2026-10-12'}).status_code, 401)
-
-    def test_circle_scope_limits_every_figure(self):
-        self.store(OD_4G, date(2026, 10, 12))
-        body = arrivals.tracker(date(2026, 10, 12), {('4G Saturation', 'MP')})
-        self.assertEqual([(i['project'], i['circle']) for i in body['items']], [('4G Saturation', 'MP')])
-        self.assertEqual([(i['project'], i['circle']) for i in arrivals.tracker(date(2026, 10, 12), {('LWE', 'OD')})['items']], [('LWE', 'OD')])
-        self.assertEqual(arrivals.tracker(date(2026, 10, 12), set())['items'], [])
+        r = self.client.get(reverse('arrival-tracker'), {'date': DAY.isoformat()})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.client.get(reverse('arrival-tracker')).status_code, 400)
+        self.assertEqual(self.client.get(reverse('arrival-tracker'), {'date': '2026-10-05', 'start': '2026-10-01'}).status_code, 400)
+        ci = portal_user('tracker-ci', 'ci')
+        self.client.force_login(ci)
+        self.assertEqual(self.client.get(reverse('arrival-tracker'), {'date': DAY.isoformat()}).status_code, 403)

@@ -71,7 +71,15 @@ class UploadTestCase(RcaTestCase):
 
     def sheets(self, response):
         content = b''.join(response.streaming_content) if response.streaming else response.content
-        response.close()  # releases the stored file (Windows cannot delete an open file)
+        # Release the stored file (Windows cannot delete an open file) without firing request_finished, which would close
+        # the database connection inside the test transaction on PostgreSQL (as Django's own test client avoids).
+        from django.core.signals import request_finished
+        from django.db import close_old_connections
+        request_finished.disconnect(close_old_connections)
+        try:
+            response.close()
+        finally:
+            request_finished.connect(close_old_connections)
         return load_workbook(io.BytesIO(content))
 
 
@@ -318,7 +326,7 @@ class CoverageTests(UploadTestCase):
         # The NOC Lead downloads the same final file for their upload; the expected scope is now fixed.
         response = self.client.get(reverse('rca-import-workbook', args=[result['id']]))
         self.assertEqual(response['Content-Disposition'].split('filename=')[1].strip('"'), 'RCA_Master_2026-10-21_FINAL_v1.xlsx')
-        response.close()
+        self.sheets(response)  # reads and releases the file (see sheets)
         self.assertEqual(self.as_admin('put', 'rca-cycle-required', [period.pk], {'units': SCOPE[:1]}).status_code, 409)
         # A correction after finalization makes the period "revised" until an Admin generates v2.
         corrected = [list(r) for r in WORKBOOK]

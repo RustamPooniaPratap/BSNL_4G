@@ -1,26 +1,9 @@
+import type { Continuity, PeriodStatusFields } from './reporting';
+
 export interface HealthStatus {
   status: string;
   service: string;
   version: string;
-}
-
-export interface CandidateColumns {
-  site_id: string[];
-  availability: string[];
-  date: string[];
-}
-
-export interface UploadResponse {
-  status: 'success' | 'partial_success' | 'error';
-  message?: string;
-  warning?: string;
-  filename: string;
-  size_bytes: number;
-  row_count?: number;
-  column_count?: number;
-  columns?: string[];
-  preview?: Record<string, string>[];
-  candidate_columns?: CandidateColumns;
 }
 
 export interface RawFileInfo {
@@ -39,7 +22,10 @@ export interface RawFilesResponse {
 // Dashboard API (backend/apps/dashboard). Percentages are 0-100.
 // ---------------------------------------------------------------------------
 
-export type Scope = 'on_air' | 'om_start' | 'all';
+/** The site population of a request (see lib/population): On-Air or O&M Start; "all sites" is not a population. */
+export type Scope = 'on_air' | 'om_start';
+/** ``population`` of the site-metric responses: the scope the backend used and its label. */
+export interface PopulationInfo { scope: Scope; label: string }
 export type BucketId = 'lt_60' | '60_90' | '90_97' | '97_98_5' | 'gte_98_5';
 
 export interface SourceInfo {
@@ -49,6 +35,8 @@ export interface SourceInfo {
   loaded_at: string;
   uploaded_at?: string | null;
   latest_reporting_date: string | null;
+  /** Data layer: dates with data and the Complete / Provisional status of each date and of the month to date. */
+  continuity?: Continuity | null;
 }
 
 export interface AppliedFilters {
@@ -100,6 +88,9 @@ export interface SummaryMetrics {
   sites_with_mtd_value?: number;
   /** MTD uptime below the 98.5% SLA. */
   sites_not_meeting_sla_mtd?: number;
+  /** NSLA (approved rule B-3): sites of the selected population whose MTD uptime is below 98.5%, and the eligible sites of that population. */
+  nsla_sites_mtd?: number;
+  nsla_eligible_sites?: number;
   out_of_range_values: number;
 }
 
@@ -139,13 +130,13 @@ export interface CircleSeriesInfo {
   sites: number;
 }
 
-export interface WeekSummary {
+export interface WeekSummary extends PeriodStatusFields {
   label: string;
   start: string;
   end: string;
   days_in_week: number;
   days_reported: number;
-  /** Every day of the week is reported. An incomplete week (in progress) has no value: there is no week to date. */
+  /** Every day of the week is reported. An incomplete week now has a value too, marked Provisional (``status``). */
   complete?: boolean;
   uptime_pct: number | null;
   /** Percentage points versus the previous week with data. */
@@ -170,6 +161,8 @@ export interface TrendResponse {
 export interface CircleBreakdown {
   report_type: string;
   circle: string;
+  /** Every site of the circle whatever the population (site status), when the API gives it. */
+  sites_total?: number;
   sites_in_scope: number;
   sites_reported: number;
   daily_uptime_pct: number | null;
@@ -329,8 +322,8 @@ export interface SheetInfo {
 }
 
 export interface ActiveWorkbook extends SourceInfo {
-  /** Which source the dashboard reads: the Excel workbook or the PostgreSQL import. */
-  data_source?: 'excel' | 'database';
+  /** The data source of every page: always the data layer ('sitedata'). */
+  data_source?: 'sitedata';
   uploaded_at: string | null;
   month: string;
   sites: number;
@@ -348,11 +341,7 @@ export interface WorkbookStatus {
   code?: string;
 }
 
-export interface WorkbookUploadResult extends WorkbookStatus {
-  status: 'accepted';
-}
-
-export interface MonthPoint {
+export interface MonthPoint extends PeriodStatusFields {
   /** 'YYYY-MM' */
   key: string;
   label: string;
@@ -371,6 +360,8 @@ export interface MonthPoint {
   outage_by_report_type: Record<string, number | null>;
   by_circle?: Record<string, number | null>;
   outage_by_circle?: Record<string, number | null>;
+  /** Set when the month is finalized: Complete, or finalized with missing data. */
+  finalization_status?: 'complete' | 'incomplete_missing_data' | null;
 }
 
 export interface MonthlyResponse {
@@ -545,7 +536,7 @@ export interface ThresholdBucket {
 }
 export type PeriodKind = 'month' | 'mtd' | 'week' | 'day';
 
-export interface ThresholdPeriod {
+export interface ThresholdPeriod extends PeriodStatusFields {
   /** 'YYYY-MM' for months, 'mtd', 'w1'..'w4', or the ISO date for days. */
   key: string;
   label: string;
@@ -635,7 +626,7 @@ export interface ThresholdResponse {
 }
 
 /** KPI for the trend period picked in the filter bar. */
-export interface PeriodSummary {
+export interface PeriodSummary extends PeriodStatusFields {
   label: string;
   kind: 'dates' | 'months';
   days_reported: number;
@@ -768,29 +759,6 @@ export interface AccessEvent { id: number; at: string; actor: string; action: st
 export interface EffectiveAccess {
   user: string; role: Role | null; is_active: boolean; permissions: Record<string, string[]>;
   scopes: Record<string, { project: string; circle: string }[] | null>; assignments: AccessAssignment[];
-}
-
-// --- PostgreSQL import and dashboard data source ---------------------------------------------
-
-export type DataSourceKind = 'excel' | 'database';
-
-export interface DatabaseCompleteness {
-  sites: number;
-  monthly_records: number;
-  daily_records: number;
-  months: string[];
-  daily_months: Record<string, { label: string; first: string; last: string; days: number; gaps: string[] }>;
-  previous_month_daily: boolean;
-  last_import: { batch: number; file: string; committed_at: string } | null;
-  empty: boolean;
-  warnings: string[];
-}
-
-export interface DataSourceState {
-  active: DataSourceKind;
-  label: string;
-  options: { value: DataSourceKind; label: string }[];
-  database: DatabaseCompleteness;
 }
 
 /** O&M Head per circle from the reference sheet in Data/reference (null = no name given). */

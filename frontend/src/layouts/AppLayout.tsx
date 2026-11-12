@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronDown, FileUp, KeyRound, LogOut, Menu } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { AlertsMenu } from '../components/AlertsMenu';
 import { Sidebar } from '../components/Sidebar';
@@ -56,17 +55,16 @@ export const AppLayout = ({ children }: AppLayoutProps) => {
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {active && (
-              <span title={active.data_source === 'database' ? `Every page reads the PostgreSQL import (${active.workbook})` : `Every page reads the Excel workbook ${active.workbook}`}
-                className={cn('hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium sm:inline-flex',
-                  active.data_source === 'database' ? 'border-sky-300 bg-sky-50 text-sky-800' : 'border-emerald-300 bg-emerald-50 text-emerald-800')}>
-                <span className={cn('size-1.5 rounded-full', active.data_source === 'database' ? 'bg-sky-600' : 'bg-emerald-600')} aria-hidden="true" />
-                Source: {active.data_source === 'database' ? 'PostgreSQL' : 'Excel workbook'}
+              <span title={`Every page reads the reporting data (${active.workbook})`}
+                className="hidden items-center gap-1.5 rounded-full border border-sky-300 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-800 sm:inline-flex">
+                <span className="size-1.5 rounded-full bg-sky-600" aria-hidden="true" />
+                Source: reporting data
               </span>
             )}
             <AlertsMenu />
             {isAdmin && (
-              <Link to="/workbook" className={buttonVariants({ variant: 'outline', size: 'sm' })} aria-label="Upload workbook">
-                <FileUp /> <span className="hidden sm:inline">Upload workbook</span>
+              <Link to="/workbook" className={buttonVariants({ variant: 'outline', size: 'sm' })} aria-label="Data Source">
+                <FileUp /> <span className="hidden sm:inline">Data Source</span>
               </Link>
             )}
             <AccountMenu />

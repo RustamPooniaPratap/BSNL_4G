@@ -1,12 +1,14 @@
 """Circle-wise Root Cause Breakdown on the RCA Summary (apps.rca.breakdown). Synthetic records in the test database."""
 from datetime import date
 from itertools import count
+import numpy as np
 
 from django.urls import reverse
 
 from apps.rca import breakdown
 from apps.rca.models import RcaRecord
 from apps.rca.parser import text_key
+from apps.sitedata.models import Site
 
 from .auth_helpers import SignedInTestCase, portal_user
 
@@ -144,10 +146,11 @@ class SiteColumnsTests(SignedInTestCase):
         s = b['sites']
         mp, rj = s['rows']['MP'], s['rows']['RJ']
         # MP (4G + LWE): 6 active sites, 4 O&M Start sites; USD: 101, 102 + LWE MP (103 is down but not O&M Start -> excluded from USD).
-        # NSLA: UVMP102 (outage 100, 200, 300 > 21.6 min). UVMP101 has outage 1 min <= 21.6 min -> not NSLA.
-        self.assertEqual((mp['total_sites'], mp['om_start_sites'], mp['usd_sites'], mp['nsla_sites']), (6, 4, 3, 1))
-        # RJ: UVRJ101 is O&M Start, USD (30 min), NSLA (30 min > 21.6 min -> <98.5%).
-        self.assertEqual((rj['total_sites'], rj['om_start_sites'], rj['usd_sites'], rj['nsla_sites']), (1, 1, 1, 1))
+        # NSLA (the dashboard's rule, metrics.nsla_mask: O&M Start population, period uptime < 98.5%): UVMP102 (86.1%) and
+        # UVMP106 (O&M Start, 65.3%; not On-Air, but NSLA's population is the O&M Start sites). UVMP101 99.98% -> not NSLA.
+        self.assertEqual((mp['total_sites'], mp['om_start_sites'], mp['usd_sites'], mp['nsla_sites']), (6, 4, 3, 2))
+        # RJ: UVRJ101 is O&M Start, USD (30 min on one day) but 99.3% over the period -> not NSLA (one bad day is not NSLA).
+        self.assertEqual((rj['total_sites'], rj['om_start_sites'], rj['usd_sites'], rj['nsla_sites']), (1, 1, 1, 0))
         self.assertEqual({k: s['total'][k] for k in ('total_sites', 'om_start_sites', 'usd_sites', 'nsla_sites')},
                          {'total_sites': 7, 'om_start_sites': 5, 'usd_sites': 4, 'nsla_sites': 2})
         for key in ('total_sites', 'om_start_sites', 'usd_sites', 'nsla_sites'):
@@ -160,13 +163,13 @@ class SiteColumnsTests(SignedInTestCase):
         self.assertEqual(b_all['rca_scope'], 'all')
         self.assertEqual(b_all['grand_total'], 6)
         self.assertEqual(b_all['all_rca_records'], 6)
-        self.assertEqual(b_all['nsla_rca_records'], 4)  # 3 UVMP102 + 1 UVRJ101
+        self.assertEqual(b_all['nsla_rca_records'], 3)  # 3 UVMP102 (UVRJ101 is not NSLA over the period)
 
         # 2. NSLA RCA (<98.5%)
         b_nsla = self.sites(rca_scope='nsla')
         self.assertEqual(b_nsla['rca_scope'], 'nsla')
-        # Only records belonging to NSLA sites (UVMP102 and UVRJ101) appear in the table
-        self.assertEqual(b_nsla['grand_total'], 4)
+        # Only records belonging to NSLA sites (UVMP102) appear in the table
+        self.assertEqual(b_nsla['grand_total'], 3)
         self.assertEqual(b_nsla['rows'][0]['counts']['BSNL OFC'], 3)  # UVMP102 records only; UVMP101 (2 records) excluded
 
         # 3. Strict requirement: Site KPIs and Total row are identical between All RCA and NSLA RCA
@@ -183,9 +186,9 @@ class SiteColumnsTests(SignedInTestCase):
         # 98.49% availability means outage > 21.6 min -> qualifies as NSLA
         # Exactly 98.5% availability means outage = 21.6 min -> does NOT qualify
         # 99.0% availability means outage = 14.4 min -> does NOT qualify
-        self.assertGreater(1440 * (1 - 0.9849), breakdown.NSLA_OUTAGE_MINUTES_THRESHOLD)
-        self.assertAlmostEqual(1440 * (1 - 0.985), breakdown.NSLA_OUTAGE_MINUTES_THRESHOLD)
-        self.assertLess(1440 * (1 - 0.99), breakdown.NSLA_OUTAGE_MINUTES_THRESHOLD)
+        from apps.dashboard.metrics import nsla_mask, site_uptime
+        uptime = site_uptime(np.array([[1440 * (1 - 0.9849)], [1440 * (1 - 0.985)], [1440 * (1 - 0.99)], [np.nan]]))
+        self.assertEqual(list(nsla_mask(uptime)), [True, False, False, False])
 
     def test_missing_availability_notification_identifies_unreported_om_sites(self):
         b = self.sites()
@@ -193,3 +196,50 @@ class SiteColumnsTests(SignedInTestCase):
         self.assertIsNotNone(missing)
         # UVMP105 is an On-Air site in USD_SITES with [None, None, None]; it is not O&M Start so not in missing OM list
         self.assertEqual(missing['count'], 0)
+
+
+class NslaBoundaryOnTheDataLayerTests(SignedInTestCase):
+    """USD / NSLA site columns read the sitedata dashboard dataset; exactly 98.5% availability is not NSLA."""
+
+    def setUp(self):
+        super().setUp()
+        from apps.sitedata import portfolio
+
+        from .sitedata_factory import make_daily, make_site
+        boundary = 1440 * (1 - 0.985)  # 21.60000000000002 in floating point: availability exactly 98.5%
+        self.assertGreater(boundary, 21.6)  # the float trap the rounding avoids
+        outages = {'MPEXACT': boundary, 'MPBELOW': 21.7, 'MPZERO': 0.0}
+        for sid, outage in outages.items():
+            site = make_site(sid, circle='MP', on_air_date=date(2025, 1, 1), om_start_date=date(2025, 1, 1))
+            for day in (date(2026, 10, 1), date(2026, 10, 2)):
+                make_daily(site, day, outage)  # the same on both days: the period uptime equals the daily one
+        make_daily(make_site('MPNOTOM', circle='MP', on_air_date=date(2025, 1, 1)), date(2026, 10, 1), 500)  # not O&M Start
+        make_daily(Site.objects.get(bsnl_site_id='MPNOTOM'), date(2026, 10, 2), 500)
+        portfolio.clear_cache()
+        self.addCleanup(portfolio.clear_cache)
+
+    def test_exact_98_5_percent_is_not_nsla_and_below_is(self):
+        result = breakdown.site_metrics({}, None, ['MP'])
+        mp = result['rows']['MP']
+        self.assertEqual((mp['total_sites'], mp['om_start_sites'], mp['usd_sites'], mp['nsla_sites']), (4, 3, 2, 1))
+        self.assertEqual(result['nsla_site_keys'], {('4G Saturation', 'MPBELOW')})
+        self.assertEqual(result['period']['days_reported'], 2)
+
+    def test_the_summary_page_uses_the_data_layer_sites(self):
+        record('MP', 'BSNL OFC', day=date(2026, 10, 2), site_id='MPBELOW')
+        record('MP', 'BSNL OFC', day=date(2026, 10, 2), site_id='MPEXACT')
+        response = self.client.get(reverse('rca-summary'), {'rca_scope': 'nsla'})
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        b = response.json()['breakdown']
+        self.assertEqual((b['sites']['total']['nsla_sites'], b['grand_total']), (1, 1))  # only the MPBELOW record
+
+    def test_overview_ne_tab_uses_the_band_2100_identifier_of_the_site_master(self):
+        from apps.rca.overview import get_rca_overview
+        from apps.sitedata.models import SiteIdentifier
+        site = Site.objects.get(bsnl_site_id='MPBELOW')
+        SiteIdentifier.objects.create(site=site, kind=SiteIdentifier.Kind.BAND_2100, value='BTS-B1-77', key='BTS-B1-77', batch=site.matrix_batch)
+        data = get_rca_overview({'tab': 'ne', 'page_size': 100}, None)
+        names = {r['name']: r['site_count'] for r in data['rows']}
+        self.assertEqual(names['BTS-B1-77'], 1)
+        self.assertIn('MPEXACT', names)  # no B1 identifier: the BSNL Site ID
+        self.assertEqual(data['total_row']['site_count'], 4)

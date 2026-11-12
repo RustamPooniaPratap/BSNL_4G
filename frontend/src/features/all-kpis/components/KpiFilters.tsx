@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { Field } from '../../../components/dashboard/FilterBar';
+import { PopulationSelect } from '../../../components/PopulationSelect';
 import { formatDate } from '../../../lib/format';
 import type { KpiFilterOptions, KpiSummary } from '../types';
 import type { MultiKey, useKpiFilters } from '../useKpiFilters';
@@ -39,13 +40,14 @@ export function KpiFilters({ f, options, summary, showFinalBucket }: {
     <Card className="gap-0 py-0 shadow-xs">
       <ReportStrip summary={summary} latest={last} />
       <div role="search" aria-label="All KPI's filters"
-        className={cn('grid grid-cols-2 gap-x-3 gap-y-2.5 px-4 py-3 sm:grid-cols-3 lg:grid-cols-4 [&_input]:h-9', showFinalBucket ? 'xl:grid-cols-9' : 'xl:grid-cols-8')}>
+        className={cn('grid grid-cols-2 gap-x-3 gap-y-2.5 px-4 py-3 sm:grid-cols-3 lg:grid-cols-4 [&_input]:h-9', showFinalBucket ? 'xl:grid-cols-10' : 'xl:grid-cols-9')}>
         <Field id="kpi-from" label="From">
           <Input id="kpi-from" type="date" min={first} max={last} value={f.dateFrom || options.default_period?.start || ''} onChange={(e) => f.update({ date_from: e.target.value })} />
         </Field>
         <Field id="kpi-to" label="To">
           <Input id="kpi-to" type="date" min={first} max={last} value={f.dateTo || options.default_period?.end || ''} onChange={(e) => f.update({ date_to: e.target.value })} />
         </Field>
+        <PopulationSelect id="kpi-population" className="w-auto" />
         <Field id="kpi-project" label="Project">
           <MultiSelect id="kpi-project" label="Project" allLabel="All projects" value={f.values.project} onChange={(v) => f.setMulti('project', v)}
             options={options.projects.map((p) => ({ key: p, label: project(p) }))} />

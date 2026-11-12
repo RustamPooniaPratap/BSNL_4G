@@ -238,8 +238,10 @@ class RawCsvTests(SiteDataTestCase):
             ('MPBLG001', '', 'T4OD28KRP001lw', '99', 'MP', '01-11-2026'),   # 700 ID of another site
             ('MPNEW999', '', '', '99', 'MP', '01-11-2026'),                 # unknown everywhere: unmatched
         ], commit=False)
-        self.assertEqual(batch.report['rejected_by_reason'], {'identifier_not_in_mapping': 1, 'identifier_mismatch': 1})
-        self.assertEqual(batch.records_unmatched, 1)
+        # Programme identifiers that do not resolve are pending (unmatched_programme); the unknown BTS is outside the programme.
+        self.assertEqual(batch.report['unmatched_by_reason'], {'identifier_not_in_mapping': 1, 'identifier_mismatch': 1})
+        self.assertEqual((batch.records_unmatched, batch.records_rejected), (2, 0))
+        self.assertEqual(batch.report['classification'], {'matched': 0, 'unmatched_programme': 2, 'outside_programme': 1, 'invalid': 0})
 
     def test_conflicting_rows_of_one_site_are_all_rejected(self):
         batch = self.raw(LWE, 'MP', date(2026, 11, 1), [
@@ -301,15 +303,17 @@ class MonthlyTests(SiteDataTestCase):
         self.load_matrix()
         self.load_uptime()
         october = date(2026, 10, 1)
+        # The commit already calculated the month (uploads.refresh_after_daily_write); a recalculation changes nothing.
+        self.assertEqual(MonthlySitePerformance.objects.filter(month=october, is_current=True).count(), 7)  # 5 all-days + O&M + On-Air (UVMP001)
         summary = calculations.calculate_month(october)
-        self.assertEqual((summary['created'], summary['om_start_sites'], summary['on_air_sites'], summary['om_start_date_review_sites']), (7, 1, 1, 4))  # 5 all-days + O&M + On-Air (UVMP001)
+        self.assertEqual((summary['created'], summary['unchanged'], summary['om_start_sites'], summary['on_air_sites'], summary['om_start_date_review_sites']), (0, 7, 1, 1, 4))
         od = MonthlySitePerformance.objects.get(site__site_key='LWEOD01', month=october)
         self.assertEqual((od.reporting_days, od.calendar_days, od.total_outage_minutes), (2, 31, 720))  # 3 Oct missing, not 0
         self.assertAlmostEqual(od.availability_pct, 100 * (1 - 720 / (1440 * 2)))
         self.assertEqual(calculations.calculate_month(october)['unchanged'], 7)
         rec = DailySitePerformance.objects.get(site__site_key='LWEOD01', report_date=date(2026, 10, 2))
-        daily.correct(rec, 100, user=self.admin, reason='test')
-        self.assertEqual(calculations.calculate_month(october)['revised'], 1)
+        daily.correct(rec, 100, user=self.admin, reason='test')  # recalculates the month itself
+        self.assertEqual(calculations.calculate_month(october)['unchanged'], 7)
         self.assertEqual(list(MonthlySitePerformance.objects.filter(site__site_key='LWEOD01', calculation_category='daily_derived').order_by('revision').values_list('revision', 'is_current')),
                          [(1, False), (2, True)])
         calculations.finalize_month(october, user=self.admin)
@@ -325,10 +329,6 @@ class DashboardFromNewLayerTests(SignedInTestCase, SiteDataTestCase):
         self.load_matrix()
         self.load_uptime()
         calculations.calculate_month(date(2026, 10, 1))
-        from apps.uptimedb import datasource
-        patch = mock.patch.object(datasource, 'current_dataset', dataset.build)
-        patch.start()
-        self.addCleanup(patch.stop)
 
     def test_dataset_scope_and_flags(self):
         ds = dataset.build()
@@ -516,7 +516,8 @@ class DayWiseOutageTests(SiteDataTestCase):
 
 
 def read_exceptions(batch):
-    path = batch.report.get('exception_report')
+    from apps.sitedata import exceptions
+    path = exceptions.resolve(batch.report.get('exception_report'))
     if not path:
         return []
     with open(path, encoding='utf-8-sig') as handle:
@@ -625,7 +626,8 @@ class AmbiguousBandIdTests(SiteDataTestCase):
         bandmap.commit(mapping)
         self.assertTrue(SiteIdentifier.objects.filter(site__site_key='LWEOD01', kind='bts_ip_id').exists())  # the other row continues
         raw = self.raw(LWE, 'MP', date(2026, 11, 1), [('MPBLG001', '', 'T4MP28BLG001lw', '99', 'MP', '01-11-2026')], commit=False)
-        self.assertEqual(raw.report['rejected_by_reason'], {'ambiguous_identifier': 1})
+        self.assertEqual(raw.report['unmatched_by_reason'], {'ambiguous_identifier': 1})  # a programme identifier: pending
+        self.assertEqual((raw.records_unmatched, raw.records_rejected), (1, 0))
 
     def test_an_identifier_that_becomes_ambiguous_loses_its_earlier_assignment(self):
         self.load_matrix()
@@ -728,9 +730,24 @@ class SourcePrecedenceTests(SiteDataTestCase):
         self.raw(G4, 'MP', date(2026, 10, 1), oct_csv('UVMP001', '100'))
         master = self.load_uptime()
         self.assertEqual((master.records_superseded, master.records_conflict), (0, 0))
+        # The same value from the Uptime Master takes over the provenance (value unchanged), logged as superseded.
+        self.assertEqual(self.record().batch_id, master.pk)
+        self.assertEqual([(e.action, e.proposed_availability_pct, e.stored_availability_pct) for e in DailyPerformanceEvent.objects.all()],
+                         [(DailyPerformanceEvent.Action.SUPERSEDED, 100.0, 100.0)])
         again = self.raw(G4, 'MP', date(2026, 10, 1), oct_csv('UVMP001', '100'))
         self.assertEqual((again.records_duplicate, again.records_conflict), (1, 0))
-        self.assertFalse(DailyPerformanceEvent.objects.exists())
+        self.assertEqual(DailyPerformanceEvent.objects.count(), 1)  # a lower source repeating the value logs nothing
+
+    def test_precedence_does_not_depend_on_whether_a_raw_csv_came_first(self):
+        # raw A, Uptime A, Uptime B must end like Uptime A, Uptime B: B is a conflict and A stays.
+        self.raw(G4, 'MP', date(2026, 10, 1), oct_csv('UVMP001', '100'))
+        self.load_uptime()
+        stored = self.record().availability_pct
+        from tests.workbook_factory import DEFAULT_SITES
+        revised = [(*row[:6], [432, *row[6][1:]]) if row[2] == 'UVMP001' else row for row in DEFAULT_SITES]
+        later = self.load_uptime(revised, name='later.xlsx')
+        self.assertEqual((later.records_conflict, later.records_superseded), (1, 0))
+        self.assertEqual(self.record().availability_pct, stored)
 
     def test_equal_sources_keep_the_first_value_and_corrections_are_never_overridden(self):
         self.raw(G4, 'MP', date(2026, 10, 5), oct_csv('UVMP001', '90', day='05-10-2026'))
@@ -795,11 +812,16 @@ class LweIdentifierRuleTests(SiteDataTestCase):
         }
         for label, (row, code) in cases.items():
             with self.subTest(label):
-                self.assertEqual(self.check(row).report['rejected_by_reason'], {code: 1})
+                batch = self.check(row)
+                self.assertEqual({**batch.report['rejected_by_reason'], **batch.report['unmatched_by_reason']}, {code: 1})
+                pending = code in ('identifier_mismatch', 'identifier_not_in_mapping')  # programme identifiers: pending; the rest invalid
+                self.assertEqual((batch.records_unmatched, batch.records_rejected), (1, 0) if pending else (0, 1))
         unknown = self.check(('NOTASITE', 'T4NOPE', ''))
-        self.assertEqual((unknown.records_unmatched, unknown.records_rejected), (1, 0))  # nothing known: not an LWE site
-        malformed = self.check(('PUR028', ';T4OD01UNKNOWN', 'T4OD28A;T4OD28B'))  # malformed cells, nothing known: a row of another BTS
-        self.assertEqual((malformed.records_unmatched, malformed.records_rejected), (1, 0))
+        self.assertEqual((unknown.records_unmatched, unknown.records_rejected), (0, 0))  # nothing known: outside the programme
+        self.assertEqual(unknown.report['classification']['outside_programme'], 1)
+        malformed = self.check(('PUR028', ';T4OD01UNKNOWN', 'T4OD28A;T4OD28B'))  # malformed cells: an invalid identifier format
+        self.assertEqual((malformed.records_unmatched, malformed.records_rejected), (0, 1))
+        self.assertEqual(malformed.report['classification']['invalid'], 1)
 
     def test_4g_rows_are_skipped_before_their_band_cells_are_judged(self):
         batch = self.check(('UVMP001', 'X;Y', ''))
@@ -862,12 +884,12 @@ class LweMappingDatabaseTests(SiteDataTestCase):
         self.assertEqual(set(LweMappingIdentifier.objects.filter(row=stored[2], kind='band_2100').values_list('key', flat=True)), {'T4MP01BLG001LW', 'T4MP01BLG001SA'})
         self.assertEqual(self.active('LWEMP01'), {('bts_ip_id', 'MPBLG001'), ('band_2100', 'T4MP01BLG001LW'), ('band_2100', 'T4MP01BLG001SA'), ('band_700', 'T4MP28BLG001LW')})
         self.assertTrue(all(i.mapping_row_id == stored[2].pk for i in SiteIdentifier.objects.filter(site__site_key='LWEMP01', batch__kind='lwe_band_mapping')))
-        self.assertTrue(Path(batch.stored_path).is_file() and batch.checksum_sha256)  # the workbook copy and checksum are kept
+        self.assertTrue(uploads.staged_path(batch).is_file() and batch.checksum_sha256)  # the workbook copy and checksum are kept
         self.assertEqual({r['code'] for r in read_exceptions(batch)}, {'duplicate_row', 'invalid_identifier'})
 
     def test_matching_reads_the_database_after_the_workbook_is_gone(self):
         batch = self.mapping(BAND)
-        Path(batch.stored_path).unlink()
+        uploads.staged_path(batch).unlink()
         (self.tmp / 'LWE Band ID.xlsx').unlink()
         with mock.patch('apps.sitedata.bandmap.load_workbook', side_effect=AssertionError('workbook read at runtime')):
             raw = self.raw(LWE, 'MP', date(2026, 11, 1), [('', '', 'T4MP28BLG001lw', '99', 'MP', '01-11-2026')])

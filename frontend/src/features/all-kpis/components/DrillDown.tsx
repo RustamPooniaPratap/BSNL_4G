@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { ChartCard } from '../../../components/dashboard/ChartCard';
+import { usePopulation } from '../../../context/population';
 import { useApiQuery } from '../../../hooks/useApiQuery';
 import { fetchKpiHierarchy, fetchKpiSites } from '../api';
 import { count, hours, NUM, pct } from '../format';
@@ -78,11 +79,12 @@ function GroupTable({ level, query, onOpen }: { level: HierarchyLevel; query: UR
   const params = new URLSearchParams(query);
   params.set('level', level);
   const data = useApiQuery(`allkpis-hierarchy-${params}`, (signal) => fetchKpiHierarchy(params, signal));
+  const { sitesLabel } = usePopulation();
   const rows = data.data?.rows ?? [];
   const next = NAMES[LEVELS[LEVELS.indexOf(level) + 1]];
   return (
     <ChartCard title={`${NAMES[level]}-wise performance`} loading={data.loading} error={data.error} empty={!rows.length}
-      description={`${count(rows.length)} ${rows.length === 1 ? 'row' : 'rows'} · select a ${NAMES[level]} to open its ${next} view. USD and NSLA: O&M Start sites; availability and thresholds: On-Air sites.`}>
+      description={`${count(rows.length)} ${rows.length === 1 ? 'row' : 'rows'} · select a ${NAMES[level]} to open its ${next} view. Population: ${sitesLabel} (availability, thresholds, USD and NSLA); Total / On-Air / O&M Start are site status counts.`}>
       <KpiTable>
         <TableHeader>
           <TableRow>

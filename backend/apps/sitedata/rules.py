@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from datetime import date
 
 MINUTES_PER_DAY = 1440
+# Matrix Entity -> technology of the dashboard (Sterlite and VI-HPSC rows are outside the dashboard scope).
+ENTITIES = {'4g saturation': '4G Saturation', 'lwe': 'LWE'}
 AVAILABILITY_COLUMN = 'Nw Avail (4G TCS)'
 AVAILABILITY_FIELD = 'avail_4g_tcs'  # raw CSV reader field of that column
 

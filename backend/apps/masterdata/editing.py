@@ -1,13 +1,20 @@
 """Data Panel save: every pending change of one dataset, validated and written in one transaction, or nothing.
 
-Payload: {"changes": [{"id": 12, "values": {"site_name": "New name"}}], "additions": [{"values": {...}}]}.
-Checks, in order, all on the server: the dataset's Edit / Add permission; the row is inside the user's project/circle
-scope (before and after the change); only editable columns; the editor's rules; the model's own validation (types,
-lengths, unique constraints). Any error rolls the whole save back and is returned against its row and cell. There is
+Payload: {"changes": [{"id": 12, "values": {...}}], "additions": [{"values": {...}}], "reason": "..."}.
+Checks, in order, all on the server: the dataset has an editor (otherwise it is read-only); the dataset's Edit / Add
+permission; the row is inside the user's project/circle scope for that permission (accounts.access); only editable
+columns; the editor's rules. Any error rolls the whole save back and is returned against its row and cell. There is
 no delete: rows missing from the payload are left as they are.
+
+Daily Performance (editors.DailyEditor): a reason is required for the save; each changed value is an authorized
+correction (apps.sitedata.daily.correct) and each added site-day an authorized value (daily.add_correction), all in
+one transaction; the monthly results and the dashboard cache are refreshed once afterwards. A finalized month is
+refused (daily.FinalizedPeriod).
+RCA Data: the model's own validation (types, lengths, unique constraints) row by row, then saved.
 """
 from __future__ import annotations
 
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as ModelValidationError
 from django.db import IntegrityError, transaction
 
@@ -16,15 +23,17 @@ from apps.accounts.catalog import data_module
 from apps.accounts.roles import ADMIN, role_of
 
 from .datasets import Dataset
-from .editors import EDITORS, Context, EditError
+from .editors import EDITORS, Context, DailyEditor, EditError
 
 MAX_ROWS = 500
+TOLERANCE = 1e-6  # percentage points: the same value (apps.sitedata.daily.TOLERANCE)
 
 
 class SaveRefused(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, details: dict | None = None):
         super().__init__(message)
         self.status = status
+        self.details = details or {}
 
 
 class _Rollback(Exception):
@@ -32,7 +41,8 @@ class _Rollback(Exception):
 
 
 def capabilities(user, ds: Dataset) -> dict:
-    """What the Data Panel may offer this user on this dataset (the save checks again)."""
+    """What the Data Panel may offer this user on this dataset (the save checks again). Read-only datasets (no editor)
+    never offer Edit or Add, whatever the role grants."""
     module, editor, admin = data_module(ds.key), EDITORS.get(ds.key), role_of(user) == ADMIN
     allowed = {a: can(user, module, a) for a in ('view', 'create', 'edit', 'export')}
     return {
@@ -41,6 +51,7 @@ def capabilities(user, ds: Dataset) -> dict:
         'editable': editor.editable(admin) if editor and allowed['edit'] else [],
         'addable': editor.addable(admin) if editor and allowed['create'] else [],
         'required': list(editor.required) if editor else [],
+        'reason_required': bool(getattr(editor, 'corrections', False)),
     }
 
 
@@ -67,7 +78,13 @@ def _snapshot(obj) -> dict:
     return {f.attname: getattr(obj, f.attname) for f in obj._meta.concrete_fields}
 
 
-def save(user, ds: Dataset, payload) -> dict:
+def _unknown(values: dict, allowed) -> None:
+    unknown = sorted(set(values) - set(allowed))
+    if unknown:
+        raise EditError({k: 'This column cannot be changed here.' for k in unknown})
+
+
+def save(user, ds: Dataset, payload, request=None) -> dict:
     editor = EDITORS.get(ds.key)
     if editor is None:
         raise SaveRefused(400, f'{ds.label} is read-only.')
@@ -76,20 +93,103 @@ def save(user, ds: Dataset, payload) -> dict:
         raise SaveRefused(400, 'Give lists of changes and additions.')
     if len(changes) + len(additions) > MAX_ROWS:
         raise SaveRefused(400, f'Save at most {MAX_ROWS} rows at a time.')
-    module, admin = data_module(ds.key), role_of(user) == ADMIN
+    module = data_module(ds.key)
     if changes and not can(user, module, 'edit'):
         raise SaveRefused(403, f'You do not have the Edit permission on {ds.label}.')
     if additions and not can(user, module, 'create'):
         raise SaveRefused(403, f'You do not have the Add permission on {ds.label}.')
+    if isinstance(editor, DailyEditor):
+        return _save_corrections(user, ds, editor, changes, additions, payload.get('reason'), request)
+    return _save_rows(user, ds, editor, changes, additions)
+
+
+def _save_corrections(user, ds: Dataset, editor: DailyEditor, changes: list, additions: list, reason, request) -> dict:
+    """Daily Performance: authorized corrections, all or none, then one refresh of the monthly results and caches."""
+    from apps.sitedata import daily
+    from apps.sitedata.uploads import refresh_after_daily_write
+    reason = reason.strip() if isinstance(reason, str) else ''
+    if not reason:
+        raise SaveRefused(400, 'Give the reason for this correction (it is kept with every changed value).', {'reason': 'Required.'})
+    admin = role_of(user) == ADMIN
+    module = data_module(ds.key)
+    edit_pairs, add_pairs = pairs_for(user, module, 'edit'), pairs_for(user, module, 'create')
+    errors: dict[str, dict] = {'changes': {}, 'additions': {}}
+    done = {'updated': 0, 'added': 0, 'ids': []}
+    dates = set()
+
+    def problem(exc) -> dict:
+        if isinstance(exc, EditError):
+            return exc.errors
+        if isinstance(exc, daily.FinalizedPeriod):
+            return {'_row': f'{exc} The month is finalized: its values cannot be changed here.'}
+        return {'_row': str(exc)}
+
+    failures = (EditError, daily.FinalizedPeriod, ValueError, DjangoPermissionDenied)
+    try:
+        with transaction.atomic():
+            scope = ds.queryset().filter(pairs_q(edit_pairs, ds.project, ds.circle))
+            for i, item in enumerate(changes):
+                key = str(item.get('id')) if isinstance(item, dict) else str(i)
+                values = item.get('values') if isinstance(item, dict) else None
+                record = scope.filter(pk=item.get('id')).first() if isinstance(item, dict) and str(item.get('id', '')).isdigit() else None
+                if record is None or not isinstance(values, dict):
+                    errors['changes'][key] = {'_row': 'This record does not exist or is outside the projects and circles you may change.'}
+                    continue
+                try:
+                    _unknown(values, editor.editable(admin))
+                    value = editor.availability(values)
+                    if abs(value - record.availability_pct) <= TOLERANCE:
+                        continue  # the stored value: nothing to correct
+                    daily.correct(record, value, user=user, reason=reason, request=request, authorized=True, refresh=False)
+                except failures as exc:
+                    errors['changes'][key] = problem(exc)
+                    continue
+                done['updated'] += 1
+                done['ids'].append(record.pk)
+                dates.add(record.report_date)
+            for i, item in enumerate(additions):
+                values = item.get('values') if isinstance(item, dict) else None
+                if not isinstance(values, dict):
+                    errors['additions'][str(i)] = {'_row': 'Give the values of the new record.'}
+                    continue
+                try:
+                    _unknown(values, editor.addable(admin))
+                    missing = [k for k in editor.required if not str(values.get(k) or '').strip()]
+                    if missing:
+                        raise EditError({k: 'Required.' for k in missing})
+                    site = editor.site(values)
+                    day = editor.report_date(values)
+                    if not _in_scope(add_pairs, (site.technology, site.circle)):
+                        raise EditError({'circle': 'Outside the projects and circles you may change.'})
+                    value = editor.availability(values)
+                    record = daily.add_correction(site, day, value, user=user, reason=reason, request=request, authorized=True, refresh=False)
+                except failures as exc:
+                    errors['additions'][str(i)] = problem(exc)
+                    continue
+                done['added'] += 1
+                done['ids'].append(record.pk)
+                dates.add(day)
+            if errors['changes'] or errors['additions']:
+                raise _Rollback()
+    except _Rollback:
+        return {'saved': False, 'errors': errors}
+    except IntegrityError as exc:
+        return {'saved': False, 'errors': {'changes': {}, 'additions': {}, '_form': f'The database refused the changes: {str(exc).splitlines()[0][:200]}'}}
+    if dates:
+        refresh_after_daily_write(sorted(dates), request)  # monthly results and the dashboard read the corrected values
+    return {'saved': True, **done}
+
+
+def _save_rows(user, ds: Dataset, editor, changes: list, additions: list) -> dict:
+    """Model-backed editors (RCA Data): assign, validate and save each row."""
+    module, admin = data_module(ds.key), role_of(user) == ADMIN
     edit_pairs, add_pairs = pairs_for(user, module, 'edit'), pairs_for(user, module, 'create')
     errors: dict[str, dict] = {'changes': {}, 'additions': {}}
     ctx = Context(user, ds.label)
     done = {'updated': 0, 'added': 0, 'ids': []}
 
     def write(obj, values, allowed, adding, pairs, before):
-        unknown = sorted(set(values) - set(allowed))
-        if unknown:
-            raise EditError({k: 'This column cannot be changed here.' for k in unknown})
+        _unknown(values, allowed)
         if adding:
             missing = [k for k in editor.required if not str(values.get(k) or '').strip()]
             if missing:
@@ -144,13 +244,8 @@ def save(user, ds: Dataset, payload) -> dict:
                     errors['additions'][str(i)] = exc.errors
             if errors['changes'] or errors['additions']:
                 raise _Rollback()
-            if ctx.relink:  # Escalation Matrix rows follow Site Master identities (as after an import)
-                from apps.uptimedb.escalation import link_uptime_sites
-                link_uptime_sites()
     except _Rollback:
         return {'saved': False, 'errors': errors}
     except IntegrityError as exc:
         return {'saved': False, 'errors': {'changes': {}, 'additions': {}, '_form': f'The database refused the changes: {str(exc).splitlines()[0][:200]}'}}
-    from apps.uptimedb.datasource import clear_cache
-    clear_cache()  # the dashboard reads the saved values on its next request
     return {'saved': True, **done}

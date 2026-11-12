@@ -21,12 +21,15 @@ import { FilterBar } from '../components/dashboard/FilterBar';
 import { SiteDetailSheet } from '../components/dashboard/SiteDetailSheet';
 import { SiteTable } from '../components/dashboard/SiteTable';
 import { UnifiedThresholdTable } from '../components/dashboard/ThresholdMonthlyTable';
+import { PeriodStatusBadge } from '../components/reporting/ReportingStatus';
 import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { useFilterOptions } from '../hooks/useFilterOptions';
 import { useDashboardFilters, type ResolvedFilters } from '../hooks/useDashboardFilters';
 import { formatDate, formatNumber, formatPct, formatShortDate } from '../lib/format';
-import { fetchFilterOptions, fetchThresholds } from '../services/api';
+import { fetchThresholds } from '../services/api';
 import type { BucketId, SiteRecord, ThresholdBucket, ThresholdPeriod, ThresholdResponse, ThresholdRow, ThresholdValue } from '../types';
+import { populationSites } from '../lib/population';
 
 type Mode = 'count' | 'pct';
 type ThresholdId = BucketId;
@@ -86,9 +89,9 @@ function periodOption(p: ThresholdPeriod, reportingDate: string) {
 export function ThresholdPage() {
   const workbook = useWorkbook();
   const { version } = workbook;
-  const options = useApiQuery(workbook.active ? `${version}|filters` : null, fetchFilterOptions);
-  // The workbook's threshold sheets count O&M Start sites, so that is this page's default scope.
-  const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data, { defaultScope: 'om_start' });
+  const options = useFilterOptions();
+  // The population is the global selection (On-Air / O&M Start); this page has no default of its own.
+  const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data);
   const [searchParams, setSearchParams] = useSearchParams();
   const mode: Mode = searchParams.get('show') === 'pct' ? 'pct' : 'count';
   const periodParam = searchParams.get('period');
@@ -113,9 +116,9 @@ export function ThresholdPage() {
     return (
       <Card className="mx-auto mt-10 max-w-xl items-center gap-3 px-8 py-10 text-center">
         <FileUp className="size-8 text-muted-foreground" aria-hidden="true" />
-        <h1 className="text-lg font-semibold">No Master workbook loaded</h1>
-        <p className="text-sm text-muted-foreground">Upload the consolidated workbook to see threshold analysis.</p>
-        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Upload workbook</Link>
+        <h1 className="text-lg font-semibold">No reporting data loaded</h1>
+        <p className="text-sm text-muted-foreground">Import the reporting data (Data Source page) to see threshold analysis.</p>
+        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Import data</Link>
       </Card>
     );
   }
@@ -131,7 +134,7 @@ export function ThresholdPage() {
   }
   if (!options.data || !filters) return <Skeleton className="h-96 w-full" aria-label="Loading threshold analysis" />;
 
-  const scopeLabel = options.data.scopes.find((s) => s.value === filters.scope)?.label ?? filters.scope;
+  const scopeLabel = populationSites(filters.scope);
   const data = result.data;
   // The selectable periods, the selected one and its comparison, as resolved by the backend.
   const byKey = new Map((data?.periods ?? []).map((p) => [p.key, p]));
@@ -154,7 +157,7 @@ export function ThresholdPage() {
       <FilterBar options={options.data} filters={filters} onChange={setFilters} onReset={reset} canReset={!isDefault} showTrendRange={false}
         title="Threshold analysis"
         description={<>
-          {options.data.month.label} · {[filters.reportType || 'All projects', filters.circle ? `Circle ${filters.circle}` : 'All circles', scopeLabel].join(' · ')}
+          {options.data.month.label} · {[filters.reportType || 'All projects', filters.circle ? `Circle ${filters.circle}` : 'All circles', `Population: ${scopeLabel}`].join(' · ')}
           {' '}· all five uptime buckets; select one for its detailed analysis
         </>}
         actions={<Switch value={mode} onChange={(m) => setParam('show', m === 'pct' ? 'pct' : null)} label="Show values as"
@@ -336,7 +339,7 @@ function BucketDetail({ bucket, data, mode, filters, loading, period, currentLab
     return p;
   }, [filters.snapshotParams, circle, siteDate]);
   const explorerRow = circle ? data.rows.find((r) => `${r.report_type}|${r.circle}` === circle) ?? data.total : data.total;
-  const activeFilters = [filters.reportType || 'All projects', filters.circle ? `Circle ${filters.circle}` : 'All circles', filters.scope === 'om_start' ? 'O&M Start sites' : filters.scope === 'on_air' ? 'On-Air sites' : 'All sites'];
+  const activeFilters = [filters.reportType || 'All projects', filters.circle ? `Circle ${filters.circle}` : 'All circles', `Population: ${populationSites(filters.scope)}`];
 
   return (
     <section aria-labelledby={`section-${id}`} className={cn('space-y-4 rounded-xl border-l-4 pl-4', critical ? 'border-l-destructive' : 'border-l-slate-300')}
@@ -486,7 +489,10 @@ function ThresholdKpis({ data, id, mode }: { data: ThresholdResponse; id: Thresh
         const delta = current != null && before != null ? current - before : null;
         return (
           <Card key={card.label} className="gap-0 px-4 py-3">
-            <p className="truncate text-xs font-medium text-muted-foreground" title={card.label}>{card.label}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="truncate text-xs font-medium text-muted-foreground" title={card.label}>{card.label}</p>
+              {card.period?.kind !== 'day' && <PeriodStatusBadge status={card.period?.status} missing={card.period?.missing} />}
+            </div>
             <p className="mt-1 text-2xl font-semibold tabular-nums">{value ? show(current, mode) : 'No data'}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {value ? `${show(pick(value, id, other), other)} ${other === 'pct' ? 'of sites' : 'sites'}` : 'Not reported for this period'}
@@ -664,6 +670,7 @@ function ThresholdTable({ data, id, mode, filters, critical, title }: {
                     {p.partial && <span className="font-normal text-muted-foreground">*</span>}
                     {sortIcon(p.key)}
                   </button>
+                  {p.status && <div className="mt-0.5 flex justify-end"><PeriodStatusBadge status={p.status} missing={p.missing} /></div>}
                 </th>
               ))}
             </tr>

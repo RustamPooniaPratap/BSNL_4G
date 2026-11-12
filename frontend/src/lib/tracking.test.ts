@@ -11,7 +11,7 @@ const NOW = new Date('2026-10-17T12:00:00');
 const MP_LWE = { circle: 'MP', reportType: 'LWE' };
 // As the server reports them: MP 4G complete from the workbook, RJ 4G partial from a CSV, BH LWE nothing, MP LWE a blocked file.
 const ITEMS = [
-  trackerItem('4G Saturation', 'MP', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
+  trackerItem('4G Saturation', 'MP', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0, correction: 0 } }),
   trackerItem('4G Saturation', 'RJ', { data_state: 'partial', sites_with_data: 6, sites_missing: 4, coverage_pct: 60, upload_state: 'imported', uploads: [trackerUpload({ file: 'rj_day.csv' })] }),
   trackerItem('LWE', 'BH'),
   trackerItem('LWE', 'MP', { upload_state: 'blocked', uploads: [trackerUpload({ state: 'blocked', imported: null, error: 'Wrong circle.' })] }),

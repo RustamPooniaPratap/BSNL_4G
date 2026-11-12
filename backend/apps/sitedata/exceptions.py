@@ -1,7 +1,8 @@
 """Exception reports: every record an upload does not import (rejected, unmatched, ambiguous) or flags for review, in
 one format for every importer. The full list is written to a CSV per upload at preview
 (settings.SITEDATA_EXCEPTION_DIR, default <DATA_DIR>/processed/sitedata/exceptions); the stored report keeps the counts,
-examples and the file's path."""
+examples and the file's path, relative to that directory (resolve() finds it on this server, including legacy absolute
+paths of another machine by file name)."""
 from __future__ import annotations
 
 import csv
@@ -11,7 +12,7 @@ from pathlib import Path
 from django.conf import settings
 
 COLUMNS = ('upload', 'upload_kind', 'source_file', 'row', 'site_id', 'circle', 'report_date', 'identifier', 'value', 'code', 'severity', 'message', 'related')
-REJECTED, UNMATCHED, REVIEW = 'rejected', 'unmatched', 'review'
+REJECTED, UNMATCHED, REVIEW, INFO = 'rejected', 'unmatched', 'review', 'info'
 
 
 def _as_written(value) -> str:
@@ -38,7 +39,8 @@ def exception_dir() -> Path:
 
 
 def write(batch, items: list[dict]) -> str:
-    """Write the upload's exception CSV; returns its path ('' when there is nothing to report)."""
+    """Write the upload's exception CSV; returns its path relative to exception_dir() ('' when there is nothing to
+    report)."""
     if not items:
         return ''
     path = exception_dir() / f'upload-{batch.pk}-{batch.kind}-exceptions.csv'
@@ -47,7 +49,14 @@ def write(batch, items: list[dict]) -> str:
         writer.writeheader()
         for item in items:
             writer.writerow({**item, 'upload': batch.pk, 'upload_kind': batch.kind})
-    return str(path)
+    return path.name
+
+
+def resolve(stored: str) -> Path | None:
+    """The exception CSV of a stored report reference on this server (None when the upload had nothing to report).
+    The file may still be missing: check is_file()."""
+    from .uploads import resolve_stored
+    return resolve_stored(stored, exception_dir())
 
 
 def summary(items: list[dict], limit: int = 50) -> dict:

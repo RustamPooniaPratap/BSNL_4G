@@ -9,9 +9,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { DataEntryHeader, Field, NoWorkbook, ReviewList, SelectField, ValidatedLocally, type Step } from '../../components/data/DataEntry';
 import { useWorkbook } from '../../context/workbook';
 import { useApiQuery } from '../../hooks/useApiQuery';
+import { useFilterOptions } from '../../hooks/useFilterOptions';
 import { findSite, useSiteRegistry } from '../../hooks/useSiteRegistry';
 import { SITE_ID_PATTERNS, VALIDATED_MESSAGES, fieldA11y, normaliseSiteId, siteIdError } from '../../lib/dataEntry';
-import { fetchFilterOptions } from '../../services/api';
 import type { SiteRecord } from '../../types';
 
 /** Master site attributes, as in the Up-Time Report columns (Project, Circle, btsIpId, Site name, OA, BA, On-Air, EB, O&M Start, IE, CI). */
@@ -36,7 +36,7 @@ const TEXT_MAX = 80;
 /** A new master site record, separate from daily reporting. Duplicate Site IDs are refused. */
 export function AddSitePage() {
   const workbook = useWorkbook();
-  const options = useApiQuery(workbook.active ? `${workbook.version}|filters` : null, fetchFilterOptions);
+  const options = useFilterOptions();
   const [params] = useSearchParams();
   // Pre-filled when arriving from an unknown Site ID in Add Row or Upload CSV.
   const [draft, setDraft] = useState<SiteDraft>(() => ({
@@ -167,7 +167,7 @@ export function AddSitePage() {
                   <AlertTitle>{duplicate.site_id} is already registered</AlertTitle>
                   <AlertDescription>
                     <p>{duplicate.site_name} · {duplicate.report_type} · {duplicate.circle} · OA {duplicate.oa || '—'}. A site ID can be registered only once.</p>
-                    <Link to={`/?${new URLSearchParams({ report_type: duplicate.report_type, circle: duplicate.circle, scope: 'all' })}`}
+                    <Link to={`/?${new URLSearchParams({ report_type: duplicate.report_type, circle: duplicate.circle })}`}
                       className={buttonVariants({ size: 'sm', variant: 'outline', className: 'mt-2' })}>
                       Review sites in {duplicate.circle}
                     </Link>

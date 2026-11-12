@@ -9,15 +9,20 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from contextlib import contextmanager
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from django.conf import settings
+from django.db import connection, transaction
 from django.utils import timezone
 
 from .models import UploadBatch
 
 COUNT_FIELDS = ('received', 'accepted', 'rejected', 'duplicate', 'unmatched', 'conflict', 'superseded')
+# PostgreSQL advisory lock that serialises every write of the data layer (imports, pending processing, corrections), so
+# two commits can never classify against the same stored values and both write (double click, retry, two users).
+WRITE_LOCK = 4202611
 
 
 class UploadRejected(Exception):
@@ -38,19 +43,42 @@ def staging_dir() -> Path:
     return path
 
 
+def resolve_stored(stored: str, root: Path) -> Path | None:
+    """Where a stored file reference points on this server (None when there is no reference).
+
+    New references are relative to their root (the staging or exception directory), so the data directory can move
+    between machines. Legacy references are absolute paths of the machine that wrote them: used as they are when the file
+    exists there, otherwise the file is looked up by its name in the current root (a copied data directory). The caller
+    checks that the result exists (and its checksum, for staged copies)."""
+    if not stored:
+        return None
+    path = Path(stored)
+    if not path.anchor and not PureWindowsPath(stored).anchor:  # relative: the current root
+        return root / path
+    if path.is_file():
+        return path
+    return root / PureWindowsPath(stored).name  # a Windows path keeps its file name on any platform
+
+
+def staged_path(batch: UploadBatch) -> Path | None:
+    """The staged copy's path on this server (not verified; see staged_file)."""
+    return resolve_stored(batch.stored_path, staging_dir())
+
+
 def new_batch(kind: str, source: Path, name: str, user=None, **fields) -> UploadBatch:
-    """Stage a copy of the upload and create its batch (status: previewed, validation pending)."""
+    """Stage a copy of the upload and create its batch (status: previewed, validation pending). The batch stores the
+    copy's path relative to staging_dir()."""
     checksum = sha256(source)
     target = staging_dir() / f'{datetime.now():%Y%m%d-%H%M%S}-{kind}-{checksum[:10]}{Path(name).suffix.lower()}'
     shutil.copyfile(source, target)
-    return UploadBatch.objects.create(kind=kind, original_filename=name, checksum_sha256=checksum, stored_path=str(target),
+    return UploadBatch.objects.create(kind=kind, original_filename=name, checksum_sha256=checksum, stored_path=target.name,
                                       uploaded_by=user if getattr(user, 'is_authenticated', False) else None, **fields)
 
 
 def staged_file(batch: UploadBatch) -> Path:
     """The staged copy, verified against the checksum taken at upload."""
-    path = Path(batch.stored_path)
-    if not path.is_file():
+    path = staged_path(batch)
+    if path is None or not path.is_file():
         raise UploadRejected(f'The staged copy of upload #{batch.pk} is missing; upload the file again.')
     if sha256(path) != batch.checksum_sha256:
         raise UploadRejected(f'The staged copy of upload #{batch.pk} changed since the preview; upload the file again.')
@@ -62,6 +90,37 @@ def require_previewed(batch: UploadBatch) -> None:
         raise UploadRejected(f'Upload #{batch.pk} is {batch.get_processing_status_display().lower()}; only a previewed upload can be committed.')
     if batch.validation_status == UploadBatch.Validation.FAILED:
         raise UploadRejected(f'Upload #{batch.pk} failed validation and cannot be committed.')
+
+
+def write_lock() -> None:
+    """Take the data-layer write lock for the current transaction (PostgreSQL; SQLite serialises writers itself)."""
+    if connection.vendor == 'postgresql':
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT pg_advisory_xact_lock(%s)', [WRITE_LOCK])
+
+
+@contextmanager
+def committing(batch: UploadBatch):
+    """The commit transaction of a previewed upload: the write lock, the batch row locked and its status checked again
+    inside the lock. Yields the locked batch; the caller analyses and writes within the block, so a second commit of the
+    same upload waits and is then refused (already committed) instead of writing twice."""
+    with transaction.atomic():
+        write_lock()
+        locked = UploadBatch.objects.select_for_update().get(pk=batch.pk)
+        require_previewed(locked)
+        yield locked
+
+
+def refresh_after_daily_write(dates, request=None) -> None:
+    """After daily records changed: recalculate the monthly results of the affected months (finalized months are left
+    as they are; writes into them are refused anyway) and drop the cached dashboard datasets."""
+    from . import calculations, portfolio
+    for month in sorted({d.replace(day=1) for d in dates}):
+        try:
+            calculations.calculate_month(month, request=request)
+        except calculations.MonthFinalized:
+            pass
+    portfolio.clear_cache()
 
 
 def record_preview(batch: UploadBatch, counts: dict, report: dict, *, failed: bool = False, exception_items: list | None = None) -> UploadBatch:

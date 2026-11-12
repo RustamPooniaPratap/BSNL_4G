@@ -13,8 +13,10 @@ import { PortfolioPage } from './PortfolioPage';
 
 vi.mock('../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/api')>()),
-  fetchFilterOptions: vi.fn(), fetchSummary: vi.fn(), fetchBreakdowns: vi.fn(), fetchTrends: vi.fn(), fetchAlerts: vi.fn(), fetchPeriod: vi.fn(), fetchOmHeads: vi.fn(), fetchConversionActivity: vi.fn(),
+  fetchFilterOptions: vi.fn(), fetchSummary: vi.fn(), fetchBreakdowns: vi.fn(), fetchTrends: vi.fn(), fetchAlerts: vi.fn(), fetchPeriod: vi.fn(), fetchOmHeads: vi.fn(),
 }));
+// Conversion activity has no legacy endpoint any more: only the Site Portfolio API (/site-portfolio/conversion-activity/).
+const fetchActivity = vi.hoisted(() => vi.fn());
 // The page reads the new data layer through services/sitePortfolioApi; its calls are routed to the same mocks.
 vi.mock('../services/sitePortfolioApi', async () => {
   const mocked = await import('../services/api');
@@ -23,7 +25,7 @@ vi.mock('../services/sitePortfolioApi', async () => {
     fetchPortfolioSummary: (params: URLSearchParams, signal?: AbortSignal) => mocked.fetchSummary(params, signal),
     fetchPortfolioBreakdowns: (params: URLSearchParams, signal?: AbortSignal) => mocked.fetchBreakdowns(params, signal),
     fetchPortfolioPeriod: (params: URLSearchParams, signal?: AbortSignal) => mocked.fetchPeriod(params, signal),
-    fetchPortfolioActivity: (params: URLSearchParams, signal?: AbortSignal) => mocked.fetchConversionActivity(params, signal),
+    fetchPortfolioActivity: (params: URLSearchParams, signal?: AbortSignal) => fetchActivity(params, signal),
   };
 });
 const m = vi.mocked(api);
@@ -41,9 +43,9 @@ function fakeSummary(params: URLSearchParams): SummaryResponse {
       ...summary.metrics,
       sites_total: base,
       sites_converted: base - 100,  // fewer than the O&M Start count: both flags must be Yes on the same site
-      sites_in_scope: scope === 'all' ? base : scope === 'om_start' ? base - 80 : base - 50,
+      sites_in_scope: scope === 'om_start' ? base - 80 : base - 50,
+      sites_below_60_mtd: previous ? 12 : scope === 'om_start' ? 7 : 10,
       mtd_uptime_pct: previous ? 92.5 : type === 'LWE' ? 95 : 93,
-      sites_below_60_mtd: previous ? 12 : 10,
       coverage_pct: 100,
     },
     previous_month_conversion: { label: 'Sep-26', sites_converted: base - 300 },
@@ -74,7 +76,7 @@ beforeEach(() => {
   m.fetchAlerts.mockResolvedValue({ alerts: [], counts: { critical: 0, warning: 0, info: 0 }, source });
   m.fetchPeriod.mockImplementation(async (params) => fakePeriod(params));
   // Oct-26 not in the escalation file yet; Sep-26 vs Aug-26 known.
-  m.fetchConversionActivity.mockResolvedValue({
+  fetchActivity.mockResolvedValue({
     source: "Consolidated Escalation Matrix _Oct'26.xlsx", sites: 6724,
     month: { key: '2026-10', label: 'Oct-26' }, previous_month: { key: '2026-09', label: 'Sep-26' },
     on_air: { this_month: { count: null, covered_to: null, complete: false }, last_month: { count: 27, covered_to: '2026-09-25', complete: false }, change: null, latest_date: '2026-09-25' },
@@ -99,7 +101,7 @@ describe('Site Portfolio', () => {
   it('shows KPI cards from the right scope of the API figures, with the period and the change in the right unit', async () => {
     renderPage();
     expect(await screen.findByText('Site Portfolio — Summary')).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Total sites, On-Air & O&M Start' })).getByText('700')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Site status: total, On-Air & O&M Start' })).getByText('700')).toBeInTheDocument();
     // The default breakdown mock (2 sites) does not add up to the totals, so no project split is shown.
     expect(screen.queryByLabelText('Total sites by project')).not.toBeInTheDocument();
     expect(within(kpi('Sites below 60%')).getByText('10')).toBeInTheDocument();
@@ -112,23 +114,24 @@ describe('Site Portfolio', () => {
 
   it('shows the portfolio KPIs first: total sites, On-Air and O&M Start in one card, then conversion progress', async () => {
     // Circle-wise breakdowns per scope that add up to the summary totals (700 / 650 / 620).
+    // Every circle carries its total sites (site status, whatever the population): 400 + 300 = 700.
     const circles = (fourG: number, lwe: number) => ({ ...breakdown, circles: [
-      { ...breakdown.circles[0], report_type: '4G Saturation', circle: 'MP', sites_in_scope: fourG },
-      { ...breakdown.circles[0], report_type: 'LWE', circle: 'JH', sites_in_scope: lwe },
+      { ...breakdown.circles[0], report_type: '4G Saturation', circle: 'MP', sites_in_scope: fourG, sites_total: 400 },
+      { ...breakdown.circles[0], report_type: 'LWE', circle: 'JH', sites_in_scope: lwe, sites_total: 300 },
     ] });
     m.fetchBreakdowns.mockImplementation(async (params) => {
       const scope = (params as URLSearchParams).get('scope');
-      return scope === 'all' ? circles(400, 300) : scope === 'om_start' ? circles(340, 280) : circles(360, 290);
+      return scope === 'om_start' ? circles(340, 280) : circles(360, 290);
     });
     renderPage();
     await screen.findByText('Site Portfolio — Summary');
     const sections = [...document.querySelectorAll('section[aria-label]')].map((e) => e.getAttribute('aria-label'));
-    expect(sections.slice(0, 2)).toEqual(['Site portfolio', 'Uptime buckets (MTD)']);
-    const top = screen.getByRole('region', { name: 'Site portfolio' });
+    expect(sections.slice(0, 2)).toEqual(['Site status (not filtered by population)', 'Uptime buckets (MTD) · Population: On-Air sites']);
+    const top = screen.getByRole('region', { name: 'Site status (not filtered by population)' });
     const cards = [...top.querySelectorAll(':scope > div > [data-slot="card"]')];
-    expect(cards.map((c) => c.getAttribute('aria-label'))).toEqual(['Total sites, On-Air & O&M Start', 'Site Conversion Progress']);
-    // 1. One card: total sites (all-sites scope) with the split by network, On-Air 650, O&M Start 620, difference 650 − 620 = 30.
-    const merged = screen.getByRole('region', { name: 'Total sites, On-Air & O&M Start' });
+    expect(cards.map((c) => c.getAttribute('aria-label'))).toEqual(['Site status: total, On-Air & O&M Start', 'Site Conversion Progress']);
+    // 1. One status card: total sites with the split by network, On-Air 650, O&M Start 620, difference 650 − 620 = 30.
+    const merged = screen.getByRole('region', { name: 'Site status: total, On-Air & O&M Start' });
     expect([...within(merged).getAllByRole('term')].map((t) => t.textContent)).toEqual(['Total sites', 'On-Air sites', 'O&M Start sites', 'Difference']);
     expect([...merged.querySelectorAll('dd.text-2xl')].map((d) => d.textContent)).toEqual(['700', '650', '620', '30']);
     // Achievement against total scope: On-Air 650 / 700, O&M Start 620 / 700.
@@ -147,7 +150,9 @@ describe('Site Portfolio', () => {
     expect(await splitOf('O&M Start sites')).toEqual(['4G Saturation340', 'LWE280']);
     expect(await splitOf('Difference')).toEqual(['4G Saturation20', 'LWE10']);
     expect(within(within(merged).getByLabelText('Difference by project')).getByText('20')).toHaveClass('text-red-600');
-    expect(within(merged).getAllByRole('link').map((a) => a.textContent?.trim())).toEqual(['View all sites', 'View O&M Start sites']);
+    // No link forces a population: it opens the dashboard for the global selection.
+    expect(within(merged).getAllByRole('link').map((a) => a.textContent?.trim())).toEqual(['View On-Air sites']);
+    expect(within(merged).getByRole('link', { name: /View On-Air sites/ }).getAttribute('href')).not.toContain('scope=');
     // 2. Conversion progress against total scope (700): On-Air 650 (92.9%, 50 not On-Air), O&M Start 620 (88.6%, 80 remaining).
     const conversion = screen.getByRole('region', { name: 'Site Conversion Progress' });
     expect(within(conversion).getByText('700')).toBeInTheDocument();
@@ -160,7 +165,7 @@ describe('Site Portfolio', () => {
     const cells = within(table).getAllByRole('row').map((r) => [...r.querySelectorAll('th,td')].map((c) => c.textContent));
     expect(cells).toEqual([['Added in month', 'Sep-26', 'Oct-26'], ['On-Air', '27', '—'], ['O&M Start', '54', '12']]);
     expect(within(conversion).queryByText(/dates in the escalation matrix/)).not.toBeInTheDocument();
-    expect(Object.fromEntries(m.fetchConversionActivity.mock.calls.at(-1)![0] as URLSearchParams)).toEqual({ month: '2026-10' });
+    expect(Object.fromEntries(fetchActivity.mock.calls.at(-1)![0] as URLSearchParams)).toEqual({ month: '2026-10' });
     expect(screen.queryByText(/handover/i)).not.toBeInTheDocument();
     // Removed from this page, with no image content.
     for (const removed of ['Circles / States', 'Sites not yet On-Air', 'Network scope', 'Handover & O&M']) {
@@ -175,7 +180,7 @@ describe('Site Portfolio', () => {
     renderWithWorkbook(<TrackingProvider><AppLayout><PortfolioPage /></AppLayout></TrackingProvider>, { url: '/portfolio?report_type=LWE&circle=MP' });
     const banner = screen.getByRole('banner');
     expect(await within(banner).findByRole('heading', { name: 'Site Portfolio — Summary' })).toBeInTheDocument();
-    expect(within(banner).getByText(/^Circle MP · LWE · 03 Oct 2026 · MTD 01–03 Oct \(3 days\)$/)).toBeInTheDocument();
+    expect(within(banner).getByText(/^Circle MP · LWE · Population: On-Air sites · 03 Oct 2026 · MTD 01–03 Oct \(3 days\)$/)).toBeInTheDocument();
     expect(within(banner).queryByText(/Latest reporting date/)).not.toBeInTheDocument();
     // The title appears once: the filters card has no title of its own.
     expect(screen.getAllByRole('heading', { name: /Site Portfolio/ })).toHaveLength(1);
@@ -189,7 +194,9 @@ describe('Site Portfolio', () => {
     await screen.findByText('Site Portfolio — Summary');
     await waitFor(() => expect(m.fetchBreakdowns).toHaveBeenCalled());
     expect(calls().every((c) => c.circle === 'MP' && c.report_type === 'LWE')).toBe(true);
-    expect(calls().map((c) => c.reporting_date).sort()).toEqual(['2026-10-02', '2026-10-03', '2026-10-03', '2026-10-03']);
+    // Status On-Air and O&M Start (the On-Air one is also the selected population's), and the previous date.
+    expect(calls().map((c) => c.reporting_date).sort()).toEqual(['2026-10-02', '2026-10-03', '2026-10-03']);
+    expect(calls().some((c) => c.scope === 'all')).toBe(false);
     expect(Object.fromEntries(m.fetchBreakdowns.mock.calls[0][0] as URLSearchParams)).toMatchObject({ circle: 'MP', report_type: 'LWE', reporting_date: '2026-10-03' });
   });
 
@@ -222,6 +229,37 @@ describe('Site Portfolio', () => {
     expect(m.fetchAlerts).not.toHaveBeenCalled();  // nothing left on the page uses alerts
   });
 
+  it('uses only the selected population for every performance figure and refetches when it changes', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<TrackingProvider><Routes><Route path="/portfolio" element={<><PortfolioPage /><Location /></>} /></Routes></TrackingProvider>,
+      { url: '/portfolio', population: true });
+    await screen.findByText('Site Portfolio — Summary');
+    expect(within(kpi('Sites below 60%')).getByText('10')).toBeInTheDocument();  // On-Air (default)
+    expect(screen.getByRole('region', { name: 'Uptime buckets (MTD) · Population: On-Air sites' })).toBeInTheDocument();
+    m.fetchSummary.mockClear();
+    m.fetchPeriod.mockClear();
+    await user.click(screen.getByRole('combobox', { name: 'Population' }));
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['On-Air', 'O&M Start']);  // 'All sites' is not offered
+    await user.click(screen.getByRole('option', { name: 'O&M Start' }));
+    expect(await screen.findByRole('region', { name: 'Uptime buckets (MTD) · Population: O&M Start sites' })).toBeInTheDocument();
+    await waitFor(() => expect(within(kpi('Sites below 60%')).getByText('7')).toBeInTheDocument());  // the O&M Start figure
+    expect(screen.getByTestId('location')).toHaveTextContent('scope=om_start');
+    // The comparison date is requested for the selected population only.
+    await waitFor(() => expect(calls()).toContainEqual(expect.objectContaining({ scope: 'om_start', reporting_date: '2026-10-02' })));
+    expect(calls().filter((c) => c.reporting_date === '2026-10-02').every((c) => c.scope === 'om_start')).toBe(true);
+    // Status counts are unchanged and still labelled as status.
+    expect(within(screen.getByRole('region', { name: 'Site status: total, On-Air & O&M Start' })).getByText('700')).toBeInTheDocument();
+  });
+
+  it('requests weekly and monthly figures for the selected population only (no side-by-side populations)', async () => {
+    renderWithWorkbook(<TrackingProvider><PortfolioPage /></TrackingProvider>, { url: '/portfolio?scope=om_start&view=month&month=2026-09', population: true });
+    await screen.findByText('Site Portfolio — Summary');
+    await waitFor(() => expect(m.fetchPeriod).toHaveBeenCalled());
+    expect(new Set(periodCalls().map((c) => c.scope))).toEqual(new Set(['om_start']));
+    expect(screen.queryByText('O&M Start uptime')).not.toBeInTheDocument();
+    expect(screen.queryByText('On-Air uptime')).not.toBeInTheDocument();
+  });
+
   it('shows an error and no figures when the data cannot be loaded', async () => {
     m.fetchSummary.mockRejectedValue(new api.ApiError('The workbook could not be read.', 503));
     renderPage();
@@ -231,19 +269,19 @@ describe('Site Portfolio', () => {
 });
 
 describe('Circle-wise Site Portfolio Breakdown', () => {
+  // Site Scope per circle is the circle's sites_total (site status); On Air / O&M Start are the two populations' counts.
   const byScope = (n: Record<string, number>) => ({
     ...breakdown,
     circles: [
-      { ...breakdown.circles[0], report_type: '4G Saturation', circle: 'MP', sites_in_scope: n.mp4g },
-      { ...breakdown.circles[0], report_type: 'LWE', circle: 'MP', sites_in_scope: n.mpLwe },
-      { ...breakdown.circles[0], report_type: 'LWE', circle: 'BH', sites_in_scope: n.bh },
+      { ...breakdown.circles[0], report_type: '4G Saturation', circle: 'MP', sites_in_scope: n.mp4g, sites_total: 1483 },
+      { ...breakdown.circles[0], report_type: 'LWE', circle: 'MP', sites_in_scope: n.mpLwe, sites_total: 22 },
+      { ...breakdown.circles[0], report_type: 'LWE', circle: 'BH', sites_in_scope: n.bh, sites_total: 250 },
     ],
   });
   beforeEach(() => {
     m.fetchBreakdowns.mockImplementation(async (params) => {
       const scope = params.get('scope');
-      return scope === 'all' ? byScope({ mp4g: 1483, mpLwe: 22, bh: 250 })
-        : scope === 'om_start' ? byScope({ mp4g: 1332, mpLwe: 19, bh: 250 }) : byScope({ mp4g: 1351, mpLwe: 20, bh: 250 });
+      return scope === 'om_start' ? byScope({ mp4g: 1332, mpLwe: 19, bh: 250 }) : byScope({ mp4g: 1351, mpLwe: 20, bh: 250 });
     });
   });
 
@@ -273,7 +311,7 @@ describe('Circle-wise Site Portfolio Breakdown', () => {
     await screen.findByRole('region', { name: 'Circle-wise Site Portfolio Breakdown' });
     const params = m.fetchBreakdowns.mock.calls.map((c) => Object.fromEntries(c[0] as URLSearchParams));
     expect(params.every((p) => p.report_type === 'LWE')).toBe(true);
-    expect(new Set(params.map((p) => p.scope))).toEqual(new Set(['all', 'on_air', 'om_start']));
+    expect(new Set(params.map((p) => p.scope))).toEqual(new Set(['on_air', 'om_start']));  // the status counts; never 'all'
   });
 
   it('shows the O&M Head of each circle from the reference sheet, "—" where it gives none', async () => {
@@ -418,7 +456,7 @@ describe('Site Portfolio on the new data layer', () => {
   it('reads the new data layer and does not depend on the old workbook status', async () => {
     renderWithWorkbook(<TrackingProvider><PortfolioPage /></TrackingProvider>, { url: '/portfolio', workbook: workbookValue({ active: null, loading: false }) });
     expect(await screen.findByText('Site Portfolio — Summary')).toBeInTheDocument();
-    expect(screen.queryByText('No Master workbook loaded')).not.toBeInTheDocument();
+    expect(screen.queryByText('No reporting data loaded')).not.toBeInTheDocument();
     expect(m.fetchFilterOptions).toHaveBeenCalled();  // routed through services/sitePortfolioApi
   });
 

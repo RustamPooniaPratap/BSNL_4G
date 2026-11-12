@@ -101,13 +101,13 @@ describe('DashboardPage', () => {
   });
 
   it('applies combined filters from the URL to every request', async () => {
-    renderPage('/?report_type=LWE&circle=MP&scope=all&date=2026-10-02&from=2026-10-01&to=2026-10-02');
+    renderPage('/?report_type=LWE&circle=MP&scope=om_start&date=2026-10-02&from=2026-10-01&to=2026-10-02');
     await screen.findByRole('region', { name: 'Key indicators' });
     for (const fn of [mocked.fetchSummary, mocked.fetchBreakdowns]) {
       const params = lastParams(fn);
       expect(params.get('report_type')).toBe('LWE');
       expect(params.get('circle')).toBe('MP');
-      expect(params.get('scope')).toBe('all');
+      expect(params.get('scope')).toBe('om_start');
       expect(params.get('reporting_date')).toBe('2026-10-02');
     }
     const trendParams = lastParams(mocked.fetchTrends);
@@ -151,8 +151,8 @@ describe('DashboardPage', () => {
 
   it('asks for an upload and fetches nothing when no workbook is loaded', async () => {
     renderPage('/', workbookValue({ active: null, version: 'none', message: 'No Master workbook has been uploaded yet.' }));
-    expect(await screen.findByText('No Master workbook loaded')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /upload workbook/i })).toHaveAttribute('href', '/workbook');
+    expect(await screen.findByText('No reporting data loaded')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /import data/i })).toHaveAttribute('href', '/workbook');
     expect(mocked.fetchFilterOptions).not.toHaveBeenCalled();
     expect(mocked.fetchSummary).not.toHaveBeenCalled();
   });
@@ -290,13 +290,13 @@ describe('DashboardPage', () => {
 
 describe('Uptime Buckets & Site Details page', () => {
   it('shows the bucket chart above the site table, for the filters in the URL', async () => {
-    renderPage('/thresholds/buckets?report_type=LWE&circle=MP&scope=all&date=2026-10-02');
+    renderPage('/thresholds/buckets?report_type=LWE&circle=MP&scope=om_start&date=2026-10-02');
     const chart = await screen.findByText('Site uptime buckets');
     const table = await screen.findByText('Site detail');
     expect(chart.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     for (const fn of [mocked.fetchBreakdowns, mocked.fetchRecords]) {
       const params = lastParams(fn);
-      expect([params.get('report_type'), params.get('circle'), params.get('scope'), params.get('reporting_date')]).toEqual(['LWE', 'MP', 'all', '2026-10-02']);
+      expect([params.get('report_type'), params.get('circle'), params.get('scope'), params.get('reporting_date')]).toEqual(['LWE', 'MP', 'om_start', '2026-10-02']);
     }
     expect(mocked.fetchTrends).not.toHaveBeenCalled();  // no trend charts on this page
   });
@@ -506,5 +506,83 @@ describe('Overview charts: overall, by circle, heatmap', () => {
     expect(within(heatmap).getAllByRole('row', { name: /: open its trend/ }).map((r) => r.getAttribute('aria-label'))).toEqual([
       'BH · LWE: open its trend', 'MP · LWE: open its trend', 'OD · LWE: open its trend', 'TL · LWE: open its trend',
     ]);
+  });
+
+  it('shows a Provisional banner listing the missing units when the month to date is Provisional', async () => {
+    mocked.fetchSummary.mockResolvedValue({ ...summary, source: { ...summary.source, continuity: {
+      dates_with_data: ['2026-10-01', '2026-10-02', '2026-10-03'], continuous_until: '2026-10-03', excluded_after_gap: [],
+      incomplete_dates: ['2026-10-03'], mtd_status: 'Provisional',
+      date_status: [{ date: '2026-10-03', status: 'Provisional', missing_units: ['LWE OD'] }],
+      missing: [{ date: '2026-10-03', units: ['LWE OD'] }] } } });
+    renderPage();
+    const banner = await screen.findByRole('status', { name: 'Provisional figures' });
+    expect(banner).toHaveTextContent('Provisional — awaiting LWE OD for 03 Oct');
+  });
+
+  it('shows no Provisional banner for a Complete month to date or an older response', async () => {
+    renderPage();
+    await screen.findByRole('region', { name: 'Key indicators' });
+    expect(screen.queryByRole('status', { name: 'Provisional figures' })).not.toBeInTheDocument();
+  });
+
+  it('shows an incomplete week with its value and a Provisional badge listing the missing units', async () => {
+    const user = userEvent.setup();
+    mocked.fetchTrends.mockResolvedValue({ ...trend, weeks: [
+      { ...trend.weeks[0], complete: false, status: 'Provisional', missing: [{ date: '2026-10-03', units: ['LWE OD'] }] },
+      { ...trend.weeks[1], label: 'Week 2', days_reported: 7, complete: true, uptime_pct: 97.5, status: 'Complete', missing: [] },
+    ] });
+    mocked.fetchMonthly.mockResolvedValue({ ...monthly, months: [
+      { ...monthly.months[0], status: 'Complete', finalization_status: 'incomplete_missing_data' },
+      { ...monthly.months[1], status: 'Provisional', missing: [{ date: '2026-10-03', units: ['LWE OD'] }] },
+    ] });
+    renderPage();
+    const group = await screen.findByRole('group', { name: 'Trend period' });
+    await user.click(within(group).getByRole('button', { name: 'Weekly' }));
+    const weeks = await screen.findByLabelText('Weekly uptime and change');
+    expect(within(weeks).getByText('95.00%')).toBeInTheDocument();  // the incomplete week has a value
+    const provisional = within(weeks).getByText('Provisional');
+    expect(provisional).toHaveAttribute('title', 'Missing: LWE OD for 03 Oct');
+    expect(within(weeks).getByText('97.50%')).toBeInTheDocument();
+    expect(within(weeks).getByText('Complete')).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Weekly uptime' })).toHaveTextContent('Provisional (missing LWE OD for 03 Oct)');
+
+    await user.click(within(group).getByRole('button', { name: 'Monthly' }));
+    await screen.findByText(/Overall · Sep-26 to 03 Oct 2026/);
+    expect(screen.getAllByText('Provisional')[0]).toHaveAttribute('title', 'Missing: LWE OD for 03 Oct');
+    expect(screen.getByRole('table', { name: 'Monthly uptime' })).toHaveTextContent('Incomplete — Missing Data');
+  });
+});
+
+describe('Global population on the dashboard', () => {
+  const scopesOf = (fn: (...args: never[]) => unknown) => vi.mocked(fn).mock.calls.map((c) => (c[0] as unknown as URLSearchParams).get('scope'));
+
+  it('labels the selector "Population", offers only On-Air and O&M Start, and refetches every panel with the new scope', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<><Routes><Route path="/" element={<DashboardPage />} /></Routes><Location /></>, { url: '/', population: true });
+    await screen.findByRole('region', { name: 'Key indicators' });
+    await waitFor(() => expect(mocked.fetchPeriod).toHaveBeenCalled());
+    for (const fn of [mocked.fetchSummary, mocked.fetchBreakdowns, mocked.fetchTrends, mocked.fetchMonthly, mocked.fetchPeriod]) {
+      expect(new Set(scopesOf(fn))).toEqual(new Set(['on_air']));
+    }
+    expect(mocked.fetchFilterOptions).toHaveBeenLastCalledWith(expect.anything(), 'on_air');
+    vi.clearAllMocks();
+    mocked.fetchFilterOptions.mockResolvedValue(filterOptions);
+    mocked.fetchSummary.mockResolvedValue(summary);
+    mocked.fetchBreakdowns.mockResolvedValue(breakdown);
+    mocked.fetchTrends.mockResolvedValue(trend);
+    mocked.fetchMonthly.mockResolvedValue(monthly);
+    mocked.fetchPeriod.mockResolvedValue(period);
+
+    await user.click(screen.getByRole('combobox', { name: 'Population' }));
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['On-Air', 'O&M Start']);
+    await user.click(screen.getByRole('option', { name: 'O&M Start' }));
+    await waitFor(() => expect(mocked.fetchPeriod).toHaveBeenCalled());
+    // Every request of the page uses the new population: no stale or mixed scopes.
+    for (const fn of [mocked.fetchSummary, mocked.fetchBreakdowns, mocked.fetchTrends, mocked.fetchMonthly, mocked.fetchPeriod]) {
+      expect(new Set(scopesOf(fn))).toEqual(new Set(['om_start']));
+    }
+    expect(mocked.fetchFilterOptions).toHaveBeenLastCalledWith(expect.anything(), 'om_start');
+    expect(screen.getByTestId('location')).toHaveTextContent('scope=om_start');
+    expect(screen.getAllByText(/Population: O&M Start sites/).length).toBeGreaterThan(0);
   });
 });

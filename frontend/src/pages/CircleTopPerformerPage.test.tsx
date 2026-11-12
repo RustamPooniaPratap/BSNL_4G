@@ -133,9 +133,9 @@ describe('CircleTopPerformerPage', () => {
     expect(within(ieTable).getByRole('link', { name: 'Balveer Singh' })).toBeInTheDocument();
     expect(screen.getByText(/Tie · 2 IEs share the top rank/i)).toBeInTheDocument();
 
-    // API must be queried with circle RJ and scope om_start
+    // API must be queried with circle RJ and the global population
     expect(lastQuery().get('circle')).toBe('RJ');
-    expect(lastQuery().get('scope')).toBe('om_start');
+    expect(lastQuery().get('scope')).toBe('on_air');  // the global population (On-Air by default), no page default
     expect(lastQuery().get('report_type')).toBe('4G Saturation');
   });
 

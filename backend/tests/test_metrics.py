@@ -124,10 +124,13 @@ class TrendTests(MetricsTestCase):
             'LWE': 90.0,
         })
 
-    def test_a_week_in_progress_has_no_value(self):
-        # Week 1 has 3 of its 7 days reported: no week to date (a complete week is tested in test_dashboard_source).
-        weeks = metrics.trend(self.ds, Selection('4G Saturation', None, 'on_air'), OCT1, OCT3)['weeks']
-        self.assertEqual((weeks[0]['days_reported'], weeks[0]['complete'], weeks[0]['uptime_pct']), (0, False, None))
+    def test_a_week_in_progress_shows_its_figures_as_not_complete(self):
+        # Week 1 has 3 of its 7 days reported: its figures are shown, not complete (approved rule B-4; a workbook source
+        # has no coverage information, so its status is None; Complete / Provisional are tested in test_reporting_status).
+        selection = Selection('4G Saturation', None, 'on_air')
+        weeks = metrics.trend(self.ds, selection, OCT1, OCT3)['weeks']
+        mtd = metrics.summary(self.ds, selection, OCT3)['metrics']['mtd_uptime_pct']
+        self.assertEqual((weeks[0]['days_reported'], weeks[0]['complete'], weeks[0]['uptime_pct'], weeks[0]['status']), (3, False, mtd, None))
         self.assertIsNone(weeks[1]['uptime_pct'])
         self.assertEqual(weeks[3]['days_in_week'], 10)
 
@@ -140,8 +143,9 @@ class OutageByPeriodTests(MetricsTestCase):
         self.assertEqual(day1['outage_by_report_type'], {'4G Saturation': 72, 'LWE': 288})
         self.assertEqual(day1['outage_minutes'], 360)
         self.assertEqual(result['series'][3]['outage_by_report_type'], {'4G Saturation': None, 'LWE': None})  # not reported
-        week1 = result['weeks'][0]  # 3 of 7 days: in progress, so no week-to-date outage
-        self.assertEqual((week1['outage_minutes'], week1['outage_by_report_type']), (None, {'4G Saturation': None, 'LWE': None}))
+        week1 = result['weeks'][0]  # 3 of 7 days: in progress, its week-to-date outage is shown (not complete)
+        self.assertFalse(week1['complete'])
+        self.assertEqual(week1['outage_minutes'], sum(week1['outage_by_report_type'].values()))
         self.assertIsNone(result['weeks'][1]['outage_minutes'])  # no data is not zero
 
 
@@ -171,8 +175,9 @@ class CircleSeriesTests(MetricsTestCase):
 class WeeklyComparisonTests(MetricsTestCase):
     def test_weeks_split_by_report_type_with_change(self):
         weeks = metrics.trend(self.ds, Selection(None, None, 'on_air'), OCT1, OCT3)['weeks']
-        first = weeks[0]  # in progress (3 of 7 days): no value per report type either
-        self.assertEqual(first['by_report_type'], {'4G Saturation': None, 'LWE': None})
+        first = weeks[0]  # in progress (3 of 7 days): its figures per report type are shown, not complete
+        summary = {t: metrics.summary(self.ds, Selection(t, None, 'on_air'), OCT3)['metrics']['mtd_uptime_pct'] for t in ('4G Saturation', 'LWE')}
+        self.assertEqual((first['by_report_type'], first['complete']), (summary, False))
         self.assertIsNone(first['change_pts'])  # nothing earlier to compare with
         self.assertIsNone(weeks[1]['change_pts'])  # week 2 has no data
         self.assertEqual(weeks[1]['by_report_type'], {'4G Saturation': None, 'LWE': None})

@@ -6,7 +6,6 @@ from .views import (
     filters_view,
     monthly_view,
     om_heads_view,
-    conversion_activity_view,
     export_consolidated_view,
     export_daily_view,
     period_view,
@@ -39,7 +38,6 @@ urlpatterns = [
     path('workbook/', workbook_view, name='dashboard-workbook'),
     path('alerts/', alerts_view, name='dashboard-alerts'),
     path('om-heads/', om_heads_view, name='dashboard-om-heads'),
-    path('conversion-activity/', conversion_activity_view, name='dashboard-conversion-activity'),
     path('export/daily/', export_daily_view, name='dashboard-export-daily'),
     path('export/consolidated/', export_consolidated_view, name='dashboard-export-consolidated'),
 ]

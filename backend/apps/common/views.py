@@ -178,9 +178,8 @@ def _email_error(exc: 'mail.EmailRejected') -> Response:
 
 
 def _reminder(data) -> 'mail.Reminder':
-    """Validate a reminder's circle, report type and date against the active Master workbook."""
-    from apps.dashboard.workbook import WorkbookError
-    from apps.uptimedb.datasource import current_dataset as get_dataset
+    """Validate a reminder's circle, report type and date against the data layer's site master."""
+    from apps.sitedata.models import Site
 
     errors = {}
     circle = data.get('circle') if isinstance(data.get('circle'), str) else ''
@@ -196,15 +195,10 @@ def _reminder(data) -> 'mail.Reminder':
             deadline = datetime.fromisoformat(str(data['deadline'])).strftime('%d %b %Y, %H:%M')
         except ValueError:
             errors['deadline'] = ['Enter the deadline as YYYY-MM-DDTHH:MM.']
-    try:
-        dataset = get_dataset()
-    except WorkbookError as exc:
-        raise mail.EmailRejected(f'The Master workbook is unavailable: {exc}', status=503) from exc
-    sites = dataset.sites
     if not circle or not report_type:
         errors['circle'] = ['Choose the circle and report type.']
-    elif not ((sites['circle'] == circle) & (sites['report_type'] == report_type)).any():
-        errors['circle'] = [f'{circle} has no {report_type} sites in the Master workbook.']
+    elif not Site.objects.filter(reporting_scope=Site.Scope.DASHBOARD, technology=report_type, circle=circle).exists():
+        errors['circle'] = [f'{circle} has no {report_type} sites in the site master.']
     if errors:
         raise mail.EmailRejected('Invalid reminder.', errors)
     return mail.Reminder(circle=circle, report_type=report_type, reporting_date=reporting_date, deadline=deadline)

@@ -1,17 +1,19 @@
 """Site Scope of the RCA module: All Sites, O&M Start Sites or O&M Not Started Sites.
 
 One rule for every RCA page (``services.filtered`` applies it, so the register, the summary pages, their options and the
-breakdown all use it): an RCA record belongs to the O&M Start sites when its site's **Site Master O&M Start** for the
-record's reporting month is Yes (``SiteMonthlyPerformance.om_start``, the "O&M Start - <month>" column, the same field
-the dashboard's O&M Start scope uses), and to the O&M Not Started sites when it is No.
+breakdown all use it): an RCA record belongs to the O&M Start sites when its site's **Consolidation Matrix O&M Start
+Date** (``apps.sitedata.models.Site.om_start_date``) is on or before the last day of the record's reporting month (the
+rule of ``apps.sitedata.rules.om_effective_from`` and of every O&M figure), and to the O&M Not Started sites when the
+site has no O&M Start Date or a later one.
 
-The site is found by project, circle and site key (Site Master identity). A record whose site is not in the Site Master,
-or whose month has no O&M Start value, is not guessed: it is counted under All Sites only, and ``coverage`` reports it.
-The O&M Start (Yes/No) written on the RCA row itself is kept as stored and not used for the scope.
+The site is the dashboard-scope site of the site master with the record's project as technology and the record's site
+key. A record whose site is not in the site master is not guessed: it is counted under All Sites only, and ``coverage``
+reports it. The O&M Start (Yes/No) written on the RCA row itself is kept as stored and not used for the scope.
 """
 from __future__ import annotations
 
-from django.db.models import Count, Q, QuerySet, Subquery
+from django.db.models import Count, DateField, Exists, OuterRef, Q, QuerySet
+from django.db.models.functions import TruncMonth
 from rest_framework.exceptions import ValidationError
 
 ALL, OM_START, OM_NOT_STARTED = 'all', 'om_start', 'om_not_started'
@@ -27,21 +29,20 @@ def parse(value: str | None) -> str:
 
 
 def _site_om(value: bool) -> Q:
-    """Records whose Site Master site has O&M Start = ``value`` for the record's reporting month.
+    """Records whose site master site is (``value`` True) or is not (False) O&M Start in the record's reporting month.
 
-    One condition per (project, circle, month) of the Site Master's monthly O&M Start: the record's project and circle,
-    a reporting date in that month, and a site key among that month's sites with that value (an uncorrelated subquery
-    the database evaluates once, instead of a lookup per record)."""
-    import calendar
-
-    from apps.uptimedb.models import SiteMonthlyPerformance
-    monthly = SiteMonthlyPerformance.objects.filter(om_start=value)
-    q = Q(pk__in=[])
-    for project, circle, month in monthly.order_by().values_list('site__project', 'site__circle', 'month').distinct():
-        last = month.replace(day=calendar.monthrange(month.year, month.month)[1])
-        keys = monthly.filter(site__project=project, site__circle=circle, month=month).values('site__site_key')
-        q |= Q(project=project, circle=circle, reporting_date__range=(month, last), site_key__in=Subquery(keys))
-    return q
+    A correlated EXISTS on the site master (technology = project, site key, dashboard scope). "O&M Start Date on or
+    before the last day of the reporting month" is tested as "first day of the O&M Start Date's month on or before the
+    reporting date" (the same condition: both say the start month is not after the reporting month). A record without
+    such a site matches neither value."""
+    from apps.sitedata.models import Site
+    sites = (Site.objects.filter(reporting_scope=Site.Scope.DASHBOARD, technology=OuterRef('project'), site_key=OuterRef('site_key'))
+             .annotate(om_month=TruncMonth('om_start_date', output_field=DateField())))
+    if value:
+        sites = sites.filter(om_start_date__isnull=False, om_month__lte=OuterRef('reporting_date'))
+    else:
+        sites = sites.filter(Q(om_start_date__isnull=True) | Q(om_month__gt=OuterRef('reporting_date')))
+    return Q(Exists(sites))
 
 
 def apply(qs: QuerySet, scope: str) -> QuerySet:
@@ -60,6 +61,6 @@ def coverage(qs: QuerySet) -> dict:
     return {**counts, 'unclassified': counts['total'] - counts['om_start'] - counts['not_started']}
 
 
-def dashboard_scope(scope: str) -> str:
-    """The dashboard selection scope for the same sites: On-Air sites, and of those the O&M Start / Not Started ones."""
-    return {ALL: 'on_air', OM_START: 'on_air_om_start', OM_NOT_STARTED: 'on_air_om_not_started'}[scope]
+# The RCA site figures (breakdown.site_metrics, overview) use the site POPULATION of the request (``scope``: On-Air or O&M
+# Start, apps.dashboard.metrics) narrowed by this Site Scope's O&M Start status; the Site Scope itself never selects a
+# population.

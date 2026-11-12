@@ -9,7 +9,7 @@ interface HierarchyKpiCardsProps {
   scopeLabel?: string;
 }
 
-export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel = 'O&M Start' }: HierarchyKpiCardsProps) {
+export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel = 'On-Air sites' }: HierarchyKpiCardsProps) {
   return (
     <div className="space-y-3">
       {/* 5 Standard KPI Cards Grid */}

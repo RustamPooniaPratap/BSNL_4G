@@ -8,6 +8,7 @@ from django.test import override_settings
 from django.urls import reverse
 
 from .auth_helpers import portal_user
+from .sitedata_factory import make_site
 from .test_dashboard_api import DashboardApiTestCase
 
 CONSOLE = 'django.core.mail.backends.console.EmailBackend'
@@ -27,6 +28,10 @@ class EmailApiTestCase(DashboardApiTestCase):
 
 
 class ReminderTests(EmailApiTestCase):
+    def setUp(self):
+        super().setUp()
+        make_site('LWEMP01', technology='LWE', circle='MP')  # reminders are validated against the site master
+
     def test_template_states_only_known_facts(self):
         data = self.get('email-reminder-template', circle='MP', report_type='LWE', reporting_date='2026-10-03')
         self.assertEqual(data['subject'], 'Reminder: LWE uptime CSV for MP, 03 Oct 2026')

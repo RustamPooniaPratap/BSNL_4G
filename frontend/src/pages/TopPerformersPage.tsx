@@ -10,10 +10,12 @@ import { ChartCard } from '../components/dashboard/ChartCard';
 import { Field, FilterBar } from '../components/dashboard/FilterBar';
 import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { useFilterOptions } from '../hooks/useFilterOptions';
 import { useDashboardFilters } from '../hooks/useDashboardFilters';
 import { formatDate, formatNumber, formatPct } from '../lib/format';
-import { fetchFilterOptions, fetchTeamTop } from '../services/api';
+import { fetchTeamTop } from '../services/api';
 import type { GroupRanking, NslaValue, TeamGroup, TopPerformerCircle, TopPerformersResponse } from '../types';
+import { populationSites } from '../lib/population';
 
 const GROUP_LABELS: Record<TeamGroup, string> = { ci: 'CI', ie: 'IE' };
 const PROJECT_ORDER = ['4G Saturation', 'LWE'];
@@ -30,9 +32,9 @@ export function TopPerformersPage() {
   const navigate = useNavigate();
   const workbook = useWorkbook();
   const { version } = workbook;
-  const options = useApiQuery(workbook.active ? `${version}|filters` : null, fetchFilterOptions);
-  // Same scope default as CI & IE Performance (NSLA is the O&M Start penalty threshold), so the figures match.
-  const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data, { defaultScope: 'om_start' });
+  const options = useFilterOptions();
+  // The population is the global selection (On-Air / O&M Start), as on every page.
+  const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data);
   const [searchParams, setSearchParams] = useSearchParams();
   const month = searchParams.get('month') ?? '';
   const setParam = (key: string, value: string | null) => setSearchParams((current) => {
@@ -54,9 +56,9 @@ export function TopPerformersPage() {
     return (
       <Card className="mx-auto mt-10 max-w-xl items-center gap-3 px-8 py-10 text-center">
         <FileUp className="size-8 text-muted-foreground" aria-hidden="true" />
-        <h1 className="text-lg font-semibold">No Master workbook loaded</h1>
-        <p className="text-sm text-muted-foreground">Upload the consolidated workbook to see circle-wise top performers.</p>
-        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Upload workbook</Link>
+        <h1 className="text-lg font-semibold">No reporting data loaded</h1>
+        <p className="text-sm text-muted-foreground">Import the reporting data (Data Source page) to see circle-wise top performers.</p>
+        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Import data</Link>
       </Card>
     );
   }
@@ -111,7 +113,7 @@ export function TopPerformersPage() {
       <FilterBar options={options.data} filters={filters} onChange={setFilters}
         canReset={!isDefault || !!month} onReset={reset} showTrendRange={false} showDate={false}
         title="Circle-wise Top Performers"
-        description="The CI and the IE with the lowest NSLA % in each circle, ranked separately within the same project and period."
+        description={`The CI and the IE with the lowest NSLA % in each circle, ranked separately within the same project and period · Population: ${populationSites(filters.scope)}`}
         extra={(
           <Field id="filter-month" label="Reporting month" className="w-48">
             <Select value={selectedMonth} onValueChange={(v) => setParam('month', v === latest ? null : v)} disabled={!months.length}>

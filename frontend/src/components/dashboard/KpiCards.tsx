@@ -4,6 +4,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { formatMinutes, formatNumber, formatPct, formatShortDate } from '../../lib/format';
+import { populationSites } from '../../lib/population';
 import type { OutagePeriod, PeriodSummary, SummaryResponse } from '../../types';
 
 interface KpiCardsProps {
@@ -34,6 +35,7 @@ export function KpiCards({ summary, period, loading, onShowBelow60 }: KpiCardsPr
   const mtd = summary.mtd_window;
   const withValue = m.sites_with_mtd_value;
   const usd = period?.unique_sites_down;
+  const sitesLabel = populationSites(summary.filters.scope);
 
   return (
     <section aria-label="Key indicators" className={cn('grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5', loading && 'opacity-60')}>
@@ -44,9 +46,13 @@ export function KpiCards({ summary, period, loading, onShowBelow60 }: KpiCardsPr
         detail={`${formatShortDate(mtd.start)} – ${formatShortDate(mtd.end)} · ${mtd.days_reported} days`}
         emphasis
       />
-      <Kpi icon={<ShieldAlert />} label="Not meeting SLA" value={formatNumber(m.sites_not_meeting_sla_mtd ?? null)}
-        share={share(m.sites_not_meeting_sla_mtd, withValue)} tone={m.sites_not_meeting_sla_mtd ? 'warning' : undefined}
-        detail={`MTD uptime below 98.5% · of ${formatNumber(withValue ?? null)} sites with MTD data`} />
+      {/* NSLA (approved rule B-3, Master workbook): sites of the selected population whose MTD uptime over their reported days is below 98.5%. */}
+      <Kpi icon={<ShieldAlert />} label="Not meeting SLA" value={formatNumber(m.nsla_sites_mtd ?? m.sites_not_meeting_sla_mtd ?? null)}
+        share={m.nsla_sites_mtd != null ? share(m.nsla_sites_mtd, m.nsla_eligible_sites) : share(m.sites_not_meeting_sla_mtd, withValue)}
+        tone={(m.nsla_sites_mtd ?? m.sites_not_meeting_sla_mtd) ? 'warning' : undefined}
+        detail={m.nsla_sites_mtd != null
+          ? `${sitesLabel} with MTD uptime below 98.5% · of ${formatNumber(m.nsla_eligible_sites ?? null)} ${sitesLabel}`
+          : `MTD uptime below 98.5% · of ${formatNumber(withValue ?? null)} sites with MTD data`} />
       <Kpi icon={<WifiOff />} label="Unique sites down" value={usd ? formatNumber(usd.count) : '…'} share={usd?.pct ?? null}
         tone={usd?.count ? 'critical' : undefined}
         detail={usd ? `Outage > 0 at least once · ${period!.label} · of ${formatNumber(usd.eligible_sites)} active sites` : 'Loading the reporting period…'} />

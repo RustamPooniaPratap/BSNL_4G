@@ -4,6 +4,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { formatMinutes, formatNumber, formatPct, formatShortDate } from '../../lib/format';
 import type { PeriodSummary } from '../../types';
+import { PeriodStatusBadge } from '../reporting/ReportingStatus';
 
 interface PeriodKpiProps {
   period: PeriodSummary | null;
@@ -45,7 +46,7 @@ export function PeriodKpi({ period, loading, error }: PeriodKpiProps) {
           <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
             <CalendarRange className="size-3.5" aria-hidden="true" /> Trend period
           </p>
-          <p className="mt-0.5 text-sm font-semibold">{period.label}</p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-sm font-semibold">{period.label} <PeriodStatusBadge status={period.status} missing={period.missing} /></p>
           <p className="text-xs text-muted-foreground">{covered}</p>
         </div>
         <dl className="grid flex-1 grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">

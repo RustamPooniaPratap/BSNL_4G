@@ -33,8 +33,7 @@ from django.db import transaction
 from openpyxl import load_workbook
 
 from apps.accounts.audit import audit
-from apps.uptimedb.raw.parser import norm
-from apps.uptimedb.raw.rules import canonical_circle
+from .sources.cnmc_csv import canonical_circle, norm
 
 from . import exceptions, uploads
 from .identifiers import SEPARATOR, IdentifierIndex, is_valid_id, key_of, split_ids
@@ -204,7 +203,7 @@ def analyse(path: Path) -> dict:
 def preview(path: Path, name: str, *, user=None) -> UploadBatch:
     batch = uploads.new_batch(KIND, path, name, user, technology=Technology.LWE)
     try:
-        result = analyse(Path(batch.stored_path))
+        result = analyse(uploads.staged_path(batch))
     except uploads.UploadRejected as exc:
         batch.error = str(exc)
         return uploads.record_preview(batch, {}, {'error': str(exc)}, failed=True)
@@ -215,11 +214,11 @@ def preview(path: Path, name: str, *, user=None) -> UploadBatch:
 
 def commit(batch: UploadBatch, *, user=None, request=None) -> UploadBatch:
     uploads.require_previewed(batch)
-    result = analyse(uploads.staged_file(batch))
-    if not uploads.same_counts(batch, result['counts']):
-        raise uploads.UploadRejected('The database changed since the preview; preview the file again before committing.')
-    rows = result['rows']
-    with transaction.atomic():
+    with uploads.committing(batch) as batch:
+        result = analyse(uploads.staged_file(batch))
+        if not uploads.same_counts(batch, result['counts']):
+            raise uploads.UploadRejected('The database changed since the preview; preview the file again before committing.')
+        rows = result['rows']
         # 1. History: every row of the workbook, as written, with its outcome and its normalised identifiers.
         records = LweMappingRow.objects.bulk_create([LweMappingRow(
             batch=batch, source_row=r['row'], circle_raw=r['_circle_stored'], bts_ip_id_raw=r['_bts_ip_id_stored'],

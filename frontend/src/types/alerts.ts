@@ -16,7 +16,10 @@ export interface AlertAutomationInput {
   start_date: string | null; end_date: string | null; project: string; circles: string[]; report_day: 'today' | 'yesterday' | 'latest';
   to_users: number[]; to_emails: string[]; cc: string[]; bcc: string[]; include_responsible: boolean; attachments: AlertAttachment[];
   extra_file: number | null; distribution: 'same' | 'per_recipient'; template: 'reminder' | 'report'; subject: string; message: string;
+  /** Site population of the reports and figures of the email (On-Air or O&M Start); the API defaults to On-Air. */
+  population: AlertPopulation;
 }
+export type AlertPopulation = 'on_air' | 'om_start';
 export interface AlertAutomation extends AlertAutomationInput {
   id: number; kind_label: string; enabled: boolean; next_run_at: string | null; last_run_at: string | null; extra_file_name: string | null; updated_at: string;
 }

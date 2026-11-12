@@ -15,8 +15,6 @@ vi.mock('../../services/api', async (importOriginal) => ({
   fetchFilterOptions: vi.fn(),
   fetchRecords: vi.fn(),
   fetchSiteDetail: vi.fn(),
-  uploadWorkbook: vi.fn(),
-  uploadDataFile: vi.fn(),
 }));
 const m = vi.mocked(api);
 // These tests walk through whole forms; allow for slow runs when every test file runs in parallel.
@@ -49,8 +47,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   expect(fetchSpy).not.toHaveBeenCalled();
-  expect(m.uploadWorkbook).not.toHaveBeenCalled();
-  expect(m.uploadDataFile).not.toHaveBeenCalled();
   fetchSpy.mockRestore();
 });
 
@@ -145,7 +141,7 @@ describe('Add New Site', () => {
     const user = userEvent.setup();
     render(<AddSitePage />, '/data/new-site?site_id=LWEBH0303&report_type=LWE&circle=BH');
     expect(await screen.findByText('LWEBH0303 is already registered')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Review sites in BH' })).toHaveAttribute('href', '/?report_type=LWE&circle=BH&scope=all');
+    expect(screen.getByRole('link', { name: 'Review sites in BH' })).toHaveAttribute('href', '/?report_type=LWE&circle=BH');
     await user.type(screen.getByLabelText(/Site name/), 'Gaya 2');
     await choose(user, /^On-Air/, 'Yes');
     await user.click(screen.getByRole('button', { name: 'Review site' }));

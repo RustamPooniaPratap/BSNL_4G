@@ -18,6 +18,7 @@ import {
 } from '../../services/api';
 import type { AlertAutomation, AlertAutomationInput, AlertKind, AlertOptions, AlertPreview } from '../../types/alerts';
 import { WorkerStatus } from './AlertParts';
+import { POPULATIONS, isPopulation, populationSites } from '../../lib/population';
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const STEPS = ['Schedule', 'Scope', 'Recipients', 'Attachments', 'Message', 'Review'] as const;
@@ -61,7 +62,8 @@ export function AlertAutomationsPage() {
     return { name: k.label, kind, frequency: k.frequency, run_time: '09:00', timezone: o!.timezone, weekday: 0, month_day: 1, start_date: null, end_date: null,
       project: '', circles: [], report_day: k.report_day as AlertAutomationInput['report_day'], to_users: [], to_emails: [], cc: [], bcc: [],
       include_responsible: kind !== 'uptime_report' && kind !== 'custom', attachments: [], extra_file: null, distribution: 'same',
-      template: t.value, subject: t.subject, message: kind === 'csv_reminder' || kind === 'rca_reminder' || kind === 'upload_failure' ? '{{notification_message}}' : t.message };
+      template: t.value, subject: t.subject, message: kind === 'csv_reminder' || kind === 'rca_reminder' || kind === 'upload_failure' ? '{{notification_message}}' : t.message,
+      population: 'on_air' };
   };
   return (
     <div className="space-y-4">
@@ -104,6 +106,7 @@ export function AlertAutomationsPage() {
                 {a.enabled && a.next_run_at ? `Next run ${formatDateTime(a.next_run_at)}` : a.frequency === 'event' ? (a.enabled ? 'Waiting for upload failures' : 'Not listening') : 'Not scheduled'}
                 {a.last_run_at ? ` · last run ${formatDateTime(a.last_run_at)}` : ''}
                 {' · '}{a.attachments.length + (a.extra_file ? 1 : 0)} attachment(s)
+                {' · '}Population: {populationSites(isPopulation(a.population) ? a.population : 'on_air')}
               </p>
               <div className="flex flex-wrap gap-1.5">
                 <Button size="sm" variant="outline" onClick={() => setEditing(a)}><Pencil /> Edit</Button>
@@ -132,7 +135,8 @@ export function AlertAutomationsPage() {
 
 function AutomationSheet({ options, value, onClose, onSaved }: { options: AlertOptions; value: AlertAutomation | AlertAutomationInput; onClose: () => void; onSaved: (text: string) => void }) {
   const id = 'id' in value ? value.id : null;
-  const [f, setF] = useState<AlertAutomationInput>(value);
+  // Automations saved before the population existed have none: On-Air, the API default.
+  const [f, setF] = useState<AlertAutomationInput>({ ...value, population: isPopulation(value.population) ? value.population : 'on_air' });
   const [step, setStep] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -231,6 +235,10 @@ function AutomationSheet({ options, value, onClose, onSaved }: { options: AlertO
                 <SelectField id="al-project" value={f.project || '__all'} placeholder="All projects" onChange={(v) => { set('project', v === '__all' ? '' : v); set('circles', []); }}
                   options={[{ value: '__all', label: 'All projects' }, ...(catalog.data?.projects ?? []).filter((p) => p.is_active).map((p) => ({ value: p.key, label: p.name }))]} />
               </Field>
+              <Field id="al-population" label="Population">
+                <SelectField id="al-population" value={f.population} placeholder="Population" onChange={(v) => { if (isPopulation(v)) set('population', v); }}
+                  options={POPULATIONS.map((p) => ({ value: p, label: populationSites(p) }))} />
+              </Field>
               <Field id="al-day" label={reminder ? 'Reporting date checked' : 'Reporting date of the reports'}>
                 <SelectField id="al-day" value={f.report_day} placeholder="Reporting date" onChange={(v) => set('report_day', v as AlertAutomationInput['report_day'])} options={DAYS} />
               </Field>
@@ -318,7 +326,7 @@ function AutomationSheet({ options, value, onClose, onSaved }: { options: AlertO
                 <>
                   <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1 text-sm">
                     <dt className="text-muted-foreground">Schedule</dt><dd>{schedule(f)}{preview.next_run_at ? ` · next ${formatDateTime(preview.next_run_at)}` : ''}</dd>
-                    <dt className="text-muted-foreground">Scope</dt><dd>{f.project || 'All projects'} · {f.circles.join(', ') || 'All circles'}</dd>
+                    <dt className="text-muted-foreground">Scope</dt><dd>{f.project || 'All projects'} · {f.circles.join(', ') || 'All circles'} · Population: {populationSites(f.population)}</dd>
                     <dt className="text-muted-foreground">Recipients</dt>
                     <dd>{[...options.users.filter((u) => f.to_users.includes(u.id)).map((u) => u.email), ...f.to_emails].join(', ') || '—'}
                       {f.cc.length ? ` · CC ${f.cc.join(', ')}` : ''}{f.bcc.length ? ` · BCC ${f.bcc.join(', ')}` : ''}

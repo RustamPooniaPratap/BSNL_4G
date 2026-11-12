@@ -53,7 +53,9 @@ class AllKpisTests(SignedInTestCase, SiteDataTestCase):
 
     def test_usd_and_nsla_follow_the_approved_definitions(self):
         s = self.get('allkpis-summary', circle='MP', date_from='2026-10-01', date_to='2026-10-03')['current']
-        self.assertEqual((s['om_start_sites'], s['usd_sites'], s['nsla_sites']), (3, 2, 1))  # 101 + 102 USD; only 102 NSLA
+        # 101 + 102 USD. NSLA is the period-pooled rule (approved B-3): 102 has one day at 98.49% but 99.5% over the
+        # period, so no site is NSLA here (one bad day is not NSLA).
+        self.assertEqual((s['om_start_sites'], s['usd_sites'], s['nsla_sites']), (3, 2, 0))
         sites = {r['site_id']: r for r in self.get('allkpis-sites', circle='MP', date_from='2026-10-01', date_to='2026-10-03')['rows']}
         self.assertEqual((sites['UVMP101']['usd'], sites['UVMP101']['nsla']), (True, False))  # exactly 98.5% is not NSLA
         self.assertEqual((sites['UVMP103']['usd'], sites['UVMP103']['nsla'], sites['UVMP103']['availability_pct']), (False, False, None))

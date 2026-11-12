@@ -58,7 +58,7 @@ describe('Report download', () => {
     await user.click(await screen.findByRole('option', { name: 'MP' }));
     await user.type(screen.getByLabelText('Report date'), '2026-09-30');  // an earlier month's daily values
     await user.click(download);
-    expect(m.downloadReport).toHaveBeenCalledWith('daily', { report_type: 'LWE', circle: 'MP', date: '2026-09-30' });
+    expect(m.downloadReport).toHaveBeenCalledWith('daily', { report_type: 'LWE', circle: 'MP', date: '2026-09-30' }, 'on_air');
     expect(await screen.findByText('Downloaded Daily_Uptime_LWE_MP_2026-09-30.xlsx.')).toBeInTheDocument();
   });
 
@@ -69,7 +69,7 @@ describe('Report download', () => {
     expect(screen.getByLabelText('Month to date, up to')).toHaveValue('2026-10-03');
     expect(await circleOptions(user)).toEqual(['All Circles', 'BH', 'MP', 'RJ']);  // every permitted circle, once
     await user.click(screen.getByRole('button', { name: /Download/ }));
-    expect(m.downloadReport).toHaveBeenCalledWith('consolidated', { report_type: '', circle: '', reporting_date: '2026-10-03' });
+    expect(m.downloadReport).toHaveBeenCalledWith('consolidated', { report_type: '', circle: '', reporting_date: '2026-10-03' }, 'on_air');
   });
 
   it('refuses dates without data and shows the server error instead of a download', async () => {

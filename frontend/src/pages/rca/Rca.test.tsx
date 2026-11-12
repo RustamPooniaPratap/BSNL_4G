@@ -350,14 +350,14 @@ describe('RCA Summary', () => {
     expect(allBtn).toHaveAttribute('aria-pressed', 'true');
     expect(nslaBtn).toHaveAttribute('aria-pressed', 'false');
     await user.click(nslaBtn);
-    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ rca_scope: 'nsla' }), expect.anything());
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ rca_scope: 'nsla' }), 'on_air', expect.anything());
     await user.click(allBtn);
-    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams(), expect.anything());
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams(), 'on_air', expect.anything());
     m.fetchRcaSummary.mockResolvedValue({ ...SUMMARY, breakdown: { ...BREAKDOWN, through: '2026-10-22', rows: [], totals: counts({}), grand_total: 0, records: 0, empty: true,
       percent_of_total: counts({}, true), not_mapped: { records: 0, values: [] } } });
     await user.click(screen.getByRole('combobox', { name: 'Reporting date' }));
     await user.click(await screen.findByRole('option', { name: '22 Oct 2026' }));
-    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-22', date_to: '2026-10-22' }), expect.anything());
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-22', date_to: '2026-10-22' }), 'on_air', expect.anything());
     const updated = await screen.findByRole('region', { name: 'Circle-wise Root Cause Breakdown' });
     expect(await within(updated).findByText('No RCA records match these filters.')).toBeInTheDocument();
     expect(within(updated).getByText(/^Through 22 Oct 2026/)).toBeInTheDocument();
@@ -367,7 +367,7 @@ describe('RCA Summary', () => {
     const user = userEvent.setup();
     renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary/trends?project=LWE&date_from=2026-10-21&date_to=2026-10-21' });
     expect(await screen.findByText('Daily: RCA records per reporting date')).toBeInTheDocument();
-    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-21', date_to: '2026-10-21', project: 'LWE' }), expect.anything());
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-21', date_to: '2026-10-21', project: 'LWE' }), 'on_air', expect.anything());
     const tabs = within(screen.getByRole('navigation', { name: 'RCA Summary pages' }));
     expect(tabs.getAllByRole('link').map((l) => l.textContent)).toEqual(['Overview', 'Circle-wise RCA Breakdown', 'Root Cause Analysis', 'Project & Circle Analysis', 'Daily & Monthly Trends']);
     expect(tabs.getByRole('link', { name: 'Daily & Monthly Trends' })).toHaveAttribute('aria-current', 'page');
@@ -406,7 +406,7 @@ describe('RCA Summary', () => {
     await user.click(screen.getByRole('option', { name: '22 Oct 2026' }));
     expect(screen.getByTestId('location')).toHaveTextContent('date_from=2026-10-22&date_to=2026-10-22');
     expect(await screen.findByText(/^Showing 22 Oct 2026 · /)).toBeInTheDocument();
-    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-22', date_to: '2026-10-22' }), expect.anything());
+    expect(m.fetchRcaSummary).toHaveBeenLastCalledWith(new URLSearchParams({ date_from: '2026-10-22', date_to: '2026-10-22' }), 'on_air', expect.anything());
     await user.click(screen.getByRole('combobox', { name: 'Reporting date' }));
     await user.click(await screen.findByRole('option', { name: /Oct 2026 — month/ }));
     expect(screen.getByTestId('location')).toHaveTextContent('date_from=2026-10-01&date_to=2026-10-31');

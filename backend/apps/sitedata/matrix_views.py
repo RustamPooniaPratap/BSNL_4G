@@ -1,9 +1,9 @@
 """Consolidation Matrix import API (/api/sitedata/matrix/): preview, review, confirm, discard and the rejected-row report.
 
-The Data Source page's "Import a workbook into PostgreSQL" offers two workbook types; this is the Consolidation Matrix
-pipeline (apps.sitedata.matrix), independent of the Up-Time Report importer (apps.uptimedb, /api/imports/). It writes
-only the new data layer's site master (sitedata_site, sitedata_siteidentifier, sitedata_identifierconflict) and the
-upload history; never performance records, legacy uptimedb tables or RCA data. Admins only, as the other imports.
+The Data Source page imports the Consolidation Matrix (this pipeline, apps.sitedata.matrix), the Up-Time Report
+(apps.sitedata.uptime_master) and the LWE Band ID mapping. This one writes only the site master (sitedata_site,
+sitedata_siteidentifier, sitedata_identifierconflict) and the upload history; never daily records or RCA data.
+Admins only, as the other imports.
 """
 import csv
 import io
@@ -39,6 +39,26 @@ def _batch_json(batch: UploadBatch) -> dict:
         'report': {k: v for k, v in report.items() if k not in ('exception_report',)},
         'can_commit': batch.processing_status == UploadBatch.Processing.PREVIEWED and batch.validation_status != UploadBatch.Validation.FAILED,
     }
+
+
+def exception_csv_response(batch: UploadBatch, filename: str):
+    """The upload's exception report as CSV. No report recorded (nothing to report): a header-only CSV. A report that
+    was recorded but whose file is missing on this server: HTTP 410 with an explicit message, never an empty CSV that
+    would read as "no exceptions"."""
+    stored = (batch.report or {}).get('exception_report')
+    if stored:
+        path = exceptions.resolve(stored)
+        if path is None or not path.is_file():
+            return Response({'error': f'The exception report of upload #{batch.pk} is not available on this server (its file is missing). '
+                                      'Upload the file again to regenerate it.', 'details': {}}, status=status.HTTP_410_GONE)
+        data = path.read_bytes()
+    else:
+        out = io.StringIO()
+        csv.writer(out).writerow(exceptions.COLUMNS)
+        data = out.getvalue().encode('utf-8')
+    response = HttpResponse(data, content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
 
 
 def _get(batch_id: int, kind: str = matrix.KIND, label: str = 'Consolidation Matrix') -> UploadBatch:
@@ -120,13 +140,4 @@ def matrix_discard(request, batch_id: int):
 def matrix_issues_csv(request, batch_id: int):
     """Every rejected row, conflict and review item of the preview (the exception report), as CSV."""
     batch = _get(batch_id)
-    path = (batch.report or {}).get('exception_report')
-    if path and Path(path).is_file():
-        data = Path(path).read_bytes()
-    else:
-        out = io.StringIO()
-        csv.writer(out).writerow(exceptions.COLUMNS)
-        data = out.getvalue().encode('utf-8')
-    response = HttpResponse(data, content_type='text/csv; charset=utf-8')
-    response['Content-Disposition'] = f'attachment; filename="matrix-{batch.pk}-issues.csv"'
-    return response
+    return exception_csv_response(batch, f'matrix-{batch.pk}-issues.csv')

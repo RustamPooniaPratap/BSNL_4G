@@ -13,8 +13,8 @@ from openpyxl import Workbook
 
 from apps.rca import importer, parser
 from apps.rca.models import RcaCauseMapping, RcaEvent, RcaImportBatch, RcaRecord, RcaWorkflow
-from apps.uptimedb.models import DataImportBatch, UptimeSite
 from tests.auth_helpers import portal_user
+from tests.sitedata_factory import make_site
 
 HEADERS = ['Date', 'Project', 'Circle', 'Site ID', 'Site Name', 'OA', 'BA', 'O&M Start (Yes/No)', 'Outage Min.',
            'Final Bucket', 'Bucket - 2', 'RCA']
@@ -40,11 +40,9 @@ def workbook(path: Path, rows=None, headers=HEADERS, sheet='Sheet1') -> Path:
 
 
 def uptime_sites(*sites) -> None:
-    """Up-Time Report sites (project, circle, site ID): an upload with report details accepts only these."""
-    batch = DataImportBatch.objects.create(original_filename='master.xlsx', checksum_sha256='x', sheet_name='Up-Time Report',
-                                           stored_path='-', status=DataImportBatch.Status.COMMITTED)
+    """Site master (sitedata, dashboard scope) sites (project, circle, site ID): an upload with report details accepts only these."""
     for project, circle, site in sites:
-        UptimeSite.objects.create(project=project, circle=circle, site_id=site, site_key=site, batch=batch, source_row=1)
+        make_site(site, technology=project, circle=circle)
 
 
 ROW_SITES = [('LWE', 'BH', 'LWEBH0063'), ('LWE', 'JH', 'LWEJH0001'), ('4G Saturation', 'OD', 'OD0001'),

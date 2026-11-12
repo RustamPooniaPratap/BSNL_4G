@@ -1,4 +1,4 @@
-"""The data of every 4G / LWE dashboard page: the new data layer (sitedata), never the old uptimedb tables.
+"""The data of every 4G / LWE dashboard page: the data layer (sitedata), the only operational data.
 
 Used by the Dashboard (4G / LWE overview), Threshold Analysis, Buckets and site records, the CI / IE and Top Performer
 pages, the exports, All KPI's and Site Portfolio, so the same sites, dates and rules apply everywhere:

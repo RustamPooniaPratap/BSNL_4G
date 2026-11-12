@@ -11,6 +11,8 @@ import { UptimeHeatmap, type HeatmapColumn } from './UptimeHeatmap';
 import { ChartCard } from './ChartCard';
 import { DataTable } from './DataTable';
 import { AXIS_TICK, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor, type UptimeChartView } from './constants';
+import { PeriodStatusBadge } from '../reporting/ReportingStatus';
+import { statusText } from '../../lib/reportingStatus';
 
 const VIEWS: { value: TrendView; label: string }[] = [
   { value: 'daily', label: 'Daily' },
@@ -257,6 +259,8 @@ function WeeklyView({ trend, weeks, style }: { trend: TrendResponse; weeks: Tren
   }));
   const lower = lowerBound(weeks.flatMap((w) => [...(style.circles ? [] : [w.uptime_pct]), ...Object.values(w.by_report_type)]));
   const keys = combined ? [COMBINED, ...types] : types;
+  // The Status column only with a backend that sends the Complete / Provisional status.
+  const weekStatuses = weeks.some((w) => w.status);
 
   return (
     <>
@@ -287,18 +291,20 @@ function WeeklyView({ trend, weeks, style }: { trend: TrendResponse; weeks: Tren
             <dd className="flex items-baseline gap-2 text-sm font-semibold tabular-nums">
               {w.days_reported ? formatPct(w.uptime_pct) : <span className="font-normal text-muted-foreground">{weekStatus(w)}</span>}
               <Change value={w.change_pts} unit="vs previous week shown" />
+              {w.days_reported > 0 && <PeriodStatusBadge status={w.status} missing={w.missing} />}
             </dd>
           </div>
         ))}
       </dl>
       <DataTable
         caption="Weekly uptime"
-        columns={['Week', ...keys.map(style.name), 'Change', 'Days reported']}
+        columns={['Week', ...keys.map(style.name), 'Change', 'Days reported', ...(weekStatuses ? ['Status'] : [])]}
         rows={weeks.map((w) => [
           `${w.label} (${formatShortDate(w.start)}–${formatShortDate(w.end)})`,
           ...keys.map((k) => (w.days_reported ? formatPct(k === COMBINED ? w.uptime_pct : w.by_report_type[k]) : weekStatus(w))),
           formatChange(w.change_pts),
           `${w.days_reported} / ${w.days_in_week}`,
+          ...(weekStatuses ? [statusText(w)] : []),
         ])}
       />
     </>
@@ -316,6 +322,7 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
   const incomplete = months.filter((m) => !m.partial && m.sites_reported < m.sites_in_scope).length;
   const { overall } = monthly;
   const firstLabel = months.find((m) => m.uptime_pct != null)?.label ?? '—';
+  const monthStatuses = months.some((m) => m.status || m.finalization_status);
 
   return (
     <>
@@ -336,6 +343,7 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
             <dt className="text-[11px] text-muted-foreground">{latest.label} ({latest.days} days)</dt>
             <dd className="flex items-baseline gap-2 text-lg font-semibold tabular-nums">
               {formatPct(latest.uptime_pct)} <Change value={latest.change_pts} unit="vs previous month" />
+              <PeriodStatusBadge status={latest.status} finalizationStatus={latest.finalization_status} missing={latest.missing} />
             </dd>
           </div>
         )}
@@ -366,13 +374,14 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
       )}
       <DataTable
         caption="Monthly uptime"
-        columns={['Month', ...keys.map(style.name), 'Change', 'Workbook method (blank = 100%)', 'Sites reported']}
+        columns={['Month', ...keys.map(style.name), 'Change', 'Workbook method (blank = 100%)', 'Sites reported', ...(monthStatuses ? ['Status'] : [])]}
         rows={months.map((m) => [
           m.partial ? `${m.label} (${m.days} days)` : m.label,
           ...keys.map((k) => formatPct(k === COMBINED ? m.uptime_pct : m.by_report_type[k])),
           formatChange(m.change_pts),
           formatPct(m.uptime_pct_blank_as_zero),
           `${formatNumber(m.sites_reported)} / ${formatNumber(m.sites_in_scope)}`,
+          ...(monthStatuses ? [statusText(m)] : []),
         ])}
       />
     </>

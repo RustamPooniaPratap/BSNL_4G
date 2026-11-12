@@ -10,12 +10,13 @@ import {
 } from '../../components/data/DataEntry';
 import { useWorkbook } from '../../context/workbook';
 import { useApiQuery } from '../../hooks/useApiQuery';
+import { useFilterOptions } from '../../hooks/useFilterOptions';
 import { findSite, useSiteRegistry } from '../../hooks/useSiteRegistry';
 import {
   VALIDATED_MESSAGES, fieldA11y, normaliseSiteId, outageError, outageWarning, parseDate, parseNumber, siteIdError,
 } from '../../lib/dataEntry';
 import { formatDate, formatMinutes } from '../../lib/format';
-import { fetchFilterOptions, fetchSiteDetail } from '../../services/api';
+import { fetchSiteDetail } from '../../services/api';
 import type { SiteRecord } from '../../types';
 
 interface RowDraft {
@@ -31,7 +32,7 @@ const todayIso = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60
 /** One daily reporting record (outage minutes for one site on one date) for an existing site. */
 export function AddRowPage() {
   const workbook = useWorkbook();
-  const options = useApiQuery(workbook.active ? `${workbook.version}|filters` : null, fetchFilterOptions);
+  const options = useFilterOptions();
   const [draft, setDraft] = useState<RowDraft>(EMPTY);
   const [step, setStep] = useState<Step>('edit');
   const [showErrors, setShowErrors] = useState(false);

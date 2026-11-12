@@ -4,7 +4,7 @@ Every write runs in one transaction with its change-history entry, so a refused 
 records nothing. Projects are deactivated, never deleted. A circle can be deleted only while nothing refers to it
 (associations, aliases, records of any project, grants); otherwise it is deactivated. Removing an association removes
 only that project's association, and only while nothing refers to it (sites, daily or monthly values, uploads, RCA
-records or expected units, escalation sites, user grants); otherwise the association is kept, inactive.
+records or expected units, sites with matrix escalation contacts, user grants); otherwise the association is kept, inactive.
 """
 from __future__ import annotations
 
@@ -318,13 +318,23 @@ def _all_aliases():
 
 
 def _site_id_mapping() -> list[dict]:
-    """How raw site identifiers resolve per project (raw/resolvers.py); separate from circle code aliases."""
-    from apps.uptimedb.raw.resolvers import RESOLVERS
-    rules = {'4G Saturation': 'The raw BTS IP ID is the master site ID, matched within the project and circle only.',
-             'LWE': 'Not configured: the authoritative mapping from raw IDs (e.g. JHDTJN001) to master LWE IDs (e.g. LWEJH0001) and the '
-                    '2100 / 700 MHz selection rule have not been supplied, so LWE rows are not imported.'}
-    return [{'project': p, 'configured': bool(RESOLVERS.get(p) and RESOLVERS[p].configured),
-             'rule': rules.get(p, 'No resolver: raw daily uploads are not configured for this project.')} for p in services.project_keys()]
+    """How raw site identifiers resolve per project on the data layer (apps.sitedata.rawcsv); separate from circle code
+    aliases. Matching is deterministic: no fuzzy matching, and a raw row never creates a site."""
+    from apps.sitedata.models import SiteIdentifier
+    from apps.sitedata.rawcsv import KINDS
+    lwe_mapping = SiteIdentifier.objects.filter(kind__in=(SiteIdentifier.Kind.BAND_2100, SiteIdentifier.Kind.BAND_700)).exists()
+    rules = {
+        '4G Saturation': ('The raw BTS IP ID is the BSNL Site ID of the Consolidation Matrix, matched within the technology and '
+                          'circle only.', True),
+        'LWE': ('The raw BTS IP ID, BTS Site ID (2100 MHz) or BTS Site ID (700 MHz) resolves deterministically through the LWE '
+                'Band ID mapping and the matrix identifiers, within the technology and circle; no fuzzy matching.'
+                + ('' if lwe_mapping else ' No LWE Band ID mapping is loaded yet, so LWE band IDs cannot be resolved.'), lwe_mapping),
+    }
+    out = []
+    for p in services.project_keys():
+        rule, configured = rules.get(p, ('No rule: raw daily uploads are not configured for this project.', False))
+        out.append({'project': p, 'configured': bool(configured and p in KINDS), 'rule': rule})
+    return out
 
 
 def _alias_fields(request, alias: CircleAlias | None) -> dict:

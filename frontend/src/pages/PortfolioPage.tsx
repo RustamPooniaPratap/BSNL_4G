@@ -10,8 +10,11 @@ import { BUCKET_COLORS, BUCKET_ORDER } from '../components/dashboard/constants';
 import { CircleBreakdownTable } from '../components/portfolio/CircleBreakdownTable';
 import { PeriodControls } from '../components/portfolio/PeriodControls';
 import { CompositeTile, ConversionActivityTile, KpiSection, KpiTile, SummaryMetricsTile, type Segment } from '../components/portfolio/PortfolioKpis';
+import { PeriodStatusBadge, ProvisionalBanner } from '../components/reporting/ReportingStatus';
 import { useTracking } from '../context/tracking';
 import { PageHeading } from '../context/pageHeader';
+import { usePopulation } from '../context/population';
+import { PopulationSelect } from '../components/PopulationSelect';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { useOrganization } from '../hooks/useOrganization';
 import { useDashboardFilters } from '../hooks/useDashboardFilters';
@@ -37,6 +40,7 @@ export function PortfolioPage() {
   const options = useApiQuery('site-portfolio|filters', fetchPortfolioFilters);
   const version = options.data?.source.loaded_at ?? '';
   const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data);
+  const { scope, sitesLabel } = usePopulation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { state: tracking, dispatch } = useTracking();
 
@@ -62,27 +66,25 @@ export function PortfolioPage() {
   const ready = Boolean(filters && f.date);
   const k = (name: string, q: URLSearchParams) => (ready ? `${version}|${name}|${q}` : null);
   const omAvailable = Boolean(options.data?.scopes.find((s) => s.value === 'om_start')?.available);
+  // Site STATUS counts (total scope, On-Air, O&M Start) need both populations' site counts; they are shown as status
+  // information only. Every performance figure below uses the selected population alone.
+  const statusOm = omAvailable || scope === 'om_start';
   const q = {
-    onAir: params('on_air', f.date), omStart: params('om_start', f.date), all: params('all', f.date),
-    previous: params('on_air', previousDate),
+    onAir: params('on_air', f.date), omStart: params('om_start', f.date),
+    previous: params(scope, previousDate),
   };
-
-  const onAir = useApiQuery(k('onAir', q.onAir), (s) => fetchPortfolioSummary(q.onAir, s));
-  const omStart = useApiQuery(omAvailable ? k('om', q.omStart) : null, (s) => fetchPortfolioSummary(q.omStart, s));
-  const all = useApiQuery(k('all', q.all), (s) => fetchPortfolioSummary(q.all, s));
+  const statusOnAir = useApiQuery(k('status-onAir', q.onAir), (s) => fetchPortfolioSummary(q.onAir, s));
+  const statusOmStart = useApiQuery(statusOm ? k('status-om', q.omStart) : null, (s) => fetchPortfolioSummary(q.omStart, s));
+  // The selected population's summary is the same request as its status summary (fetched once).
+  const selected = scope === 'on_air' ? statusOnAir : statusOmStart;
   const previous = useApiQuery(previousDate ? k('prev', q.previous) : null, (s) => fetchPortfolioSummary(q.previous, s));
-  const pq = {
-    sel: daily ? null : periodParams('on_air', sel?.selected), selOm: daily || !omAvailable ? null : periodParams('om_start', sel?.selected),
-    cmp: daily ? null : periodParams('on_air', sel?.comparison), cmpOm: daily || !omAvailable ? null : periodParams('om_start', sel?.comparison),
-  };
+  const pq = { sel: daily ? null : periodParams(scope, sel?.selected), cmp: daily ? null : periodParams(scope, sel?.comparison) };
   const periodSel = useApiQuery(pq.sel ? k('period', pq.sel) : null, (s) => fetchPortfolioPeriod(pq.sel!, s));
-  const periodSelOm = useApiQuery(pq.selOm ? k('period', pq.selOm) : null, (s) => fetchPortfolioPeriod(pq.selOm!, s));
   const periodCmp = useApiQuery(pq.cmp ? k('period', pq.cmp) : null, (s) => fetchPortfolioPeriod(pq.cmp!, s));
-  const periodCmpOm = useApiQuery(pq.cmpOm ? k('period', pq.cmpOm) : null, (s) => fetchPortfolioPeriod(pq.cmpOm!, s));
-  const breakdown = useApiQuery(k('breakdown', q.onAir), (s) => fetchPortfolioBreakdowns(q.onAir, s));
-  // Site Scope and O&M Start by circle: the same breakdown for the other two scopes.
-  const breakdownAll = useApiQuery(k('breakdownAll', q.all), (s) => fetchPortfolioBreakdowns(q.all, s));
-  const breakdownOm = useApiQuery(omAvailable ? k('breakdownOm', q.omStart) : null, (s) => fetchPortfolioBreakdowns(q.omStart, s));
+  // Circle-wise status counts: the breakdowns of both populations; the bucket mix uses the selected one.
+  const breakdownOnAir = useApiQuery(k('breakdown-onAir', q.onAir), (s) => fetchPortfolioBreakdowns(q.onAir, s));
+  const breakdownOm = useApiQuery(statusOm ? k('breakdown-om', q.omStart) : null, (s) => fetchPortfolioBreakdowns(q.omStart, s));
+  const breakdown = scope === 'on_air' ? breakdownOnAir : breakdownOm;
   const omHeadSheet = useApiQuery('om-heads', fetchOmHeads);
   const organization = useOrganization();
   const omHeads = Object.fromEntries((omHeadSheet.data?.heads ?? []).map((h) => [`${h.report_type}|${h.circle}`, h.om_head]));
@@ -94,7 +96,7 @@ export function PortfolioPage() {
   const activity = useApiQuery(options.data ? `portfolio-activity|${activityParams}` : null, (s) => fetchPortfolioActivity(activityParams, s));
 
   // No fallback: if the new data layer cannot serve the page, its error is shown and no figures.
-  const fatal = options.error ?? onAir.error ?? all.error;
+  const fatal = options.error ?? statusOnAir.error ?? selected.error;
   if (fatal) {
     return (
       <Alert variant="destructive" className="mx-auto mt-10 max-w-2xl">
@@ -104,7 +106,7 @@ export function PortfolioPage() {
       </Alert>
     );
   }
-  if (!options.data || !filters || !onAir.data || !all.data || !av || !sel) {
+  if (!options.data || !filters || !statusOnAir.data || !selected.data || !av || !sel) {
     return (
       <div className="space-y-4" aria-busy="true" aria-label="Loading site portfolio">
         <Skeleton className="h-10 w-72" />
@@ -114,17 +116,21 @@ export function PortfolioPage() {
     );
   }
 
-  const summary = onAir.data;
+  const summary = selected.data;
   const day = formatShortDate(summary.reporting_date);
   const mtdLabel = `MTD ${formatShortDate(summary.mtd_window.start).slice(0, 2)}–${day}`;
-  const kpiList = buildKpis({ onAir: summary, omStart: omStart.data, all: all.data, previous: previous.data }, f, { day: `On ${day}`, mtd: mtdLabel });
+  const total = statusOnAir.data.metrics.sites_total;
+  const onAirSites = statusOnAir.data.metrics.sites_in_scope;
+  const omSites = statusOmStart.data?.metrics.sites_in_scope ?? null;
+  const kpiList = buildKpis({ selected: summary, previous: previous.data, status: { total, onAir: onAirSites, omStart: omSites } }, f,
+    { day: `On ${day}`, mtd: mtdLabel }, sitesLabel);
   const byId = Object.fromEntries(kpiList.map((x) => [x.id, x])) as Record<string, Kpi>;
   const comparison = sel.comparison;
   const compareOn = Boolean(comparison?.available);
   const vsLabel = comparison ? `vs ${daily ? formatShortDate(comparison.id) : comparison.label.split(' · ')[0]}` : undefined;
   // Weekly / monthly figures; the date range shown is the one the backend used.
-  const periodData = !daily && periodSel.data ? { onAir: periodSel.data, omStart: periodSelOm.data } : null;
-  const cmpData = !daily && periodCmp.data ? { onAir: periodCmp.data, omStart: periodCmpOm.data } : null;
+  const periodData = !daily && periodSel.data ? periodSel.data : null;
+  const cmpData = !daily && periodCmp.data ? periodCmp.data : null;
   const shortLabel = sel.selected.label.split(' · ')[0];
   // Threshold Analysis has these periods for the reporting month only (weeks, MTD) and for full months.
   const thresholdsPeriod = sel.view === 'week' && sel.week.startsWith(av.currentMonth) ? `w${sel.week.slice(-1)}`
@@ -133,7 +139,7 @@ export function PortfolioPage() {
   const lengthOf = (d: { kind: string; days_reported: number } | null | undefined, p: Period | null) => (!d || !p ? null : d.kind === 'months' ? p.days : d.days_reported);
   const [selDays, cmpDays] = [lengthOf(periodSel.data, sel.selected), lengthOf(periodCmp.data, comparison)];
   const lengthsDiffer = selDays != null && cmpDays != null && selDays !== cmpDays;
-  const periodKpis = periodData ? Object.fromEntries(buildPeriodKpis(periodData, cmpData, { ...f, date: av.latest }, shortLabel, thresholdsPeriod, !lengthsDiffer).map((x) => [x.id, x])) as Record<string, Kpi> : null;
+  const periodKpis = periodData ? Object.fromEntries(buildPeriodKpis(periodData, cmpData, { ...f, date: av.latest }, shortLabel, thresholdsPeriod, !lengthsDiffer, sitesLabel).map((x) => [x.id, x])) as Record<string, Kpi> : null;
   const monthEnabled = (key: string, forComparison: boolean) => {
     if (!forComparison && !av.fullMonths.has(key) && !av.dailyMonths.has(key)) return 'No data in the workbook';
     if (forComparison) {
@@ -142,21 +148,20 @@ export function PortfolioPage() {
     }
     return null;
   };
-  const total = all.data.metrics.sites_total;
-  const onAirSites = summary.metrics.sites_in_scope;
-  const omSites = omStart.data?.metrics.sites_in_scope ?? null;
-  // Per project: the circle-wise breakdowns of the same scopes and filters, summed by report type. A split is
-  // shown only when it adds up to its KPI's total, so the lines under a KPI always reconcile with it.
-  const byProject = (b: typeof breakdownAll.data | null | undefined) => {
-    if (!b) return null;
+  const populationSites = summary.metrics.sites_in_scope;
+  // Per project: the circle-wise breakdowns of the same filters, summed by report type. A split is shown only when it
+  // adds up to its KPI's total, so the lines under a KPI always reconcile with it.
+  const byProject = (b: typeof breakdownOnAir.data | null | undefined, field: 'sites_in_scope' | 'sites_total' = 'sites_in_scope') => {
+    if (!b || (field === 'sites_total' && b.circles.some((c) => c.sites_total == null))) return null;
     const totals = new Map<string, number>();
-    for (const c of b.circles) totals.set(c.report_type, (totals.get(c.report_type) ?? 0) + c.sites_in_scope);
+    for (const c of b.circles) totals.set(c.report_type, (totals.get(c.report_type) ?? 0) + (c[field] ?? 0));
     return totals;
   };
-  const [scopeBy, onAirBy, omBy] = [byProject(breakdownAll.data), byProject(breakdown.data), omAvailable ? byProject(breakdownOm.data) : null];
+  const [scopeBy, onAirBy, omBy] = [byProject(breakdownOnAir.data, 'sites_total'), byProject(breakdownOnAir.data), omAvailable ? byProject(breakdownOm.data) : null];
   // Organization order first; a project in the data but not (yet) in the Organization is still shown, after them.
   const order = (organization.data?.projects ?? []).map((p) => p.key);
-  const projects = [...order.filter((type) => scopeBy?.has(type)), ...[...(scopeBy?.keys() ?? [])].filter((type) => !order.includes(type)).sort()];
+  const projectKeys = new Set([...(scopeBy?.keys() ?? []), ...(onAirBy?.keys() ?? []), ...(omBy?.keys() ?? [])]);
+  const projects = [...order.filter((type) => projectKeys.has(type)), ...[...projectKeys].filter((type) => !order.includes(type)).sort()];
   const split = (counts: Map<string, number> | null, kpiTotal: number | null) => {
     if (!counts || kpiTotal == null) return null;
     const rows = projects.map((project) => ({ project, value: counts.get(project) ?? 0 }));
@@ -172,8 +177,8 @@ export function PortfolioPage() {
   })) : null;
   const bucketed = (bucketSegments ?? []).reduce((sum, x) => sum + x.value, 0);
   const scopeText = [f.circle ? `Circle ${f.circle}` : 'All circles', f.reportType || 'All projects'].join(' · ');
-  const periodBucketSegments: Segment[] | null = periodData?.onAir.buckets ? [...BUCKET_ORDER].reverse().map((id) => ({
-    label: bucketCounts.get(id)?.label ?? options.data!.buckets.find((b) => b.id === id)?.label ?? id, value: periodData.onAir.buckets![id], color: BUCKET_COLORS[id],
+  const periodBucketSegments: Segment[] | null = periodData?.buckets ? [...BUCKET_ORDER].reverse().map((id) => ({
+    label: bucketCounts.get(id)?.label ?? options.data!.buckets.find((b) => b.id === id)?.label ?? id, value: periodData.buckets![id], color: BUCKET_COLORS[id],
   })) : null;
   const periodBucketed = (periodBucketSegments ?? []).reduce((sum, x) => sum + x.value, 0);
   const periodError = periodSel.error ?? periodCmp.error;
@@ -183,7 +188,7 @@ export function PortfolioPage() {
   return (
     <div className="space-y-4">
       <PageHeading title="Site Portfolio — Summary"
-        subtitle={`${scopeText} · ${daily ? `${formatDate(summary.reporting_date)} · ${mtdLabel} (${summary.mtd_window.days_reported} days)` : `${sel.selected.label}${daysUsed}`}`} />
+        subtitle={`${scopeText} · Population: ${sitesLabel} · ${daily ? `${formatDate(summary.reporting_date)} · ${mtdLabel} (${summary.mtd_window.days_reported} days)` : `${sel.selected.label}${daysUsed}`}`} />
       <PeriodControls av={av} reportingDates={options.data.reporting_dates} sel={sel}
         onChange={(change) => setSearchParams((cur) => applyChange(cur, change), { replace: true })} monthEnabled={monthEnabled}
         notes={lengthsDiffer ? [`The periods cover a different number of days (${selDays} and ${cmpDays}): compare uptime and shares; outage minutes are not compared.`] : []}>
@@ -207,14 +212,23 @@ export function PortfolioPage() {
               options={[{ value: 'all', label: 'All circles' }, ...options.data.circles.filter((c) => !f.reportType || c.report_types.includes(f.reportType)).map((c) => ({ value: c.value, label: c.label }))]} />
           </div>
         </div>
+        <PopulationSelect id="portfolio-population" unavailable={omAvailable ? [] : ['om_start']} />
         <Button type="button" variant="ghost" size="icon" className="mt-5 size-9" aria-label="Reset filters" title="Reset filters"
-          disabled={isDefault && !searchParams.get('view') && !searchParams.get('vs')} onClick={() => { reset(); setSearchParams(new URLSearchParams(), { replace: true }); }}>
+          disabled={isDefault && !searchParams.get('view') && !searchParams.get('vs')} onClick={() => { reset(); setSearchParams(new URLSearchParams({ scope }), { replace: true }); }}>
           <RotateCcw />
         </Button>
         </div>
       </PeriodControls>
 
-      {continuity && continuity.excluded_after_gap.length > 0 && (
+      <ProvisionalBanner continuity={summary.source.continuity ?? continuity} />
+      {periodSel.data?.status && !daily && (
+        <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground" aria-label="Period status">
+          {sel.selected.label}: <PeriodStatusBadge status={periodSel.data.status} missing={periodSel.data.missing} />
+          {periodCmp.data?.status && <>· comparison: <PeriodStatusBadge status={periodCmp.data.status} missing={periodCmp.data.missing} /></>}
+        </p>
+      )}
+
+      {continuity && (continuity.excluded_after_gap?.length ?? 0) > 0 && (
         <Alert className="border-amber-300 bg-amber-50/70">
           <CircleAlert className="text-amber-700" />
           <AlertTitle>MTD ends on {formatDate(continuity.continuous_until)}</AlertTitle>
@@ -225,33 +239,33 @@ export function PortfolioPage() {
         </Alert>
       )}
 
-      <KpiSection label="Site portfolio" columns="portfolio">
-        {/* Total sites and On-Air vs O&M Start, in one compact card. */}
-        <SummaryMetricsTile label="Total sites, On-Air & O&M Start"
-          definition={`Total sites: every dashboard site of the Consolidation Matrix for the filter. On-Air sites: Site On-Air Date on or before the end of ${month}. O&M Start sites: O&M Start Date on or before the end of ${month} (a site without a date is not counted and is flagged for review). Percentages are of total sites. Difference = On-Air sites − O&M Start sites: On-Air sites not yet recorded as O&M Start (a blank or 0 flag means not recorded, not a confirmed failure). The 4G Saturation / LWE lines are the circle-wise counts summed per project (Difference per project = its On-Air − its O&M Start); they are shown only when they add up to the total.`}
+      <KpiSection label="Site status (not filtered by population)" columns="portfolio">
+        {/* Site status: total sites and On-Air vs O&M Start, in one compact card (status information, not performance). */}
+        <SummaryMetricsTile label="Site status: total, On-Air & O&M Start"
+          definition={`Site status, shown whatever the population. Total sites: every dashboard site of the Consolidation Matrix for the filter. On-Air sites: Site On-Air Date on or before the end of ${month}. O&M Start sites: O&M Start Date on or before the end of ${month} (a site without a date is not counted and is flagged for review). Percentages are of total sites. Difference = On-Air sites − O&M Start sites: On-Air sites not yet recorded as O&M Start (a blank or 0 flag means not recorded, not a confirmed failure). The 4G Saturation / LWE lines are the circle-wise counts summed per project (Difference per project = its On-Air − its O&M Start); they are shown only when they add up to the total.`}
           metrics={[
-            { label: 'Total sites', value: total, tone: 'neutral', split: split(scopeBy, total), note: 'In the Consolidation Matrix' },
+            { label: 'Total sites', value: total, tone: 'neutral', split: split(scopeBy, total), note: 'Site status · Consolidation Matrix' },
             { label: 'On-Air sites', value: onAirSites, tone: 'onAir', split: split(onAirBy, onAirSites), pct: total ? (100 * onAirSites) / total : null, note: `of ${formatNumber(total)} sites` },
             { label: 'O&M Start sites', value: omSites, tone: 'omStart', missing: 'No O&M Start column', split: split(omBy, omSites),
               pct: omSites != null && total ? (100 * omSites) / total : null, note: omSites == null ? undefined : `${month} status` },
             { label: 'Difference', value: omDifference, tone: 'gap', split: split(omDiffBy, omDifference), note: 'On-Air, not yet O&M Start' },
           ]}
-          links={[{ to: detailLink('/', f, { scope: 'all' }), view: 'View all sites' }, { to: detailLink('/', f, { scope: 'om_start' }), view: 'View O&M Start sites' }]} />
+          links={[{ to: detailLink('/', f), view: `View ${sitesLabel}` }]} />
         <ConversionActivityTile total={total} onAir={onAirSites} omStart={omSites} activity={activity.data}
-          definition={`Achievement against total site scope (${formatNumber(total)} sites in the filter, Consolidation Matrix): Site On-Air Date and O&M Start Date on or before the end of ${month}; the gap is total scope minus that count (a site without a date is not counted). Monthly additions count sites by their Site On-Air Date and O&M Start Date in the Consolidation Matrix; a month later than the latest date in the matrix shows "—", not 0.`}
-          link={detailLink('/', f, { scope: 'om_start' })} view="View O&M Start sites" />
+          definition={`Site status, shown whatever the population. Achievement against total site scope (${formatNumber(total)} sites in the filter, Consolidation Matrix): Site On-Air Date and O&M Start Date on or before the end of ${month}; the gap is total scope minus that count (a site without a date is not counted). Monthly additions count sites by their Site On-Air Date and O&M Start Date in the Consolidation Matrix; a month later than the latest date in the matrix shows "—", not 0.`}
+          link={detailLink('/', f)} view={`View ${sitesLabel}`} />
       </KpiSection>
 
       {daily ? (
       <>
-      <KpiSection label="Uptime buckets (MTD)">
-        <KpiTile kpi={byId.gte_98_5} of={`of ${formatNumber(onAirSites)}`} compareOn={compareOn} vsLabel={vsLabel}
-          sub={`${pctOf(summary.metrics.sites_at_or_above_98_5_mtd, onAirSites)} of On-Air sites`} />
-        <KpiTile kpi={byId.lt_60} of={`of ${formatNumber(onAirSites)}`} compareOn={compareOn} vsLabel={vsLabel}
-          sub={`${pctOf(summary.metrics.sites_below_60_mtd, onAirSites)} of On-Air sites`} />
-        <CompositeTile label="Uptime bucket mix" icon={Layers3} tint="orange" value={breakdown.data ? bucketed : null} unit="On-Air sites with a value"
-          definition="On-Air sites by their own MTD uptime, in the workbook's buckets (each lower bound included). Shares are of the sites with a value this month; sites that never reported are not placed in a bucket."
-          sub={bucketed && onAirSites > bucketed ? `${formatNumber(onAirSites - bucketed)} On-Air sites have no value yet` : undefined}
+      <KpiSection label={`Uptime buckets (MTD) · Population: ${sitesLabel}`}>
+        <KpiTile kpi={byId.gte_98_5} of={`of ${formatNumber(populationSites)}`} compareOn={compareOn} vsLabel={vsLabel}
+          sub={`${pctOf(summary.metrics.sites_at_or_above_98_5_mtd, populationSites)} of ${sitesLabel}`} />
+        <KpiTile kpi={byId.lt_60} of={`of ${formatNumber(populationSites)}`} compareOn={compareOn} vsLabel={vsLabel}
+          sub={`${pctOf(summary.metrics.sites_below_60_mtd, populationSites)} of ${sitesLabel}`} />
+        <CompositeTile label="Uptime bucket mix" icon={Layers3} tint="orange" value={breakdown.data ? bucketed : null} unit={`${sitesLabel} with a value`}
+          definition={`${sitesLabel} by their own MTD uptime, in the workbook's buckets (each lower bound included). Shares are of the sites with a value this month; sites that never reported are not placed in a bucket.`}
+          sub={bucketed && populationSites > bucketed ? `${formatNumber(populationSites - bucketed)} ${sitesLabel} have no value yet` : undefined}
           segments={bucketSegments} link={detailLink('/thresholds', f)} view="Open Threshold Analysis"
           note={breakdown.error ? breakdown.error.message : breakdown.data ? undefined : 'Loading…'} />
       </KpiSection>
@@ -265,28 +279,28 @@ export function PortfolioPage() {
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-busy="true" aria-label="Loading period figures">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-36" />)}</div>
       ) : (
       <>
-      <KpiSection label={`Uptime buckets · ${shortLabel}${daysUsed}`}>
-        <KpiTile kpi={periodKpis.gte_98_5} of={`of ${formatNumber(periodData.onAir.sites_in_scope)}`} compareOn={Boolean(cmpData)} vsLabel={vsLabel}
-          sub={`${pctOf(periodData.onAir.sites_at_or_above_98_5, periodData.onAir.sites_in_scope)} of On-Air sites`} />
-        <KpiTile kpi={periodKpis.lt_60} of={`of ${formatNumber(periodData.onAir.sites_in_scope)}`} compareOn={Boolean(cmpData)} vsLabel={vsLabel}
-          sub={`${pctOf(periodData.onAir.sites_below_60, periodData.onAir.sites_in_scope)} of On-Air sites`} />
-        <CompositeTile label="Uptime bucket mix" icon={Layers3} tint="orange" value={periodBucketSegments ? periodBucketed : null} unit="On-Air sites with a value"
-          definition={`On-Air sites by their own uptime over ${shortLabel}, in the workbook's buckets (each lower bound included). Sites without a value are not placed in a bucket.`}
-          sub={periodBucketed && periodData.onAir.sites_in_scope > periodBucketed ? `${formatNumber(periodData.onAir.sites_in_scope - periodBucketed)} On-Air sites have no value in the period` : undefined}
+      <KpiSection label={`Uptime buckets · ${shortLabel}${daysUsed} · Population: ${sitesLabel}`}>
+        <KpiTile kpi={periodKpis.gte_98_5} of={`of ${formatNumber(periodData.sites_in_scope)}`} compareOn={Boolean(cmpData)} vsLabel={vsLabel}
+          sub={`${pctOf(periodData.sites_at_or_above_98_5, periodData.sites_in_scope)} of ${sitesLabel}`} />
+        <KpiTile kpi={periodKpis.lt_60} of={`of ${formatNumber(periodData.sites_in_scope)}`} compareOn={Boolean(cmpData)} vsLabel={vsLabel}
+          sub={`${pctOf(periodData.sites_below_60, periodData.sites_in_scope)} of ${sitesLabel}`} />
+        <CompositeTile label="Uptime bucket mix" icon={Layers3} tint="orange" value={periodBucketSegments ? periodBucketed : null} unit={`${sitesLabel} with a value`}
+          definition={`${sitesLabel} by their own uptime over ${shortLabel}, in the workbook's buckets (each lower bound included). Sites without a value are not placed in a bucket.`}
+          sub={periodBucketed && periodData.sites_in_scope > periodBucketed ? `${formatNumber(periodData.sites_in_scope - periodBucketed)} ${sitesLabel} have no value in the period` : undefined}
           segments={periodBucketSegments} link={detailLink('/thresholds', { ...f, date: av.latest }, thresholdsPeriod ? { period: thresholdsPeriod } : {})} view="Open Threshold Analysis" />
       </KpiSection>
       </>
       )}
 
-      {breakdownAll.data && breakdown.data && (!omAvailable || breakdownOm.data) ? (
+      {breakdownOnAir.data && (!omAvailable || breakdownOm.data) ? (
         <CircleBreakdownTable
-          {...circleBreakdown(breakdownAll.data, breakdown.data, omAvailable ? breakdownOm.data : null)}
+          {...circleBreakdown(breakdownOnAir.data, omAvailable ? breakdownOm.data : null)}
           notes={tracking.portfolioNotes} omHeads={omHeads} omHeadSource={omHeadSheet.data?.source ?? null}
           onSaveNote={(key, note) => dispatch({ type: 'saveNote', key, note })}
-          loading={breakdownAll.loading || breakdown.loading}
-          periodNote={`Site counts come from the Site On-Air and O&M Start Dates in the Consolidation Matrix for ${month} (${summary.source.workbook}); the reporting date does not change them.`} />
-      ) : breakdownAll.error ?? breakdownOm.error ? (
-        <Alert variant="destructive"><AlertTitle>Circle-wise breakdown unavailable</AlertTitle><AlertDescription>{(breakdownAll.error ?? breakdownOm.error)!.message}</AlertDescription></Alert>
+          loading={breakdownOnAir.loading || breakdownOm.loading}
+          periodNote={`Site status (shown whatever the population). Site counts come from the Site On-Air and O&M Start Dates in the Consolidation Matrix for ${month} (${summary.source.workbook}); the reporting date does not change them.`} />
+      ) : breakdownOnAir.error ?? breakdownOm.error ? (
+        <Alert variant="destructive"><AlertTitle>Circle-wise breakdown unavailable</AlertTitle><AlertDescription>{(breakdownOnAir.error ?? breakdownOm.error)!.message}</AlertDescription></Alert>
       ) : <Skeleton className="h-80 w-full" aria-label="Loading circle-wise breakdown" />}
 
     </div>

@@ -3,6 +3,7 @@ import { Bar, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, Respons
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { ChartCard } from '../../../components/dashboard/ChartCard';
+import { PeriodStatusBadge } from '../../../components/reporting/ReportingStatus';
 import { AXIS_TICK, LEGEND_PROPS, TOOLTIP_PROPS } from '../../../components/dashboard/constants';
 import { Segmented } from '../../../components/rca/RcaShared';
 import { useApiQuery } from '../../../hooks/useApiQuery';
@@ -30,7 +31,7 @@ function formatSeries(key: string, value: unknown) {
 
 /**
  * Day-, week- and month-wise trend from the canonical daily records. Availability is outage-weighted over the site-days
- * reported in each period (never an average of daily percentages); USD / NSLA count distinct O&M Start sites.
+ * reported in each period (never an average of daily percentages); USD / NSLA count distinct sites of the selected population.
  */
 export function TrendPanel({ query, kind, period }: { query: URLSearchParams; kind: 'availability' | 'outage'; period?: string }) {
   const [view, setView] = useState<Granularity>('day');
@@ -95,7 +96,9 @@ function TrendTable({ points, kind }: { points: KpiTrendPoint[]; kind: 'availabi
       <TableBody>
         {points.map((p) => (
           <TableRow key={p.key}>
-            <TableCell className="font-medium">{p.label}</TableCell><TableCell className={NUM}>{p.days}</TableCell>
+            <TableCell className="font-medium">
+              <span className="inline-flex flex-wrap items-center gap-1.5">{p.label} <PeriodStatusBadge status={p.status} missing={p.missing} /></span>
+            </TableCell><TableCell className={NUM}>{p.days}</TableCell>
             {kind === 'availability' ? (
               <>
                 <TableCell className={cn(NUM, TONE_TEXT[availabilityTone(p.availability_pct)])}>{pct(p.availability_pct, 3)}</TableCell>

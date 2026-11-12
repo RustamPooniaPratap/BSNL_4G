@@ -11,18 +11,20 @@ import { Field, FilterBar } from '../components/dashboard/FilterBar';
 import { PageHeading } from '../context/pageHeader';
 import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { useFilterOptions } from '../hooks/useFilterOptions';
 import { useDashboardFilters, type DashboardFilterState } from '../hooks/useDashboardFilters';
 import { formatDate } from '../lib/format';
-import { fetchFilterOptions, fetchTeamTop } from '../services/api';
+import { fetchTeamTop } from '../services/api';
 import type { TeamGroup, TopPerformerCircle } from '../types';
+import { populationSites } from '../lib/population';
 
 export function CircleTopPerformerPage() {
   const { circleId } = useParams<{ circleId: string }>();
   const navigate = useNavigate();
   const workbook = useWorkbook();
   const { version } = workbook;
-  const options = useApiQuery(workbook.active ? `${version}|filters` : null, fetchFilterOptions);
-  const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data, { defaultScope: 'om_start' });
+  const options = useFilterOptions();
+  const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data);
   const [searchParams, setSearchParams] = useSearchParams();
   const month = searchParams.get('month') ?? '';
 
@@ -102,9 +104,9 @@ export function CircleTopPerformerPage() {
     return (
       <Card className="mx-auto mt-10 max-w-xl items-center gap-3 px-8 py-10 text-center">
         <FileUp className="size-8 text-muted-foreground" aria-hidden="true" />
-        <h1 className="text-lg font-semibold">No Master workbook loaded</h1>
-        <p className="text-sm text-muted-foreground">Upload the consolidated workbook to see circle details.</p>
-        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Upload workbook</Link>
+        <h1 className="text-lg font-semibold">No reporting data loaded</h1>
+        <p className="text-sm text-muted-foreground">Import the reporting data (Data Source page) to see circle details.</p>
+        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Import data</Link>
       </Card>
     );
   }
@@ -133,8 +135,8 @@ export function CircleTopPerformerPage() {
   const months = topData?.months_available ?? options.data.months ?? [];
   const latest = months[months.length - 1]?.key;
   const selectedMonth = month || topData?.reporting_month || latest || '';
-  const scopeLabel = options.data.scopes.find((s) => s.value === filters.scope)?.label ?? filters.scope;
-  const subtitle = `${filters.reportType || 'All projects'} · ${scopeLabel}`;
+  const scopeLabel = populationSites(filters.scope);
+  const subtitle = `${filters.reportType || 'All projects'} · Population: ${scopeLabel}`;
   const period = topData?.month
     ? `${topData.month.label}${topData.month.kind === 'mtd' ? ` to ${formatDate(topData.reporting_date)}` : ''}`
     : '';

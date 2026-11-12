@@ -12,6 +12,25 @@ from .metrics import BUCKET_IDS, DEFAULT_SCOPE, SCOPES, SORT_FIELDS, WEEKS, Sele
 from .workbook import REPORT_TYPES
 
 MAX_TREND_DAYS = 92
+SCOPE_ERROR = 'Unknown population "{input}". Expected one of: ' + ', '.join(SCOPES) + f' (default {DEFAULT_SCOPE}).'
+
+
+def scope_field():
+    """The ``scope`` (site population) parameter of every site-metric endpoint: on_air | om_start, default on_air."""
+    return serializers.ChoiceField(choices=list(SCOPES), required=False, default=DEFAULT_SCOPE,
+                                   error_messages={'invalid_choice': SCOPE_ERROR})
+
+
+def parse_scope(value, default: str | None = DEFAULT_SCOPE) -> str | None:
+    """The validated population of a request parameter (endpoints without a serializer): missing -> ``default``
+    (DEFAULT_SCOPE; None where the filter is optional, see masterdata); anything else than on_air / om_start (including
+    the former "all") -> HTTP 400 {error, details: {scope: [...]}}."""
+    value = (value or '').strip()
+    if not value:
+        return default
+    if value not in SCOPES:
+        raise serializers.ValidationError({'scope': [SCOPE_ERROR.format(input=value)]})
+    return value
 # Accept the workbook's own spelling as an alias for the canonical report type.
 REPORT_TYPE_ALIASES = {**{raw: canonical for raw, canonical in REPORT_TYPES.items()},
                        **{canonical: canonical for canonical in REPORT_TYPES.values()}}
@@ -20,7 +39,7 @@ REPORT_TYPE_ALIASES = {**{raw: canonical for raw, canonical in REPORT_TYPES.item
 class SelectionSerializer(serializers.Serializer):
     report_type = serializers.CharField(required=False, allow_blank=True, default='')
     circle = serializers.CharField(required=False, allow_blank=True, default='')
-    scope = serializers.ChoiceField(choices=list(SCOPES), required=False, default=DEFAULT_SCOPE)
+    scope = scope_field()
 
     def validate_report_type(self, value):
         if not value:
@@ -118,6 +137,7 @@ class PeriodSerializer(SelectionSerializer):
         period = attrs['period']
         split = lambda value: [v.strip() for v in value.split(',') if v.strip()]  # noqa: E731
         attrs['dates'], attrs['month_keys'] = None, None
+        attrs['status_dates'] = None  # calendar dates of the period, for its Complete / Provisional status
 
         if period == 'months':
             options = month_options(ds)
@@ -127,6 +147,7 @@ class PeriodSerializer(SelectionSerializer):
                 raise serializers.ValidationError({'months': f"Unknown month(s): {', '.join(unknown)}."})
             labels = [m['label'] for m in options if m['key'] in keys]
             attrs['month_keys'] = keys
+            attrs['status_dates'] = _month_calendar(keys)
             attrs['label'] = (labels[0] if len(labels) == 1 else f'{labels[0]} – {labels[-1]} ({len(labels)} months)'
                               if len(labels) == len(options) or _consecutive(options, keys) else f'{len(labels)} months')
         elif period == 'weeks':
@@ -136,14 +157,11 @@ class PeriodSerializer(SelectionSerializer):
                 raise serializers.ValidationError({'weeks': 'Weeks must be numbers 1 to 4.'}) from exc
             if not set(weeks) <= {1, 2, 3, 4}:
                 raise serializers.ValidationError({'weeks': 'Weeks must be numbers 1 to 4.'})
-            # Only complete weeks (every day reported) count: a week in progress has no week-to-date value.
-            from .metrics import week_columns
-            complete = [w for w in weeks if week_columns(ds, WEEKS[w - 1][1], WEEKS[w - 1][2])[1]]
-            ranges = [WEEKS[w - 1] for w in complete]
+            # Every selected week shows the figures it has; a week that has not ended or has missing unit-days is
+            # Provisional (approved rule B-4, metrics.week_status), reported in the response's 'status'.
+            ranges = [WEEKS[w - 1] for w in weeks]
             attrs['dates'] = [d for d in ds.dates if any(first <= d.day <= last for _, first, last in ranges)]
             attrs['label'] = 'All weeks' if len(weeks) == 4 else f"Week{'s' if len(weeks) > 1 else ''} {', '.join(map(str, weeks))}"
-            if len(complete) < len(weeks):
-                attrs['label'] += ' (complete weeks only)'
         elif period == 'days':
             try:
                 days = sorted({date.fromisoformat(d) for d in split(attrs['days'])})
@@ -161,6 +179,25 @@ class PeriodSerializer(SelectionSerializer):
             attrs['dates'] = [d for d in ds.dates if start <= d <= end]
             attrs['label'] = f"{start.strftime('%d %b')} – {end.strftime('%d %b')}"
         return attrs
+
+
+def _month_calendar(keys: list[str]) -> list[date]:
+    import calendar
+    out = []
+    for key in keys:
+        year, month = map(int, key.split('-'))
+        out += [date(year, month, d) for d in range(1, calendar.monthrange(year, month)[1] + 1)]
+    return out
+
+
+def period_status(ds, params: dict) -> dict | None:
+    """Complete / Provisional status of a validated period (PeriodSerializer) over the selection's reporting units
+    (metrics.dates_status); None without coverage information."""
+    import numpy as np
+
+    from .metrics import base_mask, dates_status, units_of_rows
+    dates = params.get('status_dates') or params.get('dates') or []
+    return dates_status(ds, dates, units_of_rows(ds, np.flatnonzero(base_mask(ds, params['selection']))))
 
 
 def _consecutive(options: list[dict], keys: list[str]) -> bool:

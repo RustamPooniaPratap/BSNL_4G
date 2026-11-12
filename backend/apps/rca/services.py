@@ -422,19 +422,22 @@ def register(params, pairs=None) -> dict:
 
 
 
-def _population() -> dict[tuple[str, str], int] | None:
+def _population(scope: str = 'on_air') -> dict[tuple[str, str], int] | None:
 
-    """Sites per (project, circle) in the dashboard's current Master data, for per-site rates; None if unavailable."""
+    """Sites of the population ``scope`` (On-Air / O&M Start sites of the reporting month) per (project, circle) in the
+    dashboard dataset (sitedata), for per-100-site rates; None if unavailable."""
 
     try:
 
-        from apps.uptimedb.datasource import current_dataset
+        from apps.dashboard import metrics
+        from apps.sitedata.dashboard_source import dataset
 
-        sites = current_dataset().sites
+        ds = dataset(None, scope)
+        sites = ds.sites[metrics.population_flags(ds, scope)]
 
         return {(t, c): int(n) for (t, c), n in sites.groupby(['report_type', 'circle']).size().items()}
 
-    except Exception as exc:  # no workbook / database data loaded: rates are shown as unavailable
+    except Exception as exc:  # no data in the data layer: rates are shown as unavailable
 
         logger.info('RCA summary: site population unavailable (%s)', exc)
 
@@ -445,6 +448,16 @@ def _population() -> dict[tuple[str, str], int] | None:
 
 
 def summary(params, pairs=None) -> dict:
+
+    """RCA Summary. ``site_scope`` (all / om_start / om_not_started) filters the RCA records, unchanged; ``scope`` (the
+    site population: on_air / om_start, default on_air, invalid -> HTTP 400) decides the site figures: the breakdown's
+    Total / O&M Start / USD / NSLA site columns (breakdown.site_metrics, where the two combine: the population narrowed by
+    the site scope) and the population of the per-100-site rates (``portfolio_sites``)."""
+
+    from apps.dashboard.metrics import population as population_info
+    from apps.dashboard.serializers import parse_scope
+
+    population_scope = parse_scope(params.get('scope'))
 
     qs = filtered(params, pairs)
 
@@ -550,7 +563,7 @@ def summary(params, pairs=None) -> dict:
 
 
 
-    population = _population()
+    population = _population(population_scope)
 
     circles = []
 
@@ -635,11 +648,20 @@ def summary(params, pairs=None) -> dict:
 
     # RCA Scope Toggle for Circle-wise Root Cause Breakdown table only:
     # 'all' (default): all RCA records matching current filters
-    # 'nsla': only RCA records belonging to O&M Start sites qualifying as NSLA
+    # 'nsla': only RCA records belonging to sites of the selected population qualifying as NSLA
     rca_scope = (params.get('rca_scope') or 'all').strip().lower()
     nsla_site_keys = site_perf.get('nsla_site_keys') if site_perf else set()
     all_breakdown = breakdown(qs, circles=breakdown_circles, through=through)
-    nsla_qs = qs.filter(site_key__in=nsla_site_keys) if nsla_site_keys else qs.none()
+    # NSLA records: matched on (project, site key) (identifiers.key_of on both sides), never on the raw site ID alone.
+    nsla_qs = qs.none()
+    if nsla_site_keys:
+        by_project: dict[str, set[str]] = {}
+        for technology, key in nsla_site_keys:
+            by_project.setdefault(technology, set()).add(key)
+        match = Q()
+        for technology, keys in by_project.items():
+            match |= Q(project=technology, site_key__in=keys)
+        nsla_qs = qs.filter(match)
     nsla_breakdown = breakdown(nsla_qs, circles=breakdown_circles, through=through)
 
     active_breakdown = nsla_breakdown if rca_scope == 'nsla' else all_breakdown
@@ -652,6 +674,8 @@ def summary(params, pairs=None) -> dict:
     return {
         # The Site Scope applied to every figure below, and how the records of the other filters are classified.
         'site_scope': {'scope': scope, 'label': sitescope.SCOPES[scope], 'coverage': sitescope.coverage(unscoped.order_by())},
+        # The site population of the site figures (site columns, per-100-site rates).
+        'population': population_info(population_scope),
         'breakdown': active_breakdown,
         'kpis': {
 
@@ -705,7 +729,8 @@ def summary(params, pairs=None) -> dict:
 
         'projects': projects,
 
-        'population_source': 'Sites per circle in the dashboard\'s current Master data' if population else None,
+        'population_source': (f"{population_info(population_scope)['label']} per circle in the dashboard's data layer (reporting month)"
+                              if population else None),
 
         'categories': {
 

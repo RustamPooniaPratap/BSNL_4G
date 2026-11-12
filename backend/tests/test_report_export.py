@@ -15,8 +15,6 @@ from openpyxl import load_workbook
 
 from apps.accounts.scope import set_circles
 from apps.dashboard import report_export, workbook
-from apps.uptimedb import datasource, importer
-from apps.uptimedb.models import AppSetting, SiteDailyPerformance
 
 from .auth_helpers import SignedInTestCase, portal_user
 from .workbook_factory import write_workbook
@@ -39,9 +37,7 @@ class ExportTestCase(SignedInTestCase):
             override.enable()
             self.addCleanup(override.disable)
         workbook.clear_cache()
-        datasource.clear_cache()
         self.addCleanup(workbook.clear_cache)
-        self.addCleanup(datasource.clear_cache)
         report_export._details_cache.update(key=None, value=None)
 
     def download(self, kind, expected=200, **params):
@@ -56,12 +52,6 @@ class ExportTestCase(SignedInTestCase):
     def daily_rows(self, wb):
         ws = wb.active
         return {r[0]: r for r in ws.iter_rows(min_row=5, values_only=True)}
-
-    def use_database(self):
-        batch = importer.preview(self.path, 'master.xlsx')
-        importer.commit(batch)
-        AppSetting.objects.update_or_create(key=datasource.SOURCE_KEY, defaults={'value': datasource.DATABASE})
-        datasource.clear_cache()
 
 
 class DailyReportTests(ExportTestCase):
@@ -99,13 +89,6 @@ class DailyReportTests(ExportTestCase):
         self.download('daily', 400)  # the date is required
         self.download('daily', 400, date='2026-10-01', circle='ZZ')
 
-    def test_the_database_source_gives_the_same_report(self):
-        excel = self.daily_rows(self.download('daily', date='2026-10-02')[1])
-        self.use_database()
-        self.assertGreater(SiteDailyPerformance.objects.count(), 0)
-        database = self.daily_rows(self.download('daily', date='2026-10-02')[1])
-        self.assertEqual(database, excel)
-        self.assertEqual(datasource.active_source(), datasource.DATABASE)  # exporting never changes the source
 
 
 class ConsolidatedReportTests(ExportTestCase):
@@ -121,7 +104,8 @@ class ConsolidatedReportTests(ExportTestCase):
         headers = [c.value for c in ws[2]]
         self.assertIn('Sep-26 Outage Min.', headers)
         self.assertIn('Oct-26 Outage Min.', headers)
-        self.assertEqual(headers.count('Wk-1'), 2)  # weekly outage and weekly uptime
+        # Weekly outage and weekly uptime; Week 1 (3 of 7 days) is not complete: labelled Provisional, values shown.
+        self.assertEqual(headers.count('Wk-1 (Provisional)'), 2)
         self.assertEqual(ws.freeze_panes, 'A3')
 
     def test_formulas_stay_on_their_own_row_and_inside_the_sheet(self):
@@ -136,7 +120,8 @@ class ConsolidatedReportTests(ExportTestCase):
         uptime_col = [c.value for c in ws[2]].index('Oct-26 UpTime') + 1
         self.assertRegex(ws.cell(row=3, column=uptime_col).value, r'^=IF\(COUNT\(.+\)=0,"",1-SUM\(.+\)/\(1440\*COUNT\(.+\)\)\)$')
         self.assertEqual(report_export._bucket_formula('X3'),
-                         '=IF(X3="","",IF(X3>=98.5%,">98.5",IF(X3>=97.0%,">97 To <98.5",IF(X3>=90.0%,">90 To <97",IF(X3>=60.0%,">60 To <90","<60")))))')
+                         '=IF(X3="","",IF(ROUND(X3*100,6)>=98.5,">98.5",IF(ROUND(X3*100,6)>=97,">97 To <98.5",'
+                         'IF(ROUND(X3*100,6)>=90,">90 To <97",IF(ROUND(X3*100,6)>=60,">60 To <90","<60")))))')
 
     def test_every_summary_sheet_follows_the_filters(self):
         wb = self.download('consolidated', reporting_date='2026-10-03', report_type='4G Saturation', circle='RJ')[1]
@@ -158,7 +143,7 @@ class ConsolidatedReportTests(ExportTestCase):
         self.assertAlmostEqual(mtd, 1 - (0 + 144 + 1440 + 72) / (1440 * 6), places=6)
         trend = wb['All Circle - 98.5']
         head = [c.value for c in trend[3]]
-        self.assertIsNone(trend.cell(row=4, column=head.index('Wk-4') + 1).value)  # no day of week 4 yet: blank, not 0
+        self.assertIsNone(trend.cell(row=4, column=head.index('Wk-4 (Provisional)') + 1).value)  # no day of week 4 yet: blank, not 0
 
     def test_no_template_data_and_hand_maintained_sheets_say_so(self):
         wb = self.download('consolidated', reporting_date='2026-10-03')[1]
@@ -171,8 +156,7 @@ class ConsolidatedReportTests(ExportTestCase):
     def test_the_reporting_date_must_be_reported(self):
         self.assertIn('No data has been reported', str(self.download('consolidated', 400, reporting_date='2026-10-20')))
 
-    def test_the_database_source_fills_the_same_sites(self):
-        self.use_database()
+    def test_the_up_time_report_sheet_lists_the_selected_project(self):
         ws = self.download('consolidated', reporting_date='2026-10-03', report_type='LWE')[1]['Up-Time Report']
         self.assertEqual(sorted(ws.cell(row=r, column=3).value for r in range(3, ws.max_row + 1)), ['LWEBH01', 'LWEMP01', 'LWEOD01'])
 

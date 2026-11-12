@@ -120,8 +120,9 @@ def _same(a, b) -> bool:
 
 
 def _known_sites() -> dict[tuple[str, str], str]:
-    from apps.uptimedb.models import UptimeSite
-    return {(p, k): c for p, k, c in UptimeSite.objects.values_list('project', 'site_key', 'circle')}
+    """{(technology, site key): circle} of the site master's dashboard-scope sites (Consolidation Matrix)."""
+    from apps.sitedata.models import Site
+    return {(t, k): c for t, k, c in Site.objects.filter(reporting_scope=Site.Scope.DASHBOARD).values_list('technology', 'site_key', 'circle')}
 
 
 def _store(path: Path, batch: RcaImportBatch) -> None:

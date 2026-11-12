@@ -6,10 +6,11 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { Field, FilterCard } from '../dashboard/FilterBar';
 import { SelectField } from './DataEntry';
-import { useWorkbook } from '../../context/workbook';
-import { useApiQuery } from '../../hooks/useApiQuery';
+import { usePopulation } from '../../context/population';
+import { useFilterOptions } from '../../hooks/useFilterOptions';
+import { PopulationSelect } from '../PopulationSelect';
 import { formatDate } from '../../lib/format';
-import { downloadReport, fetchFilterOptions, type ReportKind } from '../../services/api';
+import { downloadReport, type ReportKind } from '../../services/api';
 import type { RawUploadOptions } from '../../types/rawUpload';
 
 const KINDS: { value: ReportKind; label: string; hint: string }[] = [
@@ -30,12 +31,13 @@ function save(blob: Blob, filename: string) {
 }
 
 /**
- * Report downloads from the active data source (Excel workbook or PostgreSQL). Project and circle options come from
+ * Report downloads from the reporting data (the data layer). Project and circle options come from
  * the user's permitted circles; the server checks them again. Dates come from the active source's reported dates.
  */
 export function ReportDownloadCard({ options }: { options: RawUploadOptions }) {
-  const workbook = useWorkbook();
-  const filters = useApiQuery(workbook.active ? `${workbook.version}|filters` : null, fetchFilterOptions);
+  const filters = useFilterOptions();
+  // Every export is for the global population (On-Air / O&M Start), the same as the dashboard figures.
+  const { scope, sitesLabel } = usePopulation();
   const [kind, setKind] = useState<ReportKind>('daily');
   const [project, setProject] = useState('');
   const [circle, setCircle] = useState('');
@@ -63,7 +65,7 @@ export function ReportDownloadCard({ options }: { options: RawUploadOptions }) {
     setResult(null);
     try {
       const params: Record<string, string> = { report_type: project, circle, [kind === 'daily' ? 'date' : 'reporting_date']: reportDate };
-      const { blob, filename } = await downloadReport(kind, params);
+      const { blob, filename } = await downloadReport(kind, params, scope);
       save(blob, filename);
       setResult({ ok: true, text: `Downloaded ${filename}.` });
     } catch (error) {
@@ -76,9 +78,10 @@ export function ReportDownloadCard({ options }: { options: RawUploadOptions }) {
   return (
     <div className="space-y-2">
       <FilterCard label="Download report" title="Download report"
-        footer={`${KINDS.find((k) => k.value === kind)!.hint} Source: ${filters.data?.source.workbook ?? 'the active data source'}.`}
+        footer={`${KINDS.find((k) => k.value === kind)!.hint} Population: ${sitesLabel}. Source: ${filters.data?.source.workbook ?? 'the active data source'}.`}
         actions={(
-          <Button className="h-9" disabled={busy || missing !== null} onClick={download} title={missing ?? undefined}>
+          <Button className="h-9" disabled={busy || missing !== null} onClick={download} title={missing ?? `Download for ${sitesLabel}`}
+            aria-label={busy ? 'Preparing…' : `Download (${sitesLabel})`}>
             {busy ? <Loader2 className="animate-spin" /> : <Download />} {busy ? 'Preparing…' : 'Download'}
           </Button>
         )}>
@@ -103,6 +106,7 @@ export function ReportDownloadCard({ options }: { options: RawUploadOptions }) {
           <SelectField id="report-circle" value={circle || 'all'} placeholder="Circle" onChange={(v) => change(() => setCircle(v === 'all' ? '' : v))}
             options={[{ value: 'all', label: options.assigned_circles == null ? 'All Circles' : 'All my circles' }, ...circles.map((c) => ({ value: c, label: c }))]} />
         </Field>
+        <PopulationSelect id="report-population" />
         <Field id="report-date" label={kind === 'daily' ? 'Report date' : 'Month to date, up to'} className="w-44">
           <Input id="report-date" type="date" className="h-9" value={reportDate}
             min={(kind === 'daily' ? dailyDates[0] : current[0]) || undefined} max={latest || undefined}

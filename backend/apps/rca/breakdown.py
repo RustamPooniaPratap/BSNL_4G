@@ -26,9 +26,8 @@ FINAL_BUCKET_CATEGORIES: dict[str, str] = {text_key(value): label for label, val
 NOT_MAPPED = 'Not mapped'
 BLANK_LABEL = '(blank)'
 
-# Daily availability threshold for NSLA: strictly below 98.5%.
-# 1440 minutes * (1 - 0.985) = 21.6 minutes. Outage strictly > 21.6 min means availability < 98.5%.
-NSLA_OUTAGE_MINUTES_THRESHOLD = 21.6
+# NSLA / USD: the shared dashboard rules over the selected population (apps.dashboard.metrics.nsla_dates / usd_dates,
+# approved rule B-3).
 
 
 def category_of(final_bucket: str) -> str | None:
@@ -82,31 +81,43 @@ def breakdown(qs: QuerySet, *, circles: list[str], through: str | None) -> dict:
 
 
 def site_metrics(params, pairs, circles: list[str], rca_dates: tuple[_date | None, _date | None] | None = None) -> dict | None:
-    """Total Sites, O&M Start Sites, USD Sites and NSLA Sites (<98.5%) per circle: site master and daily performance data.
+    """Total Sites, O&M Start Sites, USD Sites and NSLA Sites (<98.5%) per circle: the sitedata dashboard dataset.
 
-    Business Rules:
-    - Total Sites: Active On-Air sites in scope.
-    - O&M Start Sites: Active On-Air sites classified as O&M Start in the Site Master.
-    - USD Sites: COUNT(DISTINCT O&M Start site_key WHERE outage_minutes > 0 on at least one day in the period).
-      Non-O&M Start sites are excluded. Zero-outage sites are excluded. Counted once per period.
-    - NSLA Sites: COUNT(DISTINCT O&M Start site_key WHERE daily availability < 98.5% on at least one day in the period).
-      Availability < 98.5% equates strictly to daily outage > 21.6 minutes.
-      Exactly 98.5% does not qualify. Above 98.5% does not qualify. Missing availability does not qualify.
-      Only O&M Start sites are eligible. Counted once per period.
-    - Missing Availability: O&M Start sites lacking availability data for the period are identified for notifications
-      and excluded from NSLA.
+    Population and Site Scope (how they combine):
+    - ``scope`` (on_air | om_start, default on_air; anything else is HTTP 400) is the site POPULATION of every site figure
+      here, as on every site-metric page: the population's sites of the period (effective by its last date), each counted
+      from its effective date (the dataset variant of the population).
+    - ``site_scope`` (all | om_start | om_not_started, unchanged) is the RCA record filter (sitescope); for the site
+      columns it narrows the population to its sites that are / are not O&M Start in the period (Consolidation Matrix O&M
+      Start Date on or before the end of the period's last month). So population On-Air + site scope O&M Start = the On-Air
+      sites that have started O&M; population O&M Start + site scope O&M Not Started is empty (0 sites, USD / NSLA None).
+
+    Business Rules (approved rule B-3, the dashboard's metrics.usd_dates / nsla_dates):
+    - Total Sites: the sites of the population (and site scope) of the selected project.
+    - O&M Start Sites: a status count, those of them that are O&M Start in the period.
+    - USD Sites: distinct sites of the population with outage > 0 on at least one reported day of their effective period.
+    - NSLA Sites: sites of the population whose uptime over the period, pooled over their reported days from the effective
+      date, is below 98.5% (exactly 98.5% does not qualify; one bad day does not when the period uptime is >= 98.5%;
+      missing data never qualifies). USD / NSLA are None (never 0) when none of the sites reported.
+    - Missing Availability: sites of the population lacking availability data on a reported day of the period.
     - Scope Independence: The 4 site KPI columns are independent of the RCA breakdown toggle.
+    - ``nsla_site_keys``: {(technology, key_of(site_id))} of the NSLA sites, to match RCA records by project and site key.
     """
     from datetime import date as _date, timedelta
     import numpy as np
 
-    from apps.dashboard.metrics import Selection, scope_mask
-    from apps.dashboard.scope import restrict
+    from apps.dashboard import metrics
+    from apps.dashboard.metrics import Selection, base_mask
+    from apps.dashboard.serializers import parse_scope
+    from apps.sitedata.identifiers import key_of
     from apps.dashboard.workbook import WorkbookError
-    from apps.uptimedb.datasource import current_dataset
+    from apps.sitedata.dashboard_source import dataset
+    from . import sitescope
 
+    population = parse_scope(params.get('scope'))
+    site_scope = sitescope.parse(params.get('site_scope'))  # the same Site Scope as the RCA records
     try:
-        ds = restrict(current_dataset(), pairs)
+        ds = dataset(pairs, population)
     except WorkbookError:
         return None
     parse = lambda v: _date.fromisoformat(v) if v else None  # noqa: E731 - validated already by services.filtered
@@ -125,91 +136,48 @@ def site_metrics(params, pairs, circles: list[str], rca_dates: tuple[_date | Non
     project = params.get('project') or None
     if project in ('4G', '4G Satu', '4G Satu.'):
         project = '4G Saturation'
-    from .sitescope import dashboard_scope, parse
-    scope = dashboard_scope(parse(params.get('site_scope')))  # the same Site Scope as the RCA records
 
-    # Total active sites in scope
-    mask_total = scope_mask(ds, Selection(project, None, scope))
-    rows_total = np.flatnonzero(mask_total)
+    # The population of the period (metrics.population_rows), narrowed by the Site Scope's O&M Start status in the period.
+    base = np.flatnonzero(base_mask(ds, Selection(project, None, population)))
+    rows = metrics.population_rows(ds, base, population, dates)
+    om_flags = metrics.population_flags(ds, 'om_start', max(dates) if dates else None)
+    if site_scope == sitescope.OM_START:
+        rows = rows[om_flags[rows]]
+    elif site_scope == sitescope.OM_NOT_STARTED:
+        rows = rows[~om_flags[rows]]
 
-    # O&M Start site population (USD and NSLA are strictly evaluated within this population)
-    mask_om = scope_mask(ds, Selection(project, None, 'on_air_om_start'))
-    rows_om = np.flatnonzero(mask_om)
+    # Values of the period from each site's effective date (the population's view); days without data are not columns.
+    full, _used = metrics.period_block(metrics.population_view(ds, population), rows, dates)
+    reported_days = full.shape[1]
+    _eligible, uptime, nsla = metrics.nsla_dates(ds, rows, dates, scope=population)
+    _eligible, reported, usd = metrics.usd_dates(ds, rows, dates, scope=population)
 
-    # Gather outage blocks for O&M Start sites across all requested dates
-    cols = [ds.position(d) for d in dates if d in ds.reported_dates]
-    blocks = [ds.outage[np.ix_(rows_om, cols)]] if cols else []
-    wanted = set(dates)
-    for entry in ds.daily_history:
-        idx = [i for i, d in enumerate(entry['dates']) if d in wanted and not np.isnan(entry['outage'][:, i]).all()]
-        if idx:
-            blocks.append(entry['outage'][np.ix_(rows_om, idx)])
-
-    if blocks:
-        full = np.hstack(blocks)
-        reported_days = full.shape[1]
-    else:
-        full = np.full((len(rows_om), 0), np.nan)
-        reported_days = 0
-
-    # Business evaluations per O&M Start site:
-    # 1. USD: positive outage minutes (> 0) on at least one reported day.
-    usd_mask = ((full > 0) & (~np.isnan(full))).any(axis=1) if reported_days > 0 else np.zeros(len(rows_om), dtype=bool)
-
-    # 2. NSLA: daily availability strictly below 98.5% (> 21.6 min outage) on at least one day.
-    # Exactly 98.5% (= 21.6 min) does not qualify. Above 98.5% (< 21.6 min) does not qualify.
-    # Missing availability (NaN) does not qualify.
-    nsla_mask = ((full > NSLA_OUTAGE_MINUTES_THRESHOLD) & (~np.isnan(full))).any(axis=1) if reported_days > 0 else np.zeros(len(rows_om), dtype=bool)
-
-    # 3. Missing availability: O&M Start sites with missing data in the period (for notifications, deduplicated per site)
+    # Missing availability: population sites without a value on a reported day of the period (deduplicated per site).
     missing_sites = []
     if reported_days > 0:
-        missing_idx = np.flatnonzero(np.isnan(full).any(axis=1))
-        for idx in missing_idx:
-            site_row = rows_om[idx]
-            missing_sites.append({
-                'site_id': str(ds.sites['site_id'].iloc[site_row]),
-                'circle': str(ds.sites['circle'].iloc[site_row]),
-            })
-
-    missing_by_circle = dict(Counter(s['circle'] for s in missing_sites))
+        for idx in np.flatnonzero(np.isnan(full).any(axis=1)):
+            site_row = rows[idx]
+            missing_sites.append({'site_id': str(ds.sites['site_id'].iloc[site_row]), 'circle': str(ds.sites['circle'].iloc[site_row])})
     missing_availability = {
         'count': len(missing_sites),
-        'by_circle': missing_by_circle,
+        'by_circle': dict(Counter(s['circle'] for s in missing_sites)),
         'sample': missing_sites[:100],
     }
 
-    # Set of eligible NSLA site identifiers (for matching RCA records when NSLA RCA toggle is active)
-    nsla_site_keys = set(ds.sites['site_id'].iloc[rows_om[nsla_mask]]) if reported_days > 0 else set()
+    # Identifiers of the NSLA sites (for matching RCA records when the NSLA RCA toggle is active)
+    nsla_rows = rows[nsla]
+    nsla_site_keys = {(t, key_of(s)) for t, s in zip(ds.sites['report_type'].to_numpy()[nsla_rows], ds.sites['site_id'].to_numpy()[nsla_rows])}
 
-    site_circles = ds.sites['circle'].to_numpy()
+    row_circles = ds.sites['circle'].to_numpy()[rows]
+    has_value = ~np.isnan(uptime)
 
     def measure(circle: str | None) -> dict:
-        if circle:
-            c_total_mask = mask_total & (site_circles == circle)
-            total_count = int(c_total_mask.sum())
-            c_om_idx = (site_circles[rows_om] == circle)
-            om_count = int(c_om_idx.sum())
-            c_reported = reported_days > 0 and c_om_idx.any() and (~np.isnan(full[c_om_idx])).any()
-            usd_count = int(usd_mask[c_om_idx].sum()) if c_reported else None
-            nsla_count = int(nsla_mask[c_om_idx].sum()) if c_reported else None
-        else:
-            total_count = len(rows_total)
-            om_count = len(rows_om)
-            tot_reported = reported_days > 0 and len(rows_om) > 0 and (~np.isnan(full)).any()
-            usd_count = int(usd_mask.sum()) if tot_reported else None
-            nsla_count = int(nsla_mask.sum()) if tot_reported else None
-
-        if scope == 'on_air_om_not_started':
-            om_count = 0
-            usd_count = 0 if reported_days > 0 else None
-            nsla_count = 0 if reported_days > 0 else None
-
+        mine = row_circles == circle if circle else np.ones(len(rows), dtype=bool)
         return {
-            'total_sites': total_count,
-            'om_start_sites': om_count,
-            'usd_sites': usd_count,
-            'nsla_sites': nsla_count,
+            'total_sites': int(mine.sum()),
+            'om_start_sites': int(om_flags[rows][mine].sum()),
+            'usd_sites': int(usd[mine].sum()) if reported[mine].any() else None,
+            'nsla_sites': int(nsla[mine].sum()) if has_value[mine].any() else None,
             'days_reported': reported_days,
         }
 
@@ -221,8 +189,12 @@ def site_metrics(params, pairs, circles: list[str], rca_dates: tuple[_date | Non
             'last': dates[-1].isoformat() if dates else None,
             'days_reported': total['days_reported'],
         },
+        'population': metrics.population(population),
+        'site_scope': site_scope,
         'rows': {c: measure(c) for c in circles},
         'total': total,
         'nsla_site_keys': nsla_site_keys,
+        'definitions': {'usd_sites': metrics.usd_rule(population), 'nsla_sites': metrics.nsla_rule(population),
+                        'om_start_sites': 'Status count: sites of the population that are O&M Start in the period.'},
         'missing_availability': missing_availability,
     }

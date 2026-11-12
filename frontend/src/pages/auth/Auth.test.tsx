@@ -172,7 +172,7 @@ describe('roles in the interface', () => {
     const user = userEvent.setup();
     const signOut = vi.fn(async () => {});
     renderWithWorkbook(<><AppLayout><p>page</p></AppLayout><Location /></>, { url: '/portfolio', auth: authValue({ user: CI_USER, signOut }) });
-    expect(screen.queryByRole('link', { name: 'Upload workbook' })).not.toBeInTheDocument();  // CI
+    expect(screen.queryByRole('link', { name: 'Data Source' })).not.toBeInTheDocument();  // CI
     await user.click(screen.getByRole('button', { name: 'Account: ravi.ci (CI)' }));
     expect(screen.getByText('ravi.ci · CI')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Change password/ })).toHaveAttribute('href', '/change-password');

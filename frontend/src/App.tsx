@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RequireAdmin, RequireAuth, RequirePage, RequireRcaConsolidated } from './components/auth/Guards';
 import { AuthProvider } from './context/AuthProvider';
+import { PopulationProvider } from './context/population';
 import { TrackingProvider } from './context/TrackingProvider';
 import { WorkbookProvider } from './context/WorkbookProvider';
 import { AppLayout } from './layouts/AppLayout';
@@ -45,6 +46,7 @@ const OrganizationPage = lazy(() => import('./pages/OrganizationPage').then((m) 
 /** The signed-in application: every page here needs a session; Admin-only pages check the role too. */
 function PortalRoutes() {
   return (
+    <PopulationProvider>
     <WorkbookProvider>
       <TrackingProvider>
         <AppLayout>
@@ -66,7 +68,7 @@ function PortalRoutes() {
               <Route path="/teams/hierarchy/circle/:circleCode/oa/:oaId" element={<RequireAdmin><OaPerformancePage /></RequireAdmin>} />
               <Route path="/teams/hierarchy/circle/:circleCode/oa/:oaId/ci/:ciId" element={<RequireAdmin><CiPerformancePage /></RequireAdmin>} />
               <Route path="/teams/hierarchy/circle/:circleCode/oa/:oaId/ci/:ciId/ie/:ieId" element={<RequireAdmin><IePerformancePage /></RequireAdmin>} />
-              {/* Data source: Excel upload or PostgreSQL import, on one page. */}
+              {/* Data Source (Admin): status and imports of the reporting data (the data layer). */}
               <Route path="/workbook" element={<RequireAdmin><DatabaseImportPage /></RequireAdmin>} />
               <Route path="/data/add-row" element={<RequirePage><AddRowPage /></RequirePage>} />
               <Route path="/data/upload-csv" element={<RequirePage><UploadCsvPage /></RequirePage>} />
@@ -99,6 +101,7 @@ function PortalRoutes() {
         </AppLayout>
       </TrackingProvider>
     </WorkbookProvider>
+    </PopulationProvider>
   );
 }
 

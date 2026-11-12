@@ -12,10 +12,9 @@ import numpy as np
 from django.db.models import Count, Q, Sum
 
 from apps.dashboard.metrics import Selection, mtd_positions, site_uptime
-from apps.dashboard.scope import restrict
 from apps.dashboard.workbook import WorkbookError
-from apps.uptimedb.datasource import current_dataset
-from apps.uptimedb.models import EscalationSite
+from apps.sitedata.dashboard_source import dataset
+from apps.sitedata.models import SiteIdentifier
 from . import parser, services, sitescope
 from .models import RcaRecord
 
@@ -61,7 +60,16 @@ def compute_kpis(rca_qs) -> dict[str, Any]:
 
 
 def get_rca_overview(params: dict[str, Any], pairs: list[tuple[str, str]] | None = None) -> dict[str, Any]:
-    """Build the complete RCA Overview payload: 4 KPI cards and tab data."""
+    """Build the complete RCA Overview payload: 4 KPI cards and tab data.
+
+    The site rows (site counts, uptime, outage) are the site POPULATION of the request (``scope``: on_air | om_start,
+    default on_air, invalid -> HTTP 400; values from each site's effective date), narrowed by the record filter
+    ``site_scope`` (its O&M Start / Not Started sites). ``om_start_sites`` is a status count within the population. The
+    KPI cards count the RCA records (``site_scope`` only), as before. Every response has the ``population`` block."""
+    from apps.dashboard.metrics import population as population_info, population_flags
+    from apps.dashboard.serializers import parse_scope
+    population_scope = parse_scope(params.get('scope'))
+    pop_block = population_info(population_scope)
     tab = (params.get('tab') or 'circle').lower()
     if tab not in ('circle', 'ci', 'ie', 'ne', 'site'):
         tab = 'circle'
@@ -81,7 +89,7 @@ def get_rca_overview(params: dict[str, Any], pairs: list[tuple[str, str]] | None
 
     # 2. Uptime dataset and date scope
     try:
-        ds = restrict(current_dataset(), pairs)
+        ds = dataset(pairs, population_scope)
     except WorkbookError:
         ds = None
 
@@ -95,6 +103,7 @@ def get_rca_overview(params: dict[str, Any], pairs: list[tuple[str, str]] | None
             'pages': 1,
             'rows': [],
             'total_row': None,
+            'population': pop_block,
         }
 
     # Date scope
@@ -122,15 +131,18 @@ def get_rca_overview(params: dict[str, Any], pairs: list[tuple[str, str]] | None
     circle_filter = params.get('circle') or None
     scope_filter = sitescope.parse(params.get('site_scope'))
 
-    mask = np.ones(len(ds.sites), dtype=bool)
+    # The population of the period (its last date), narrowed by the Site Scope's O&M Start status.
+    period = [ds.dates[i] for i in date_indices]
+    mask = population_flags(ds, population_scope, max(period) if period else None).copy()
     if project_filter:
-        mask &= (ds.sites['report_type'] == project_filter)
+        mask &= (ds.sites['report_type'] == project_filter).to_numpy()
     if circle_filter:
-        mask &= (ds.sites['circle'] == circle_filter)
+        mask &= (ds.sites['circle'] == circle_filter).to_numpy()
+    om_flags = population_flags(ds, 'om_start', max(period) if period else None)
     if scope_filter == sitescope.OM_START:
-        mask &= (ds.sites['om_start'] == True)  # noqa: E712
+        mask &= om_flags
     elif scope_filter == sitescope.OM_NOT_STARTED:
-        mask &= (ds.sites['om_start'] == False)  # noqa: E712
+        mask &= ~om_flags
 
     site_indices = np.flatnonzero(mask)
     if len(site_indices) == 0:
@@ -143,15 +155,18 @@ def get_rca_overview(params: dict[str, Any], pairs: list[tuple[str, str]] | None
             'pages': 1,
             'rows': [],
             'total_row': None,
+            'population': pop_block,
         }
 
     sub_sites = ds.sites.iloc[site_indices].copy()
+    sub_sites['om_start'] = om_flags[site_indices]  # O&M Start status in the period (a status count within the population)
     sub_outage = ds.outage[np.ix_(site_indices, date_indices)]
     uptimes = site_uptime(sub_outage)
     site_outage_mins = np.nansum(sub_outage, axis=1)
 
-    # NE mapping from EscalationSite
-    ne_map = dict(EscalationSite.objects.exclude(bts_id_b1='').values_list('site_key', 'bts_id_b1'))
+    # NE mapping: the site's BTS Site ID (2100 MHz, B1) from the site master identifiers
+    ne_map = dict(SiteIdentifier.objects.filter(kind=SiteIdentifier.Kind.BAND_2100).exclude(value='')
+                  .values_list('site__site_key', 'value'))
 
     def calc_row(entity_id: str, name: str, detail: str, indices: list[int]) -> dict[str, Any]:
         count = len(indices)
@@ -313,4 +328,5 @@ def get_rca_overview(params: dict[str, Any], pairs: list[tuple[str, str]] | None
         'pages': total_pages,
         'rows': paged_rows,
         'total_row': total_row,
+        'population': pop_block,
     }

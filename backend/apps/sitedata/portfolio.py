@@ -101,17 +101,31 @@ def complete_dates(ds: Dataset) -> list[date]:
 
 
 def continuous(ds: Dataset) -> Dataset:
-    """``ds`` with its reporting dates ending at the last date of the continuous run of complete dates (MTD continuity)."""
+    """``ds`` with its reporting dates = the dates of the month on which its own sites have data (a restricted dataset
+    therefore follows its own units: 4G and LWE are independent), plus the Complete / Provisional status of each date and
+    of the month to date over the dataset's own reporting units (apps.sitedata.reporting). Dates are never dropped
+    because another unit is missing (approved rule B-7)."""
+    from . import reporting
     memo = ds._memo.get('continuous')
     if memo is not None:
         return memo
-    have = dates_with_data(ds)
-    complete = complete_dates(ds)
-    run = tuple(rules.mtd_dates(complete, ds.dates[0])) if ds.dates else ()
-    result = ds if run == tuple(ds.reported_dates) else dataclasses.replace(ds, reported_dates=run, _positions={})
-    result._memo['continuity'] = {'dates_with_data': [d.isoformat() for d in have], 'continuous_until': run[-1].isoformat() if run else None,
-                                  'excluded_after_gap': [d.isoformat() for d in have if not run or d > run[-1]],
-                                  'incomplete_dates': [d.isoformat() for d in have if d not in complete]}
+    have = tuple(dates_with_data(ds))
+    result = ds if have == tuple(ds.reported_dates) else dataclasses.replace(ds, reported_dates=have, _positions={})
+    units = reporting.units_of(ds)
+    latest = have[-1] if have else None
+    # Statuses run to the latest reporting date of the whole data layer, so a unit that stopped reporting shows its
+    # missing days as Provisional instead of looking complete up to its own last date.
+    layer_dates = [d for d in ds.dates if ds.unit_coverage and d in ds.unit_coverage]
+    status_end = max([*layer_dates, *([latest] if latest else [])], default=None)
+    status_dates = [d for d in ds.dates if status_end and d <= status_end and (d in have or d in layer_dates)]
+    statuses = [reporting.date_status(ds.unit_coverage, d, units) for d in status_dates] if ds.unit_coverage is not None else []
+    provisional = [s['date'] for s in statuses if s['status'] != reporting.COMPLETE]
+    mtd = (reporting.period_status(ds.unit_coverage, [d for d in ds.dates if d <= status_end], status_end, units)
+           if ds.unit_coverage is not None and status_end else None)
+    result._memo['continuity'] = {'dates_with_data': [d.isoformat() for d in have], 'continuous_until': latest.isoformat() if latest else None,
+                                  'excluded_after_gap': [], 'incomplete_dates': provisional,
+                                  'date_status': statuses, 'mtd_status': mtd['status'] if mtd else None,
+                                  'missing': mtd['missing'] if mtd else []}
     ds._memo['continuous'] = result
     return result
 

@@ -11,6 +11,12 @@ Explicit source precedence (SOURCE_RANK), the same whatever the upload order:
   upload, and the replaced value, its upload and its file stay in the log (action superseded). So an Uptime Master value
   wins over a raw CSV value whether the CSV was imported before or after it, and a raw CSV never replaces an Uptime
   Master value. No other change happens automatically; anything else goes through correct() (Admin, with a reason).
+- The same value from a source of higher precedence takes over the record's provenance (logged as superseded with an
+  unchanged value), so a later different value from an equal source is judged against the higher source whatever the
+  upload order: raw A, Uptime A, Uptime B gives the same result as Uptime A, Uptime B (a conflict, A kept).
+- Writes into a finalized month are refused (FinalizedPeriod); an Admin correction may force one, with a reason.
+- A value for a date after today (timezone.localdate()) is refused, from every source including corrections
+  (FutureDate); the importers also reject such rows or cells individually (code future_date).
 Availability and outage are always consistent, by the shared rules (rules.py).
 """
 from __future__ import annotations
@@ -25,13 +31,39 @@ from django.utils import timezone
 
 from apps.accounts.audit import audit
 
-from .models import DailyPerformanceEvent, DailySitePerformance, Technology, UploadBatch
+from .models import DailyPerformanceEvent, DailySitePerformance, MonthlySitePerformance, Technology, UploadBatch
+from .uploads import UploadRejected
 from .rules import MINUTES_PER_DAY, availability_from_outage, outage_from_availability  # noqa: F401 (shared rules)
 
 TOLERANCE = 1e-6  # percentage points: values closer than this are the same value
 CHUNK = 5000
 SOURCE_RANK = {UploadBatch.Kind.CORRECTION: 3, UploadBatch.Kind.UPTIME_MASTER: 2,
                UploadBatch.Kind.RAW_CSV_4G: 1, UploadBatch.Kind.RAW_CSV_LWE: 1}
+
+
+class FinalizedPeriod(UploadRejected):
+    """A write into a month whose monthly results are finalized."""
+
+
+class FutureDate(UploadRejected, ValueError):
+    """A daily value for a date after today (a ValueError too, so the correction API answers 400)."""
+
+
+def check_not_future(dates) -> None:
+    """Refuse dates after today (the central guard of every write into the daily table)."""
+    today = timezone.localdate()
+    future = sorted({d for d in dates if d > today})
+    if future:
+        shown = ', '.join(f'{d:%d %b %Y}' for d in future[:5]) + (f' and {len(future) - 5} more' if len(future) > 5 else '')
+        raise FutureDate(f'Daily values cannot be stored for a date after today ({today:%d %b %Y}): {shown}.')
+
+
+def finalized_months(dates) -> list:
+    months = {d.replace(day=1) for d in dates}
+    if not months:
+        return []
+    return sorted(set(MonthlySitePerformance.objects.filter(month__in=months, is_current=True, finalized_at__isnull=False)
+                      .values_list('month', flat=True)))
 
 
 def rank(kind: str) -> int:
@@ -62,12 +94,19 @@ class Classified:
     duplicate: list
     conflict: list  # (DailyValue, existing DailySitePerformance): stored value kept
     superseded: list = None  # (DailyValue, existing DailySitePerformance): higher-precedence value replaces the stored one
+    upgraded: list = None  # (DailyValue, existing DailySitePerformance): same value from a higher source takes the provenance
 
     def __post_init__(self):
         self.superseded = self.superseded or []
+        self.upgraded = self.upgraded or []
 
     def counts(self) -> dict:
-        return {'accepted': len(self.new), 'duplicate': len(self.duplicate), 'conflict': len(self.conflict), 'superseded': len(self.superseded)}
+        return {'accepted': len(self.new), 'duplicate': len(self.duplicate) + len(self.upgraded), 'conflict': len(self.conflict),
+                'superseded': len(self.superseded)}
+
+    def written_dates(self) -> set:
+        """Dates whose stored daily values (or their provenance) this result changes."""
+        return {v.report_date for v in self.new} | {v.report_date for v, _ in self.superseded + self.upgraded}
 
 
 def classify(values: list[DailyValue], source_kind: str) -> Classified:
@@ -88,7 +127,10 @@ def classify(values: list[DailyValue], source_kind: str) -> Classified:
         if rec is None:
             result.new.append(v)
         elif abs(rec.availability_pct - v.availability_pct) <= TOLERANCE:
-            result.duplicate.append(v)
+            if incoming > rank(rec.batch.kind):
+                result.upgraded.append((v, rec))
+            else:
+                result.duplicate.append(v)
         elif incoming > rank(rec.batch.kind):
             result.superseded.append((v, rec))
         else:
@@ -98,7 +140,13 @@ def classify(values: list[DailyValue], source_kind: str) -> Classified:
 
 def write(batch: UploadBatch, classified: Classified) -> None:
     """Insert the new records, log the conflicts, and apply and log the superseded values. Call inside the commit
-    transaction."""
+    transaction. Refused when a value is dated after today or a written value falls in a finalized month."""
+    check_not_future([v.report_date for v in classified.new + classified.duplicate]
+                     + [v.report_date for v, _ in classified.conflict + classified.superseded + classified.upgraded])
+    closed = finalized_months(classified.written_dates())
+    if closed:
+        raise FinalizedPeriod('Finalized month(s) ' + ', '.join(f'{m:%b %Y}' for m in closed) + ' cannot be changed by an upload; '
+                              'an Admin correction with a reason is needed.')
     DailySitePerformance.objects.bulk_create([
         DailySitePerformance(site_id=v.site_id, report_date=v.report_date, technology=v.technology, circle=v.circle,
                              availability_pct=v.availability_pct, outage_minutes=v.outage_minutes, batch=batch,
@@ -131,6 +179,22 @@ def write(batch: UploadBatch, classified: Classified) -> None:
             changed.append(rec)
         DailySitePerformance.objects.bulk_update(changed, ['availability_pct', 'outage_minutes', 'batch', 'source_row', 'source_identifier',
                                                            'revision', 'updated_at'], batch_size=CHUNK)
+    if classified.upgraded:
+        DailyPerformanceEvent.objects.bulk_create([
+            DailyPerformanceEvent(site_id=v.site_id, report_date=v.report_date, technology=v.technology,
+                                  action=DailyPerformanceEvent.Action.SUPERSEDED,
+                                  proposed_availability_pct=v.availability_pct, proposed_outage_minutes=v.outage_minutes,
+                                  stored_availability_pct=rec.availability_pct, stored_outage_minutes=rec.outage_minutes,
+                                  batch=batch, stored_batch_id=rec.batch_id, source_row=v.source_row,
+                                  source_identifier=v.source_identifier[:80], user=batch.uploaded_by,
+                                  reason=f'Same value; {batch.get_kind_display()} becomes the source of record instead of '
+                                         f'{rec.batch.get_kind_display()} (upload #{rec.batch_id}).')
+            for v, rec in classified.upgraded], batch_size=CHUNK)
+        now = timezone.now()
+        for v, rec in classified.upgraded:
+            rec.batch, rec.source_row, rec.source_identifier, rec.updated_at = batch, v.source_row, v.source_identifier[:80], now
+        DailySitePerformance.objects.bulk_update([rec for _, rec in classified.upgraded],
+                                                 ['batch', 'source_row', 'source_identifier', 'updated_at'], batch_size=CHUNK)
 
 
 def conflict_examples(classified: Classified, limit: int = 20) -> list[dict]:
@@ -157,15 +221,28 @@ def exception_items(classified: Classified, source_file: str) -> list[dict]:
     return items
 
 
-def correct(record: DailySitePerformance, availability_pct: float, *, user, reason: str, request=None) -> DailySitePerformance:
-    """Authorized correction of one daily record: logged with the old and new value, the user and the reason."""
+def _check_correction(user, reason: str, day: date, *, authorized: bool, force: bool) -> None:
     from apps.accounts.roles import ADMIN, role_of
     if not reason or not reason.strip():
         raise ValueError('A correction needs a reason.')
-    if role_of(user) != ADMIN:  # data administration is Admin-only (accounts/catalog.ADMIN_ONLY)
+    check_not_future([day])
+    # Admins always; other users only when the caller has checked their Edit permission on the site's project and
+    # circle (the Data Panel, accounts.access).
+    if not authorized and role_of(user) != ADMIN:
         raise PermissionDenied('Only an Admin can correct daily performance.')
+    if finalized_months([day]) and not (force and role_of(user) == ADMIN):
+        raise FinalizedPeriod(f'{day:%b %Y} is finalized; only an Admin can correct it, explicitly.')
+
+
+def correct(record: DailySitePerformance, availability_pct: float, *, user, reason: str, request=None,
+            authorized: bool = False, force: bool = False, refresh: bool = True) -> DailySitePerformance:
+    """Authorized correction of one daily record (precedence 3, never overridden by an upload): logged with the old and
+    new value, the user and the reason."""
+    from .uploads import write_lock
+    _check_correction(user, reason, record.report_date, authorized=authorized, force=force)
     outage = outage_from_availability(availability_pct)
     with transaction.atomic():
+        write_lock()
         record = DailySitePerformance.objects.select_for_update().get(pk=record.pk)
         batch = UploadBatch.objects.create(
             kind=UploadBatch.Kind.CORRECTION, original_filename='Authorized correction', uploaded_by=user,
@@ -187,6 +264,39 @@ def correct(record: DailySitePerformance, availability_pct: float, *, user, reas
         record.save()
     audit('sitedata.daily_corrected', request, record=record.pk, site=record.site_id, date=record.report_date,
           availability=availability_pct, batch=batch.pk)
+    if refresh:
+        from .uploads import refresh_after_daily_write
+        refresh_after_daily_write([record.report_date], request)
+    return record
+
+
+def add_correction(site, report_date: date, availability_pct: float, *, user, reason: str, request=None,
+                   authorized: bool = False, force: bool = False, refresh: bool = True) -> DailySitePerformance:
+    """Authorized value for a site-day that has no record (not reported): the record is created at precedence 3 by a
+    correction upload. A site-day that already has a record is corrected with correct()."""
+    from .models import Site
+    from .uploads import refresh_after_daily_write, write_lock
+    if site.reporting_scope != Site.Scope.DASHBOARD:
+        raise ValueError(f'{site.bsnl_site_id} is outside the dashboard reporting scope.')
+    _check_correction(user, reason, report_date, authorized=authorized, force=force)
+    outage = outage_from_availability(availability_pct)
+    with transaction.atomic():
+        write_lock()
+        if DailySitePerformance.objects.filter(site=site, report_date=report_date, technology=site.technology).exists():
+            raise ValueError(f'{site.bsnl_site_id} already has a value for {report_date:%d %b %Y}; correct that record instead.')
+        batch = UploadBatch.objects.create(
+            kind=UploadBatch.Kind.CORRECTION, original_filename='Authorized correction', uploaded_by=user,
+            circle=site.circle, reporting_date=report_date, technology=site.technology,
+            records_received=1, records_accepted=1, validation_status=UploadBatch.Validation.PASSED,
+            processing_status=UploadBatch.Processing.COMMITTED, remarks=reason.strip(),
+            report={'site': site.pk, 'date': report_date.isoformat(), 'created': True, 'availability_pct': availability_pct})
+        batch.committed_at = batch.uploaded_at
+        batch.save(update_fields=['committed_at'])
+        record = DailySitePerformance.objects.create(site=site, report_date=report_date, technology=site.technology, circle=site.circle,
+                                                     availability_pct=availability_pct, outage_minutes=outage, batch=batch)
+    audit('sitedata.daily_added', request, record=record.pk, site=site.pk, date=report_date, availability=availability_pct, batch=batch.pk)
+    if refresh:
+        refresh_after_daily_write([report_date], request)
     return record
 
 

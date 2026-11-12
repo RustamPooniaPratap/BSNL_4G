@@ -268,7 +268,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
       <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
         <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
         <p>
-          Data status is read from PostgreSQL for the selected date: usable daily records ({current.usable_rule.toLowerCase()}) of the expected sites
+          Data status is read from the reporting data for the selected date: usable daily records ({current.usable_rule.toLowerCase()}) of the expected sites
           ({current.scope_rule}), whichever import wrote them. CSV upload status comes separately from the raw upload history.
           {' '}{current.notes[0]} Contacts, follow-ups, deadlines and manual arrival notes are held in this browser only.
         </p>
@@ -598,14 +598,29 @@ function UploadBadge({ state }: { state: UploadState }) {
 
 /** Which import wrote the usable records of the date (from each record's import batch). */
 function sourceLabel(item: TrackerItem) {
-  const { master_workbook: master, raw_daily_csv: raw } = item.data_source;
-  if (master && raw) return `Master workbook (${formatNumber(master)}) and raw CSV (${formatNumber(raw)})`;
-  if (master) return 'Master workbook';
-  if (raw) return 'Raw CSV upload';
-  return null;
+  const { master_workbook: master, raw_daily_csv: raw, correction = 0 } = item.data_source;
+  const parts = ([['Uptime Master', 'Uptime Master', master], ['raw CSV', 'Raw CSV upload', raw], ['correction', 'Admin correction', correction]] as const)
+    .filter(([, , n]) => n > 0);
+  if (!parts.length) return null;
+  if (parts.length === 1) return parts[0][1];
+  return parts.map(([label, , n]) => `${label} (${formatNumber(n)})`).join(' and ');
+}
+
+const pctText = (v: number) => `${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}%`;
+
+/** "Inactive": the reporting unit is not expected to report on this date (deactivated, or not yet activated). */
+function InactiveLabel() {
+  return (
+    <span className="mr-1 inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-1.5 text-[10px] font-medium text-slate-600"
+      title="Reporting unit not expected on this date (inactive)">Inactive</span>
+  );
 }
 
 function Coverage({ item }: { item: TrackerItem }) {
+  const threshold = item.coverage_threshold_pct;
+  if (item.active === false) {
+    return <span className="text-muted-foreground"><InactiveLabel />Unit not expected on this date · {formatNumber(item.records_observed)} records</span>;
+  }
   if (item.data_state === 'no_scope') {
     return <span className="text-muted-foreground">No On-Air sites in the master · {formatNumber(item.records_observed)} records</span>;
   }
@@ -613,7 +628,8 @@ function Coverage({ item }: { item: TrackerItem }) {
     <span className="tabular-nums">
       {formatNumber(item.sites_with_data)} / {formatNumber(item.sites_expected)} sites
       <span className="block text-[11px] text-muted-foreground">
-        {item.coverage_pct === null ? '—' : `${item.coverage_pct.toLocaleString('en-IN', { maximumFractionDigits: 2 })}%`}
+        {item.coverage_pct === null ? '—' : pctText(item.coverage_pct)}
+        {threshold != null && <span title="Coverage threshold applied on this date"> (threshold {pctText(threshold)})</span>}
         {item.sites_missing ? ` · ${formatNumber(item.sites_missing)} missing` : ''}
         {item.sites_invalid ? ` · ${formatNumber(item.sites_invalid)} invalid` : ''}
       </span>
@@ -651,7 +667,7 @@ function CoverageRange({ tracker, rows, today, onRange, onPick }: {
       <CardHeader>
         <CardTitle className="text-sm font-semibold">Daily coverage · {formatDate(tracker.range.start)} to {formatDate(tracker.range.end)}</CardTitle>
         <CardDescription className="text-xs">
-          Usable records of the expected sites per day, from PostgreSQL. Grey days have no usable data. Select a day to open it above.
+          Usable records of the expected sites per day, from the reporting data. Grey days have no usable data. Select a day to open it above.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -694,7 +710,7 @@ function CoverageRange({ tracker, rows, today, onRange, onPick }: {
                         <td key={r.date} className="px-px py-0.5">
                           <button type="button" onClick={() => onPick(r.date)}
                             aria-label={`${item.circle} ${shortType(item.project)} ${formatDate(r.date)}: ${r.state === 'none' ? 'no data' : `${formatNumber(r.sites_with_data)} of ${formatNumber(item.sites_expected)} sites`}`}
-                            title={`${formatDate(r.date)}: ${formatNumber(r.sites_with_data)} of ${formatNumber(item.sites_expected)} sites`}
+                            title={`${formatDate(r.date)}: ${r.state === 'no_scope' ? 'no On-Air sites or unit not expected (inactive)' : `${formatNumber(r.sites_with_data)} of ${formatNumber(item.sites_expected)} sites`}`}
                             className={cn('block size-4 rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none', CELL_STYLE[r.state],
                               r.date === tracker.reporting_date && 'ring-2 ring-primary/60')} />
                         </td>
@@ -728,10 +744,12 @@ function Details({ s, onEditArrival, onRecordArrival, onRemoveArrival, onContact
       </SheetHeader>
       <div className="space-y-5 px-4 pb-6">
         <section aria-label="Stored daily data">
-          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Stored daily data (PostgreSQL)</h3>
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Stored daily data (reporting data)</h3>
           <dl className="divide-y">
             {row('Expected sites', `${formatNumber(item.sites_expected)} On-Air of ${formatNumber(item.sites_total)} in the master`)}
             {row('With usable data', <Coverage item={item} />)}
+            {item.coverage_threshold_pct != null && row('Coverage threshold', `${pctText(item.coverage_threshold_pct)} of expected sites (the threshold applied on this date)`)}
+            {item.active === false && row('Reporting unit', <><InactiveLabel />Not expected on this date</>)}
             {row('Records written by', sourceLabel(item) ?? 'No usable records on this date')}
             {item.records_observed !== item.sites_with_data && row('All master sites', `${formatNumber(item.records_observed)} usable records, including sites not On-Air`)}
             {row('Latest data', item.latest_data_date ? formatDate(item.latest_data_date) : 'None stored')}

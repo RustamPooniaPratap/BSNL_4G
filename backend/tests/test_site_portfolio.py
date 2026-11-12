@@ -93,15 +93,17 @@ class SitePortfolioTests(SignedInTestCase, SiteDataTestCase):
         bad = self.client.get(reverse('site-portfolio-summary'), {'scope': 'all', 'reporting_date': '2026-10-09'})
         self.assertEqual(bad.status_code, 400)  # no data on 9 Oct: not a reporting date
 
-    def test_mtd_stops_at_the_last_continuous_date(self):
+    def test_a_gap_day_does_not_hide_later_dates(self):
+        # Nobody reported on 2 Oct: 1 and 3 Oct are both reporting dates; 2 Oct is not reported (never zero).
         sites = [('4G Satu.', 'MP', 'UVMP001', 'Alpha', 'Yes', 'Yes', [0, None, 30]), ('4G Satu.', 'RJ', 'UVRJ001', 'Delta', 'Yes', 'Yes', [0, None, 0])]
-        self.load(sites)  # nobody reported on 2 Oct
+        self.load(sites)
         options = self.get('filters')
-        self.assertEqual(options['reporting_dates'], ['2026-10-01'])
-        self.assertEqual(options['source']['continuity'], {'dates_with_data': ['2026-10-01', '2026-10-03'], 'continuous_until': '2026-10-01',
-                                                           'excluded_after_gap': ['2026-10-03'], 'incomplete_dates': []})
-        self.assertEqual(self.client.get(reverse('site-portfolio-summary'), {'scope': 'all', 'reporting_date': '2026-10-03'}).status_code, 400)
-        self.assertEqual(self.get('summary', scope='all', reporting_date='2026-10-01')['mtd_window']['days_reported'], 1)
+        self.assertEqual(options['reporting_dates'], ['2026-10-01', '2026-10-03'])
+        continuity = options['source']['continuity']
+        self.assertEqual((continuity['dates_with_data'], continuity['continuous_until'], continuity['excluded_after_gap']),
+                         (['2026-10-01', '2026-10-03'], '2026-10-03', []))
+        self.assertEqual(self.client.get(reverse('site-portfolio-summary'), {'scope': 'all', 'reporting_date': '2026-10-03'}).status_code, 200)
+        self.assertEqual(self.get('summary', scope='all', reporting_date='2026-10-03')['mtd_window']['days_reported'], 2)
 
     def test_period_reports_the_reporting_days_used(self):
         self.load()

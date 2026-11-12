@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { formatMin } from '../../lib/rca';
 import { formatNumber } from '../../lib/format';
 import { useApiQuery } from '../../hooks/useApiQuery';
+import { usePopulation } from '../../context/population';
 import { fetchRcaOverview } from '../../services/api';
 import type { RcaOverviewResponse, RcaOverviewRow, RcaOverviewSplit } from '../../types/rca';
 import { RcaKpiTile, RcaSection } from './RcaTiles';
@@ -42,9 +43,10 @@ export function RcaOverviewTable({ query }: Props) {
     tabQuery.set('q', search.trim());
   }
 
+  const { scope } = usePopulation();
   const overview = useApiQuery<RcaOverviewResponse>(
-    `rca-overview-${tab}-${page}-${search}-${tabQuery}`,
-    (signal) => fetchRcaOverview(tabQuery, signal)
+    `rca-overview-${scope}-${tab}-${page}-${search}-${tabQuery}`,
+    (signal) => fetchRcaOverview(tabQuery, scope, signal)
   );
 
   const data = overview.data;

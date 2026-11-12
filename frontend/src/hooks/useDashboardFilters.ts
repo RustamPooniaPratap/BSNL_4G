@@ -1,5 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { usePopulation } from '../context/population';
+import { POPULATION_PARAM } from '../lib/population';
 import type { FilterOptions, Scope } from '../types';
 
 export type TrendView = 'daily' | 'weekly' | 'monthly';
@@ -74,12 +76,19 @@ export function pickWeeks<T>(weeks: T[], picked: number[]) {
 
 const list = (value: string) => value.split(',').map((v) => v.trim()).filter(Boolean);
 
+/** Page filters other than the global population (reset clears these, never the population). */
+const PAGE_KEYS = Object.entries(KEYS).filter(([key]) => key !== 'scope').map(([, param]) => param);
+
 /**
  * Filter state backed by the URL so views are shareable and survive reloads.
  * Values that are not offered by the workbook are ignored rather than sent to the API.
+ * The scope is the global population (context/population): no page has its own default, and setting ``scope``
+ * here changes it for every page. The second argument is accepted for compatibility and ignored.
  */
-export function useDashboardFilters(options: FilterOptions | null, { defaultScope }: { defaultScope?: Scope } = {}) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function useDashboardFilters(options: FilterOptions | null, _legacy: { defaultScope?: Scope } = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { scope, setScope } = usePopulation();
 
   const resolved = useMemo<ResolvedFilters | null>(() => {
     if (!options) return null;
@@ -89,10 +98,6 @@ export function useDashboardFilters(options: FilterOptions | null, { defaultScop
     const reportType = options.report_types.some((t) => t.value === read('reportType')) ? read('reportType') : '';
     const circleOption = options.circles.find((c) => c.value === read('circle'));
     const circle = circleOption && (!reportType || circleOption.report_types.includes(reportType)) ? circleOption.value : '';
-    const scopeOption = options.scopes.find((s) => s.value === read('scope') && s.available);
-    // A page may default to another scope (Threshold Analysis uses O&M Start, like its workbook sheets).
-    const pageDefault = options.scopes.find((s) => s.value === defaultScope && s.available)?.value;
-    const scope = scopeOption?.value ?? pageDefault ?? options.default_scope;
     const date = dates.includes(read('date')) ? read('date') : options.default_date ?? '';
     let from = dates.includes(read('from')) ? read('from') : options.default_trend_range.start ?? '';
     let to = dates.includes(read('to')) ? read('to') : options.default_trend_range.end ?? '';
@@ -139,23 +144,29 @@ export function useDashboardFilters(options: FilterOptions | null, { defaultScop
       trend: read('trend'), days: dayList.join(','), weeks: weekList.join(','), months: monthList.join(','),
       trendView, dayList, weekList, monthList, snapshotParams, trendParams, monthlyParams, periodParams,
     };
-  }, [options, searchParams, defaultScope]);
+  }, [options, searchParams, scope]);
 
   const setFilters = useCallback((changes: Partial<DashboardFilterState>) => {
+    const { scope: nextScope, ...pageChanges } = changes;
+    if (nextScope) setScope(nextScope);
+    if (!Object.keys(pageChanges).length) return;
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
-      for (const [key, value] of Object.entries(changes) as [keyof DashboardFilterState, string][]) {
+      // One navigation for all changes: the population goes into the same URL update.
+      if (nextScope) next.set(POPULATION_PARAM, nextScope);
+      for (const [key, value] of Object.entries(pageChanges) as [keyof DashboardFilterState, string][]) {
         if (value) next.set(KEYS[key], value);
         else next.delete(KEYS[key]);
       }
       return next;
     }, { replace: true });
-  }, [setSearchParams]);
+  }, [setSearchParams, setScope]);
 
-  const reset = useCallback(() => setSearchParams(new URLSearchParams(), { replace: true }), [setSearchParams]);
+  // Clears the page's filters; the global population stays (it is not a page filter).
+  const reset = useCallback(() => setSearchParams(new URLSearchParams({ [POPULATION_PARAM]: scope }), { replace: true }), [setSearchParams, scope]);
 
   const isDefault = useMemo(
-    () => Object.values(KEYS).every((key) => !searchParams.get(key)),
+    () => PAGE_KEYS.every((key) => !searchParams.get(key)),
     [searchParams],
   );
 

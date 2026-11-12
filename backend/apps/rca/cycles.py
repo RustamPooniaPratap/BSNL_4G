@@ -103,9 +103,10 @@ def cycle_for_date(day: date, *, user=None, name: str = '') -> RcaReportingCycle
 
 
 def available_units() -> list[tuple[str, str]]:
-    """Project / circle units of the Up-Time Report (offered when configuring the expected scope)."""
-    from apps.uptimedb.models import UptimeSite
-    return sorted(set(UptimeSite.objects.order_by().values_list('project', 'circle').distinct()))
+    """Technology / circle units of the site master's dashboard-scope sites (offered when configuring the expected scope)."""
+    from apps.sitedata.models import Site
+    return sorted(set(Site.objects.filter(reporting_scope=Site.Scope.DASHBOARD).order_by()
+                      .values_list('technology', 'circle').distinct()))
 
 
 def default_units(before: date | None = None) -> list[tuple[str, str]]:

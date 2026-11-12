@@ -21,6 +21,7 @@ import type { RcaCircle, RcaClassificationCounts, RcaOptions, RcaRanked, RcaSumm
 import { SelectField } from '../../components/data/DataEntry';
 import { Field } from '../../components/dashboard/FilterBar';
 import { PageHeading } from '../../context/pageHeader';
+import { usePopulation } from '../../context/population';
 
 type Measure = 'records' | 'minutes';
 type CircleMeasure = 'records' | 'minutes';
@@ -51,7 +52,9 @@ export function RcaSummaryPage() {
     const v = params.get(key);
     if (v && key !== 'q' && key !== 'status') query.set(key, v);
   }
-  const summary = useApiQuery(`rca-summary-${query}`, (signal) => fetchRcaSummary(query, signal));
+  // Site metrics (sites, USD, NSLA) follow the global population; the Site Scope record filter stays separate.
+  const { scope, sitesLabel } = usePopulation();
+  const summary = useApiQuery(`rca-summary-${scope}-${query}`, (signal) => fetchRcaSummary(query, scope, signal));
   if (!view) return <Navigate to={{ pathname: '/rca/summary', search: location.search }} replace />;  // unknown subpage: the Overview
   const onFilter = (key: FilterKey, value: string) => setParams((cur) => {
     const next = new URLSearchParams(cur);
@@ -70,11 +73,11 @@ export function RcaSummaryPage() {
   return (
     <div className="space-y-4">
       <PageHeading title={view.path === '/rca/summary' ? 'RCA Summary' : `RCA Summary · ${view.label}`}
-        subtitle={options.data ? `${showingText(options.data, params)} · ${rcaCoverageText(options.data.dates)}` : 'Accepted RCA records'} />
+        subtitle={options.data ? `${showingText(options.data, params)} · Population: ${sitesLabel} · ${rcaCoverageText(options.data.dates)}` : `Accepted RCA records · Population: ${sitesLabel}`} />
       <SummaryNav current={view} search={location.search} />
       {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}
       {options.data ? (
-        <RcaFilterBar options={options.data} params={params} onChange={onFilter} onReset={() => setParams(new URLSearchParams(), { replace: true })}
+        <RcaFilterBar options={options.data} params={params} onChange={onFilter} onReset={() => setParams(new URLSearchParams(), { replace: true })} population
           lead={<ReportingDateSelect options={options.data} params={params} onChange={(from, to) => setParams((cur) => {
             const next = new URLSearchParams(cur);
             if (from) { next.set('date_from', from); next.set('date_to', to); } else { next.delete('date_from'); next.delete('date_to'); }

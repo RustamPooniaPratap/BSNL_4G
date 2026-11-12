@@ -74,7 +74,19 @@ describe('AlertsMenu', () => {
     const user = userEvent.setup();
     renderWithWorkbook(<AlertsMenu />, { workbook: workbookValue({ active: null, version: 'none' }) });
     await user.click(screen.getByRole('button', { name: 'Alerts: no workbook loaded' }));
-    expect(await screen.findByRole('link', { name: 'Upload workbook' })).toHaveAttribute('href', '/workbook');
+    expect(await screen.findByRole('link', { name: 'Import data' })).toHaveAttribute('href', '/workbook');
     expect(fetchAlerts).not.toHaveBeenCalled();
+  });
+
+  it('lists a missing-CSV alert as a warning linking to the CSV Arrival tracker', async () => {
+    const user = userEvent.setup();
+    fetchAlerts.mockResolvedValue({ ...response, alerts: [...response.alerts,
+      { id: 'missing_csv_LWE_OD_2026-10-03', severity: 'warning', title: 'LWE OD: no daily CSV for 03 Oct', detail: 'Provisional until the data arrives.', link: '/daily-ingestion' }],
+    counts: { ...response.counts, warning: 3 } });
+    renderWithWorkbook(<AlertsMenu />);
+    await user.click(await screen.findByRole('button', { name: /alerts: 4/i }));
+    const warning = await screen.findByRole('region', { name: 'Warning alerts' });
+    const link = within(warning).getByRole('link', { name: /LWE OD: no daily CSV for 03 Oct/ });
+    expect(link).toHaveAttribute('href', '/daily-ingestion');
   });
 });

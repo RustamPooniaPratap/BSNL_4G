@@ -1,20 +1,20 @@
-"""Data Panel editing: how each dataset's cells map to its PostgreSQL model, and the rules a change must follow.
+"""Data Panel editing: which datasets can be changed, and the rules a change must follow.
 
-One ``Editor`` per dataset of ``datasets.DATASETS`` (``EDITORS``). The save itself is generic (``editing.save``): it
-checks permissions and project/circle scope, applies the editor, validates the model (field types, lengths, unique
-constraints), and writes everything in one transaction or nothing. A dataset without an editor stays read-only.
+One ``Editor`` per editable dataset of ``datasets.DATASETS`` (``EDITORS``). A dataset without an editor is read-only
+(View / Export only): Site Master, Monthly Performance and the Escalation Matrix, whose values come from the
+Consolidation Matrix import and the monthly calculation. Nothing here deletes a record.
 
-To make a new dataset editable: register it in ``DATASETS`` and add an ``Editor`` here naming its editable columns
-(and identity columns for Add). Its View / Add / Edit / Export permissions appear on Users & Roles automatically.
-Nothing here deletes a record.
+- Daily Performance (``DailyEditor``): every change is an authorized correction of the central daily records
+  (apps.sitedata.daily.correct for a stored value, add_correction for a site-day without one), with the reason given
+  for the save. The correction upload and its DailyPerformanceEvent are the provenance; the value then has the highest
+  source precedence. The value may be given as availability % or as outage minutes (apps.sitedata.rules converts).
+  Writes into a finalized month are refused (daily.FinalizedPeriod). The save is generic per dataset in
+  ``editing.save``: permissions and project/circle scope (the project of a daily record is its technology), then one
+  transaction for every row, or nothing.
+- RCA Data (``RcaEditor``): the register's own rules; the model is validated and saved row by row.
 
-Rules shared by every editor:
-- A value is converted with the model field's own type (text trimmed, numbers, ISO dates, Yes/No); a blank number or
-  date is NULL (not reported), never 0.
-- Derived columns are recomputed as the importers do (site keys, On-Air / O&M Start flags, RCA matching keys).
-- Project and circle must form an Organization association when they are set or changed.
-- Rows written by a save point to that save's own import batch (kind "Data Panel edit"), so every value still traces
-  back to where it came from, and the dashboard's database cache refreshes.
+Shared conversion rules: a value is converted with the model field's own type (text trimmed, numbers, ISO dates,
+Yes/No); a blank number or date is NULL (not reported), never 0.
 """
 from __future__ import annotations
 
@@ -25,9 +25,8 @@ from django.db import models
 from django.utils import timezone
 
 from apps.rca.models import RcaEvent, RcaRecord
-from apps.uptimedb.models import (DataImportBatch, EscalationImportBatch, EscalationSite, SiteDailyPerformance, SiteMonthlyPerformance,
-                                  UptimeSite)
-from apps.uptimedb.parser import site_key
+from apps.sitedata import rules
+from apps.sitedata.models import DailySitePerformance, Site
 
 
 class EditError(Exception):
@@ -39,28 +38,10 @@ class EditError(Exception):
 
 
 class Context:
-    """One save: the user, and the provenance batches created on first use."""
+    """One save: the user and the dataset."""
 
     def __init__(self, user, dataset_label: str):
         self.user, self.label = user, dataset_label
-        self._uptime_batch = self._escalation_batch = None
-        self.relink = False
-
-    def uptime_batch(self) -> DataImportBatch:
-        if self._uptime_batch is None:
-            now = timezone.now()
-            self._uptime_batch = DataImportBatch.objects.create(
-                kind=DataImportBatch.Kind.DATA_PANEL, status=DataImportBatch.Status.COMMITTED, committed_at=now,
-                original_filename='Data Panel edit', checksum_sha256='data-panel', sheet_name=self.label[:64], stored_path='-',
-                imported_by=self.user, initiated_via='data_panel', remarks=f'Changed in the Data Panel ({self.label}).')
-        return self._uptime_batch
-
-    def escalation_batch(self) -> EscalationImportBatch:
-        if self._escalation_batch is None:
-            self._escalation_batch = EscalationImportBatch.objects.create(
-                original_filename='Data Panel edit', checksum_sha256='data-panel', sheet_name=self.label[:64], stored_path='-',
-                status=EscalationImportBatch.Status.COMMITTED, committed_at=timezone.now(), imported_by=self.user, initiated_via='data_panel')
-        return self._escalation_batch
 
 
 def convert(field: models.Field, raw):
@@ -102,11 +83,6 @@ def convert(field: models.Field, raw):
     if field.max_length and len(text) > field.max_length:
         raise ValueError(f'At most {field.max_length} characters.')
     return text
-
-
-def _association(project: str, circle: str) -> str | None:
-    from apps.organization.services import is_associated
-    return None if is_associated(project, circle, active_only=False) else f'{circle} is not a circle of {project} (Administration › Organization).'
 
 
 class Editor:
@@ -155,146 +131,81 @@ class Editor:
         """History records of the dataset (after the row is saved)."""
 
 
-class _SiteIdentity(Editor):
-    """Project, circle and site ID with the site key and the association rule (Site Master, Escalation Matrix)."""
-    unique_key = 'site_id'
+class DailyEditor(Editor):
+    """Daily Performance: authorized corrections of sitedata.DailySitePerformance (editing.save, with a reason).
 
-    def finish(self, obj, changed, ctx, adding):
-        if 'circle' in changed:
-            obj.circle = obj.circle.upper()  # circle codes are stored upper case
-        if 'site_id' in changed:
-            obj.site_key = site_key(obj.site_id)
-        if adding or {'project', 'circle'} & set(changed):
-            problem = _association(obj.project, obj.circle)
-            if problem:
-                raise EditError({'circle': problem})
-            ctx.relink = True
-        if 'site_id' in changed:
-            ctx.relink = True
-
-
-class SiteMasterEditor(_SiteIdentity):
-    model = UptimeSite
-    fields = {k: k for k in ('project', 'circle', 'site_id', 'site_name', 'oa', 'ba', 'on_air', 'eb', 'od_eb_working_status',
-                             'solar_logic_done', 'ie_name', 'ie_contact', 'ci_name', 'ci_contact')}
-    required = ('project', 'circle', 'site_id')
-    contacts = frozenset({'ie_contact', 'ci_contact'})
-
-    def new(self, ctx):
-        return UptimeSite(source_file='Data Panel', source_row=0)
-
-    def finish(self, obj, changed, ctx, adding):
-        super().finish(obj, changed, ctx, adding)
-        if adding:
-            obj.project_raw, obj.circle_raw = obj.project, obj.circle
-        if 'on_air' in changed:  # the flag and its "as written" value stay consistent, as the importer reads them
-            obj.on_air_raw = 'Yes' if obj.on_air else 'No'
-        obj.batch = ctx.uptime_batch()
-
-
-class _SitePerformance(Editor):
-    """Daily / monthly values of one Site Master site: the site is chosen by project, circle and site ID when adding."""
-    identity = ('project', 'circle', 'site_id')
-    period: str = ''  # the date / month column: set when adding, fixed afterwards
-
-    @property
-    def unique_key(self):
-        return self.period
+    A change gives the new value of a stored site-day; an addition names a dashboard site (Site ID; Project and
+    Circle, when given, must be the site's) and a date without a value. Either availability % or outage minutes is
+    given; the other follows by the shared rules. A value is never removed (a missing value is "not reported")."""
+    model = DailySitePerformance
+    corrections = True  # saved through apps.sitedata.daily, with a reason
+    VALUES = ('availability_pct', 'outage_minutes')
+    fields = {'availability_pct': 'availability_pct', 'outage_minutes': 'outage_minutes'}
+    identity = ('project', 'circle', 'site_id', 'date')
+    required = ('site_id', 'date')
+    unique_key = 'date'
 
     def addable(self, admin):
-        return [*self.identity, self.period, *self.editable(admin)]
+        return [*self.identity, *self.VALUES]
 
     def pair(self, obj):
-        return obj.site.project, obj.site.circle
+        return obj.technology, obj.circle
 
-    def assign(self, obj, values, ctx, adding):
-        values = dict(values)
-        site_values = {k: values.pop(k, None) for k in self.identity}
-        errors = {}
-        if adding:
-            project, circle, sid = (str(site_values[k] or '').strip() for k in self.identity)
-            if not (project and circle and sid):
-                errors.update({k: 'Required.' for k in self.identity if not str(site_values[k] or '').strip()})
+    def availability(self, values: dict) -> float:
+        """The availability % of a row from its availability or outage cell. Raises EditError."""
+        text = {k: '' if values.get(k) is None else str(values.get(k)).strip() for k in self.VALUES}
+        if not any(text.values()):
+            raise EditError({'availability_pct': 'Enter the availability % or the outage minutes (a value cannot be removed).'})
+        errors, parsed = {}, {}
+        if text['availability_pct']:
+            checked = rules.check_availability(text['availability_pct'])
+            if checked.usable:
+                parsed['availability_pct'] = checked.value
             else:
-                site = UptimeSite.objects.filter(project=project, circle=circle.upper(), site_key=site_key(sid)).first()
-                if site is None:
-                    errors['site_id'] = f'{sid} is not a Site Master site of {project} {circle.upper()}.'
-                else:
-                    obj.site = site
-        try:
-            changed = super().assign(obj, values, ctx, adding)
-        except EditError as exc:
-            raise EditError({**errors, **exc.errors}) from exc
+                errors['availability_pct'] = ('Availability is between 0 and 100%.' if checked.code == 'availability_out_of_range'
+                                              else 'Enter a number.')
+        if text['outage_minutes']:
+            checked = rules.check_outage(text['outage_minutes'])
+            if checked.usable:
+                parsed['outage_minutes'] = checked.value
+            else:
+                errors['outage_minutes'] = ('Outage minutes are between 0 and 1,440 per day.' if checked.code == 'outage_out_of_range'
+                                            else 'Enter a number.')
         if errors:
             raise EditError(errors)
-        return changed
+        if 'availability_pct' in parsed:
+            if 'outage_minutes' in parsed and abs(rules.availability_from_outage(parsed['outage_minutes']) - parsed['availability_pct']) > 1e-6:
+                raise EditError({'outage_minutes': 'Availability and outage minutes disagree: give one of them.'})
+            return parsed['availability_pct']
+        return rules.availability_from_outage(parsed['outage_minutes'])
 
-    def finish(self, obj, changed, ctx, adding):
-        obj.batch = ctx.uptime_batch()
+    def site(self, values: dict) -> Site:
+        """The dashboard site of a new row. Raises EditError."""
+        from apps.sitedata.identifiers import key_of
+        sid = str(values.get('site_id') or '').strip()
+        site = Site.objects.filter(site_key=key_of(sid)).first()
+        if site is None:
+            raise EditError({'site_id': f'{sid} is not a Site Master site.'})
+        if site.reporting_scope != Site.Scope.DASHBOARD:
+            raise EditError({'site_id': f'{site.bsnl_site_id} is outside the dashboard reporting scope.'})
+        errors = {}
+        project, circle = str(values.get('project') or '').strip(), str(values.get('circle') or '').strip()
+        if project and project.casefold() != site.technology.casefold():
+            errors['project'] = f'{site.bsnl_site_id} is a {site.technology} site.'
+        if circle and circle.upper() != site.circle:
+            errors['circle'] = f'{site.bsnl_site_id} is a site of circle {site.circle}.'
+        if errors:
+            raise EditError(errors)
+        return site
 
-
-class DailyEditor(_SitePerformance):
-    model = SiteDailyPerformance
-    period = 'date'
-    fields = {'date': 'date', 'uptime_pct': 'uptime_pct', 'outage_minutes': 'outage_minutes'}
-    required = ('project', 'circle', 'site_id', 'date')
-
-    def editable(self, admin):
-        return ['uptime_pct', 'outage_minutes']  # the site and date identify the value
-
-    def finish(self, obj, changed, ctx, adding):
-        if obj.outage_minutes is not None and not 0 <= obj.outage_minutes <= 1440:
-            raise EditError({'outage_minutes': 'Outage minutes are between 0 and 1,440 per day.'})
-        if obj.uptime_pct is not None and not 0 <= obj.uptime_pct <= 100:
-            raise EditError({'uptime_pct': 'Availability is between 0 and 100%.'})
-        super().finish(obj, changed, ctx, adding)
-
-
-class MonthlyEditor(_SitePerformance):
-    model = SiteMonthlyPerformance
-    period = 'month'
-    fields = {'month': 'month', 'uptime_pct': 'uptime_pct', 'outage_minutes': 'outage_minutes', 'bucket': 'bucket', 'ff_count': 'ff_count',
-              'om_start_raw': 'om_start_raw'}
-    required = ('project', 'circle', 'site_id', 'month')
-
-    def editable(self, admin):
-        return ['uptime_pct', 'outage_minutes', 'bucket', 'ff_count', 'om_start_raw']
-
-    def finish(self, obj, changed, ctx, adding):
-        if 'month' in changed and obj.month and obj.month.day != 1:
-            raise EditError({'month': 'Give the first day of the month (YYYY-MM-01).'})
-        if obj.uptime_pct is not None and not 0 <= obj.uptime_pct <= 100:
-            raise EditError({'uptime_pct': 'Availability is between 0 and 100%.'})
-        if obj.outage_minutes is not None and obj.outage_minutes < 0:
-            raise EditError({'outage_minutes': 'Outage minutes cannot be negative.'})
-        if 'om_start_raw' in changed:  # as the importer: "Yes" is O&M started; blank keeps "not recorded"
-            obj.om_start = obj.om_start_raw.casefold() == 'yes' if obj.om_start_raw else None
-        super().finish(obj, changed, ctx, adding)
-
-
-class EscalationEditor(_SiteIdentity):
-    model = EscalationSite
-    fields = {k: k for k in (
-        'project', 'circle', 'site_id', 'site_name', 'site_type', 'ba', 'oa', 'district', 'sub_district', 'village_code', 'commissioning_date',
-        'commissioning_status', 'on_air_status', 'on_air_date', 'om_status', 'om_start_date', 'eb_status', 'dg_status', 'case_type',
-        'ci_emp_code', 'ci_name', 'ci_contact', 'ie_emp_code', 'ie_name', 'ie_contact', 'il_name', 'il_contact', 'om_manager_name',
-        'om_manager_contact', 'cbh_name', 'cbh_contact', 'ct_status', 'ct_name', 'ct_contact', 'rigger_name', 'rigger_contact',
-        'latitude', 'longitude', 'site_address', 'smps_make', 'bts_id_b1', 'bts_id_b28', 'master_bts_id', 'remarks')}
-    required = ('project', 'circle', 'site_id')
-    contacts = frozenset(k for k in fields if k.endswith('_contact'))
-    RAW_DATES = {'commissioning_date': 'commissioning_raw', 'on_air_date': 'on_air_raw', 'om_start_date': 'om_start_raw'}
-
-    def new(self, ctx):
-        return EscalationSite(source_file='Data Panel', source_row=0)
-
-    def finish(self, obj, changed, ctx, adding):
-        super().finish(obj, changed, ctx, adding)
-        if adding:
-            obj.entity_raw, obj.circle_raw = obj.project, obj.circle
-        for name, raw in self.RAW_DATES.items():  # the "as written" text follows a changed date
-            if name in changed:
-                setattr(obj, raw, getattr(obj, name).isoformat() if getattr(obj, name) else '')
-        obj.batch = ctx.escalation_batch()
+    def report_date(self, values: dict) -> date:
+        try:
+            day = convert(DailySitePerformance._meta.get_field('report_date'), values.get('date'))
+        except ValueError as exc:
+            raise EditError({'date': str(exc)}) from exc
+        if day > timezone.localdate():
+            raise EditError({'date': 'A future date cannot have a value.'})
+        return day
 
 
 class RcaEditor(Editor):
@@ -359,10 +270,10 @@ def _plain(value):
     return value.isoformat() if isinstance(value, (date, datetime)) else value
 
 
+
+
+# Datasets without an editor are read-only (View / Export).
 EDITORS: dict[str, Editor] = {
-    'uptime_sites': SiteMasterEditor(),
     'uptime_daily': DailyEditor(),
-    'uptime_monthly': MonthlyEditor(),
-    'escalation': EscalationEditor(),
     'rca': RcaEditor(),
 }

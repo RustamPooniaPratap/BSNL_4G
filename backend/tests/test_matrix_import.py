@@ -11,7 +11,6 @@ from django.urls import reverse
 
 from apps.sitedata import matrix, portfolio
 from apps.sitedata.models import DailySitePerformance, IdentifierConflict, MonthlySitePerformance, Site, SiteIdentifier, UploadBatch
-from apps.uptimedb.models import DataImportBatch, EscalationSite, UptimeSite
 from tests.auth_helpers import SignedInTestCase, portal_user
 from tests.test_sitedata import MATRIX, MATRIX_HEADER, SiteDataTestCase, read_exceptions, write_sheet
 from tests.workbook_factory import write_workbook
@@ -191,9 +190,10 @@ class SafetyTests(MatrixImportCase):
         daily, monthly = DailySitePerformance.objects.count(), MonthlySitePerformance.objects.count()
         snapshot = list(DailySitePerformance.objects.order_by('id').values_list('id', 'outage_minutes', 'updated_at'))
         self.imported(self.nov_file([nov(1, '4G Saturation', 'Madhya Pradesh', 'UVMP001', 'Alpha'), nov(2, 'LWE', 'Odisha', 'LWEOD01', 'Foxtrot')]))
-        self.assertEqual((DailySitePerformance.objects.count(), MonthlySitePerformance.objects.count()), (daily, monthly))
+        # Daily records are untouched; monthly results are only recalculated (revisions added, none removed).
+        self.assertEqual(DailySitePerformance.objects.count(), daily)
+        self.assertGreaterEqual(MonthlySitePerformance.objects.count(), monthly)
         self.assertEqual(list(DailySitePerformance.objects.order_by('id').values_list('id', 'outage_minutes', 'updated_at')), snapshot)
-        self.assertEqual((UptimeSite.objects.count(), EscalationSite.objects.count(), DataImportBatch.objects.count()), (0, 0, 0))
         self.assertEqual(Site.objects.filter(present_in_latest_matrix=False).count(), 5)  # not listed: flagged, never deleted
 
 
@@ -237,9 +237,6 @@ class ApiTests(MatrixImportCase):
         refused = self.upload(write_workbook(self.tmp / 'uptime.xlsx'))
         self.assertEqual(refused.status_code, 400)
         self.assertIn('not a Consolidation Matrix', refused.json()['error'])
-        legacy = self.upload(self.nov_file([nov(1, 'LWE', 'Odisha', 'LWEOD01', 'Foxtrot')]), url='import-preview')
-        self.assertEqual(legacy.status_code, 400)
-        self.assertIn("Up-Time Report", legacy.json()['error'])  # the two pipelines stay independent
 
     def test_only_admins_may_import(self):
         self.client.force_login(portal_user('matrix-ci', 'ci'))

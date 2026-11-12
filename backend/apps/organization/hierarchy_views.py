@@ -45,7 +45,6 @@ from apps.organization.models import (
     Project,
     SitePersonnelAssignment,
 )
-from apps.uptimedb.models import UptimeSite
 
 
 def _paginate(queryset, request, serializer_cls, default_page_size: int = 50):
@@ -531,7 +530,7 @@ def site_assignments(request):
         qs = SitePersonnelAssignment.objects.select_related("site", "personnel", "parent_ci").all()
         site_str = request.query_params.get("site_id")
         if site_str:
-            qs = qs.filter(site__site_id__icontains=site_str.strip())
+            qs = qs.filter(site__bsnl_site_id__icontains=site_str.strip())
         circle_code = request.query_params.get("circle")
         if circle_code:
             qs = qs.filter(site__circle__iexact=circle_code.strip())

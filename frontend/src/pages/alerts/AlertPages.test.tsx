@@ -89,6 +89,52 @@ describe('Alert › Automations', () => {
   });
 });
 
+describe('Alert › Automation population', () => {
+  it('defaults new automations to On-Air and sends the chosen population with the preview and the save', async () => {
+    const user = userEvent.setup();
+    m.previewAlertAutomation.mockResolvedValue({ subject: 'Daily Uptime Report – 29 Oct 2026', text: '', html: '<p>Preview</p>', attachments: [], next_run_at: null });
+    m.saveAlertAutomation.mockResolvedValue({ automation: { id: 9, enabled: false } as never });
+    renderWithWorkbook(<AlertAutomationsPage />, { url: '/admin/alerts/automations' });
+    const templates = await screen.findByRole('region', { name: 'Templates' });
+    await user.click(within(templates).getAllByRole('button', { name: /Configure/ })[1]);
+    await user.click(await screen.findByRole('button', { name: 'Next' }));  // 2. Scope
+    const population = screen.getByRole('combobox', { name: 'Population' });
+    expect(population).toHaveTextContent('On-Air sites');
+    await user.click(population);
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['On-Air sites', 'O&M Start sites']);
+    await user.click(screen.getByRole('option', { name: 'O&M Start sites' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByLabelText(/Ops Lead/));
+    for (let i = 0; i < 3; i += 1) await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByTitle('Email preview')).toBeInTheDocument();
+    expect(m.previewAlertAutomation).toHaveBeenCalledWith(expect.objectContaining({ population: 'om_start' }));
+    expect(screen.getByText(/Population: O&M Start sites/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(m.saveAlertAutomation).toHaveBeenCalledWith(null, expect.objectContaining({ population: 'om_start' })));
+  });
+
+  it('opens an automation saved without a population as On-Air (the API default) and keeps it on save', async () => {
+    const user = userEvent.setup();
+    const existing = { id: 4, name: 'Daily report', kind: 'uptime_report', kind_label: 'Automatic Uptime Report', enabled: false, frequency: 'daily', run_time: '09:00',
+      timezone: 'Asia/Kolkata', weekday: 0, month_day: 1, start_date: null, end_date: null, project: '', circles: [], report_day: 'yesterday', to_users: [7],
+      to_emails: [], cc: [], bcc: [], include_responsible: false, attachments: [], extra_file: null, extra_file_name: null, distribution: 'same', template: 'report',
+      subject: 'S', message: 'M', next_run_at: null, last_run_at: null, updated_at: '2026-10-30T09:00:00+05:30' };
+    m.fetchAlertAutomations.mockResolvedValue({ automations: [existing as never] });
+    m.saveAlertAutomation.mockResolvedValue({ automation: { id: 4, enabled: false } as never });
+    m.previewAlertAutomation.mockResolvedValue({ subject: 'S', text: '', html: '<p>Preview</p>', attachments: [], next_run_at: null });
+    renderWithWorkbook(<AlertAutomationsPage />, { url: '/admin/alerts/automations' });
+    const card = await screen.findByRole('group', { name: 'Automation Daily report' });
+    expect(card).toHaveTextContent('Population: On-Air sites');
+    await user.click(within(card).getByRole('button', { name: /Edit/ }));
+    await user.click(await screen.findByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('combobox', { name: 'Population' })).toHaveTextContent('On-Air sites');
+    for (let i = 0; i < 4; i += 1) await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByTitle('Email preview');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(m.saveAlertAutomation).toHaveBeenCalledWith(4, expect.objectContaining({ population: 'on_air' })));
+  });
+});
+
 describe('Alert › Email History', () => {
   it('lists emails with their SMTP status and retries a failed one', async () => {
     const user = userEvent.setup();

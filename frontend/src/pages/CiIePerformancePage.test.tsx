@@ -62,7 +62,7 @@ describe('CiIePerformancePage', () => {
     expect(screen.queryByText('#')).not.toBeInTheDocument();
     expect(screen.getByText(/RCA-wise columns/)).toBeInTheDocument();
     expect(lastQuery().get('group')).toBe('ci');
-    expect(lastQuery().get('scope')).toBe('om_start');
+    expect(lastQuery().get('scope')).toBe('on_air');  // the global population (On-Air by default), no page default
     expect(lastQuery().has('month')).toBe(false);
   });
 

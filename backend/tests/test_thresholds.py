@@ -98,14 +98,14 @@ class ThresholdPeriodTests(ThresholdTestCase):
         periods = {p['key']: p for p in result['periods']}
         self.assertEqual([p['kind'] for p in result['periods']], ['month', 'mtd', 'week', 'week', 'week', 'week', 'day', 'day', 'day'])
         self.assertEqual((periods['mtd']['days'], periods['mtd']['days_reported'], periods['mtd']['partial']), (3, 3, True))
-        # Week 1 is in progress (3 of 7 days): no week-to-date values.
+        # Week 1 is in progress (3 of 7 days): Provisional, its available figures shown (approved rule B-4).
         self.assertEqual((periods['w1']['start'], periods['w1']['end'], periods['w1']['days_reported'], periods['w1']['partial']),
-                         ('2026-10-01', '2026-10-07', 0, True))
+                         ('2026-10-01', '2026-10-07', 3, True))
         self.assertEqual((periods['w4']['end'], periods['w4']['days']), ('2026-10-31', 10))
         mp = self.row(result, '4G Saturation', 'MP')
         # MTD: T1 99.25%, T2 86.17%, T3 30.00% (reported days only)
         self.assertEqual(self.counts(mp, 'mtd'), (1, 1))
-        self.assertIsNone(self.counts(mp, 'w1'))  # a week in progress has no values
+        self.assertEqual(self.counts(mp, 'w1'), self.counts(mp, 'mtd'))  # week to date = the same 3 days as the MTD
         self.assertIsNone(mp['values']['w2'])  # no reported day yet
 
     def test_daily_columns_stop_at_the_reporting_date(self):
@@ -456,7 +456,9 @@ class CircleTopPerformerTests(ThresholdTestCase):
         total = sum(p['nsla']['2026-10']['nsla_sites'] for p in result['projects'] if p['nsla']['2026-10'])
         self.assertEqual(total, mtd['values']['below_98_5']['count'])
         g4 = next(p for p in result['projects'] if p['report_type'] == '4G Saturation')
-        self.assertEqual((g4['sites_in_scope'], g4['nsla']['2026-10']['nsla_sites'], g4['nsla']['2026-10']['no_value']), (4, 2, 1))
+        # NSLA's population is the O&M Start sites (approved rule B-3); the unreported 4G site is not O&M Start, so no
+        # O&M Start site lacks a value.
+        self.assertEqual((g4['sites_in_scope'], g4['nsla']['2026-10']['nsla_sites'], g4['nsla']['2026-10']['no_value']), (4, 2, 0))
 
     def test_previous_month_to_date_matches_threshold_analysis(self):
         result = self.top()

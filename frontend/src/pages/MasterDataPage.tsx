@@ -15,7 +15,10 @@ import { Segmented } from '../components/rca/RcaShared';
 import { PageHeading } from '../context/pageHeader';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { formatDate } from '../lib/format';
-import { ApiError, fetchMasterDatasets, fetchMasterOptions, fetchMasterRecords, masterExportUrl, saveMasterData } from '../services/api';
+import { ApiError, POPULATION_DATASETS, fetchMasterDatasets, fetchMasterOptions, fetchMasterRecords, masterExportUrl, masterParams, saveMasterData } from '../services/api';
+import { PopulationNote, PopulationSelect } from '../components/PopulationSelect';
+import { usePopulation } from '../context/population';
+import { POPULATION_PARAM, populationSites, type Population } from '../lib/population';
 import type { MasterDataset, MasterDatasets, MasterOptions, MasterSaveErrors } from '../types/masterData';
 
 /** The tabs: one sidebar entry (Master Data), one URL per tab. A new dataset is a new tab here plus its server registration. */
@@ -40,7 +43,7 @@ function datasetKey(path: string, params: URLSearchParams) {
 }
 
 /**
- * Master Data: the central, read-only explorer of the business datasets stored in PostgreSQL. Filters sit in the
+ * Master Data: the central explorer of the business datasets (apps.sitedata and the RCA register). Filters sit in the
  * portal's filter card, kept in the URL (so they survive navigation); records are filtered, sorted and paged by the
  * server, which also limits CI users to their projects and circles and hides phone numbers from non-Admins.
  */
@@ -52,8 +55,11 @@ export function MasterDataPage() {
   const meta = useApiQuery('master-datasets', fetchMasterDatasets);
   const key = datasetKey(path, params);
   const ds = meta.data?.datasets.find((d) => d.key === key);
-  const options = useApiQuery(ds ? `master-options|${key}|${params.get('project') ?? ''}` : null,
-    (signal) => fetchMasterOptions(key, new URLSearchParams(params.get('project') ? { project: params.get('project')! } : {}), signal));
+  // Site datasets (Site Master, daily / monthly performance, escalation) follow the global population.
+  const { scope } = usePopulation();
+  const optionParams = masterParams(key, new URLSearchParams(params.get('project') ? { project: params.get('project')! } : {}), scope);
+  const options = useApiQuery(ds ? `master-options|${key}|${optionParams}` : null,
+    (signal) => fetchMasterOptions(key, optionParams, signal));
   if (!tab) return <Navigate to="/master-data" replace />;
 
   const set = (changes: Record<string, string | null>) => setParams((cur) => {
@@ -65,7 +71,7 @@ export function MasterDataPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeading title="Master Data" subtitle="Central database explorer: the business data stored in PostgreSQL. Search, filter and export each dataset; edit and add records where your role allows (no deletion)." />
+      <PageHeading title="Master Data" subtitle="Central database explorer of the site data layer and the RCA register. Search, filter and export each dataset. The Site Master, Monthly Performance and Escalation Matrix come from the Consolidation Matrix and the monthly calculation and are read-only; daily values can be corrected (with a reason) and RCA records edited where your role allows (no deletion)." />
       <nav aria-label="Master Data datasets" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1 shadow-xs">
         {/* Only tabs with a dataset this user may view (the server lists only those). */}
         {TABS.filter((t) => !meta.data || t === tab || t.datasets.some((k) => meta.data!.datasets.some((d) => d.key === k))).map((t) => (
@@ -81,17 +87,21 @@ export function MasterDataPage() {
         <Alert><AlertDescription>You do not have access to this dataset. Ask an Admin to grant it on Users &amp; Roles.</AlertDescription></Alert>
       )}
       {!ds || !meta.data ? !meta.error && !meta.data && <Skeleton className="h-96 w-full" /> : (
-        <DatasetView key={key} ds={ds} meta={meta.data} options={options.data} params={params} set={set}
+        <DatasetView key={key} ds={ds} meta={meta.data} options={options.data} params={params} set={set} scope={scope}
           showView={path === '/master-data'} reset={() => setParams(new URLSearchParams(VIEW_KEYS.flatMap((k) => (params.get(k) ? [[k, params.get(k)!]] : []))), { replace: true })} />
       )}
     </div>
   );
 }
 
-/** The request parameters of a dataset: the URL's filters plus the period defaults (the latest month with data). */
-function effectiveParams(ds: MasterDataset, options: MasterOptions | null, params: URLSearchParams) {
+/**
+ * The request parameters of a dataset: the URL's filters plus the period defaults (the latest month with data), and the
+ * global population for the site datasets only (other datasets never receive ``scope``).
+ */
+function effectiveParams(ds: MasterDataset, options: MasterOptions | null, params: URLSearchParams, scope: Population) {
   const out = new URLSearchParams();
-  for (const [k, v] of params) if (!VIEW_KEYS.includes(k) && k !== 'cols') out.set(k, v);
+  for (const [k, v] of params) if (!VIEW_KEYS.includes(k) && k !== 'cols' && k !== POPULATION_PARAM) out.set(k, v);
+  if (POPULATION_DATASETS.has(ds.key)) out.set(POPULATION_PARAM, scope);
   if (ds.time) {
     const period = (params.get('period') as Period) || 'daily';
     out.set('period', period);
@@ -104,11 +114,12 @@ function effectiveParams(ds: MasterDataset, options: MasterOptions | null, param
   return out;
 }
 
-function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, showView }: {
+function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, showView, scope }: {
   ds: MasterDataset; meta: MasterDatasets; options: MasterOptions | null; params: URLSearchParams; showView: boolean;
-  set: (changes: Record<string, string | null>) => void; reset: () => void;
+  set: (changes: Record<string, string | null>) => void; reset: () => void; scope: Population;
 }) {
-  const query = effectiveParams(ds, options, params);
+  const query = effectiveParams(ds, options, params, scope);
+  const byPopulation = POPULATION_DATASETS.has(ds.key);
   const [saved, setSaved] = useState(0);  // a successful save reloads the page of records from the database
   const records = useApiQuery(options || !ds.time ? `master-records|${ds.key}|${query}|${saved}` : null, (signal) => fetchMasterRecords(ds.key, query, signal));
   const perms = ds.permissions;
@@ -116,20 +127,34 @@ function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, 
   const [editMode, setEditMode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  // Corrections (Daily Performance): one mandatory reason per save, kept with every changed value on the server.
+  const [reason, setReason] = useState('');
+  const [reasonError, setReasonError] = useState<string | undefined>();
   /** Save Changes: everything in one request; the success message only after the database confirmed it. */
   const save = async (): Promise<boolean> => {
-    setBusy(true);
     setMessage(null);
+    if (perms.reason_required && !reason.trim()) {
+      setReasonError('Give the reason for the correction.');
+      setMessage({ ok: false, text: 'Give the reason for the correction. Nothing was saved.' });
+      return false;
+    }
+    setBusy(true);
+    setReasonError(undefined);
     try {
-      const r = await saveMasterData(ds.key, edits.payload());
+      const r = await saveMasterData(ds.key, perms.reason_required ? { ...edits.payload(), reason: reason.trim() } : edits.payload());
       edits.discard();
+      setReason('');
       setSaved((n) => n + 1);
       setMessage({ ok: true, text: `Saved to the database: ${r.updated} record${r.updated === 1 ? '' : 's'} updated, ${r.added} added.` });
       return true;
     } catch (e) {
       const details = e instanceof ApiError ? (e.details as unknown as Partial<MasterSaveErrors>) : null;
       if (details?.changes || details?.additions) edits.setErrors({ changes: details.changes ?? {}, additions: details.additions ?? {} });
-      setMessage({ ok: false, text: `${(e as Error).message} Nothing was saved.` });
+      if (details?.reason) setReasonError(details.reason === 'Required.' ? 'Give the reason for the correction.' : details.reason);
+      // Whole-row problems (e.g. a finalized month) have no cell of their own: list them with the message.
+      const rows = [...new Set([...Object.values(details?.changes ?? {}), ...Object.values(details?.additions ?? {})]
+        .map((errs) => errs._row).filter(Boolean))];
+      setMessage({ ok: false, text: `${(e as Error).message} ${rows.length ? `${rows.join(' ')} ` : ''}Nothing was saved.` });
       return false;
     } finally {
       setBusy(false);
@@ -148,7 +173,7 @@ function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, 
   const monthsOfYear = (options?.months ?? []).filter((m) => String(m.year) === query.get('year')).map((m) => MONTHS[m.month - 1]);
   const ym = `${query.get('year')}-${String(query.get('month')).padStart(2, '0')}`;
   const datesOfMonth = (options?.dates ?? []).filter((d) => d.startsWith(ym));
-  const active = [...params.keys()].some((k) => !VIEW_KEYS.includes(k) && !['page', 'page_size', 'sort'].includes(k));
+  const active = [...params.keys()].some((k) => !VIEW_KEYS.includes(k) && !['page', 'page_size', 'sort', POPULATION_PARAM].includes(k));
   const select = (k: string, label: string, all: string, items: { value: string; label: string }[], width = 'w-36') => (
     <Field key={k} id={`md-${k}`} label={label} className={width}>
       <SelectField id={`md-${k}`} value={params.get(k) || ALL} placeholder={all} options={[{ value: ALL, label: all }, ...items]}
@@ -159,7 +184,7 @@ function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, 
     <>
       <FilterCard label="Master Data filters"
         actions={<Button type="button" variant="ghost" size="icon" className="size-9" aria-label="Reset filters" title="Reset filters" disabled={!active} onClick={() => { reset(); setResets((n) => n + 1); }}><RotateCcw /></Button>}
-        footer={ds.description}>
+        footer={byPopulation ? <>{ds.description} <PopulationNote /></> : ds.description}>
         {showView && (
           <Field id="md-view" label="View" className="w-auto">
             <Segmented label="Uptime Master view" value={params.get('view') === 'performance' ? 'performance' : 'sites'}
@@ -182,6 +207,7 @@ function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, 
             <Input id={`md-${k}`} type="date" className="h-9" value={params.get(k) ?? ''} onChange={(e) => set({ [k]: e.target.value || null })} />
           </Field>
         ))}
+        {byPopulation && <PopulationSelect id="md-population" />}
         {select('project', 'Project', 'All projects', (options?.projects ?? []).map((p) => ({ value: p, label: p })), 'w-36')}
         {select('circle', 'Circle', 'All circles', (options?.circles ?? []).map((c) => ({ value: c, label: c })), 'w-32')}
         {ds.filters.choices.map((c) => select(c.key, c.label, `All`, (options?.choices[c.key] ?? []).map((v) => ({ value: v, label: v === 'True' ? 'Yes' : v === 'False' ? 'No' : v })), 'w-40'))}
@@ -195,6 +221,7 @@ function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, 
         editing={editMode ? { edits, editable: perms.editable, addable: perms.addable, required: perms.required } : null}
         toolbar={editMode ? (
           <EditBar edits={edits} canAdd={perms.add} busy={busy} message={message} onSave={() => { void save(); }}
+            reason={perms.reason_required ? { value: reason, onChange: (v) => { setReason(v); setReasonError(undefined); }, error: reasonError } : null}
             onDone={() => { setEditMode(false); setMessage(null); }} />
         ) : null}
         actions={(
@@ -204,8 +231,8 @@ function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, 
             )}
             {perms.export && (
               <>
-                <Button asChild size="sm" variant="outline" className="h-8"><a download href={masterExportUrl(ds.key, new URLSearchParams([...exportParams, ['file', 'csv']]))}><Download /> CSV</a></Button>
-                <Button asChild size="sm" variant="outline" className="h-8"><a download href={masterExportUrl(ds.key, new URLSearchParams([...exportParams, ['file', 'xlsx']]))}><Download /> Excel</a></Button>
+                <Button asChild size="sm" variant="outline" className="h-8"><a download href={masterExportUrl(ds.key, new URLSearchParams([...exportParams, ['file', 'csv']]))} title={byPopulation ? `CSV export · Population: ${populationSites(scope)}` : undefined}><Download /> CSV</a></Button>
+                <Button asChild size="sm" variant="outline" className="h-8"><a download href={masterExportUrl(ds.key, new URLSearchParams([...exportParams, ['file', 'xlsx']]))} title={byPopulation ? `Excel export · Population: ${populationSites(scope)}` : undefined}><Download /> Excel</a></Button>
               </>
             )}
           </>

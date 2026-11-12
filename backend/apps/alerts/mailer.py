@@ -110,7 +110,7 @@ def send(account: EmailAccount, out: Outgoing) -> str:
 # --- Templates -----------------------------------------------------------------------------------
 
 PLACEHOLDERS = ('recipient_name', 'notification_title', 'notification_message', 'project_name', 'circle_name', 'report_date', 'status',
-                'generated_at', 'report_name', 'report_period', 'portal_url')
+                'generated_at', 'report_name', 'report_period', 'portal_url', 'population')
 TEMPLATES = {
     'reminder': {'label': 'Reminder / Alert', 'subject': 'Action Required – {{notification_title}} | {{circle_name}} | {{report_date}}'},
     'report': {'label': 'Report distribution', 'subject': '{{report_name}} – {{report_period}}'},
@@ -137,8 +137,8 @@ def render(template: str, subject: str, message: str, values: dict, attachments:
     body = message or DEFAULT_MESSAGES[template]
     rows = ([('Project', 'project_name'), ('Circle', 'circle_name'), ('Reporting Date', 'report_date'), ('Current Status', 'status')]
             if template == 'reminder' else
-            [('Report', 'report_name'), ('Project', 'project_name'), ('Circle', 'circle_name'), ('Reporting Period', 'report_period'),
-             ('Generated At', 'generated_at')])
+            [('Report', 'report_name'), ('Project', 'project_name'), ('Circle', 'circle_name'), ('Site Population', 'population'),
+             ('Reporting Period', 'report_period'), ('Generated At', 'generated_at')])
     rows = [(label, str(values[key])) for label, key in rows if values.get(key)]
     e = html.escape
     title = values.get('notification_title') if template == 'reminder' else values.get('report_name')

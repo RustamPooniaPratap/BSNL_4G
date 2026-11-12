@@ -1,9 +1,6 @@
 """The dashboard Dataset (apps.dashboard.workbook.Dataset) built from the new data layer.
 
-Used to verify that the new tables can populate every existing dashboard page (Team Performance, All KPI's, ...)
-before the cutover. It is not connected to any page: uptimedb.datasource still serves the dashboard.
-
-Differences from uptimedb.datasource._build, all from the approved rules:
+The single dataset of every dashboard page, export and report (through dashboard_source and portfolio). Rules:
 - sites: only the dashboard reporting scope (outside-scope sites are excluded); attributes from the matrix;
 - O&M Start: from the matrix O&M Start Date (rules.om_effective_from): a site is O&M Start in a month when its date
   falls on or before the month's last day; no date = not O&M Start (the site is flagged for review). The dashboard's
@@ -36,25 +33,23 @@ def _month_dates(month: date) -> tuple[date, ...]:
 
 
 def completeness() -> dict:
-    """Dates with daily records, the expected technology / circle units, and the complete dates (every expected unit
-    has records on the date). Expected units: those of the dashboard site master that report at all (have any daily
-    record), so a unit that has never reported (e.g. a circle not yet in operation) does not block every date, while a
-    unit that reports but is missing on a date makes that date incomplete."""
-    by_date: dict[date, set] = defaultdict(set)
-    for day, technology, circle in (DailySitePerformance.objects.filter(site__reporting_scope=Site.Scope.DASHBOARD)
-                                    .values_list('report_date', 'site__technology', 'site__circle').distinct()):
-        by_date[day].add((technology, circle))
-    expected = set().union(*by_date.values()) if by_date else set()
-    complete = sorted(d for d, units in by_date.items() if expected and units >= expected)
-    return {'expected_units': sorted(expected), 'dates': sorted(by_date), 'complete': complete,
-            'missing_units': {d: sorted(expected - units) for d, units in by_date.items() if not units >= expected}}
+    """Dates with daily records and, per date, the reporting units active on it and whether each is covered
+    (apps.sitedata.reporting: effective-dated units, On-Air sites on the date, the coverage threshold of the date).
+    A date is complete when every active unit is covered. Completeness labels figures (Complete / Provisional); it never
+    hides a date (approved rule B-7: missing data of one unit never blocks the others)."""
+    from . import reporting
+    days = sorted(DailySitePerformance.objects.filter(site__reporting_scope=Site.Scope.DASHBOARD)
+                  .values_list('report_date', flat=True).distinct())
+    unit_coverage = reporting.coverage(days) if days else {}
+    missing = {d: sorted(u for u, v in units.items() if not v['covered']) for d, units in unit_coverage.items()}
+    return {'dates': days, 'unit_coverage': unit_coverage,
+            'expected_units': sorted({u for units in unit_coverage.values() for u in units}),
+            'complete': [d for d in days if not missing.get(d)], 'missing_units': {d: m for d, m in missing.items() if m}}
 
 
 def reporting_month(info: dict) -> date | None:
-    """The latest month whose 1st is a complete reporting date; without any, the month of the latest date with data."""
-    firsts = [d for d in info['complete'] if d.day == 1]
-    if firsts:
-        return max(firsts)
+    """The month of the latest date with daily records (approved rule B-7: a unit with missing data never holds the
+    other units back; its missing days are labelled, not waited for)."""
     return max(info['dates']).replace(day=1) if info['dates'] else None
 
 
@@ -71,7 +66,6 @@ def build() -> Dataset:
         raise WorkbookError('The new data layer has no daily records yet.', 'no_workbook')
     current = reporting_month(info)
     dates = _month_dates(current)
-    pending = sorted(d for d in days if d > dates[-1])  # a later month that is not complete yet: not used
 
     def daily_matrix(month_dates):
         matrix = np.full((len(rows), len(month_dates)), np.nan)
@@ -84,6 +78,7 @@ def build() -> Dataset:
 
     outage = daily_matrix(dates)
     reported_dates = tuple(d for i, d in enumerate(dates) if (~np.isnan(outage[:, i])).any())
+    latest = reported_dates[-1] if reported_dates else dates[-1]
 
     history_records = MonthlySitePerformance.objects.filter(month__lt=current, is_current=True, calculation_category=MonthlySitePerformance.Category.DAILY_DERIVED)
     # History months: those with monthly results and those with daily records (the figures come from the daily records,
@@ -110,7 +105,8 @@ def build() -> Dataset:
         'oa': [r['oa'] for r in rows], 'ba': [r['ba'] for r in rows],
         'eb': [(r['uptime_master_fields'] or {}).get('EB', '') for r in rows],
         'ie_name': [r['ie_name'] for r in rows], 'ci_name': [r['ci_name'] for r in rows],
-        'on_air': [on_air_effective_from(r['on_air_date'], current) is not None for r in rows],
+        # On-Air on the latest reporting date by the matrix Site On-Air Date (approved rule B-5).
+        'on_air': [r['on_air_date'] is not None and r['on_air_date'] <= latest for r in rows],
         'on_air_date': [r['on_air_date'] for r in rows],
         'om_start': [e is not None for e in effective],
         'om_start_date': [r['om_start_date'] for r in rows],
@@ -120,12 +116,12 @@ def build() -> Dataset:
         sites['om_start_previous'] = [e is not None for e in effective_previous]
 
     warnings = list(_coverage_warnings(sites, dates, outage, reported_dates))
-    if pending:
-        missing = info['missing_units'].get(pending[0], [])
-        warnings.append(_warning('pending_month', 'info',
-                                 f"{pending[0]:%b-%y} has records for {len(pending)} date(s) ({pending[0]:%d %b}–{pending[-1]:%d %b}) but is not "
-                                 f"complete yet ({len(missing)} technology / circle unit(s) without data on {pending[0]:%d %b}): "
-                                 f"{current:%b-%y} stays the reporting month.", len(pending)))
+    provisional = [d for d in reported_dates if info['missing_units'].get(d)]
+    if provisional:
+        warnings.append(_warning('provisional_dates', 'info',
+                                 f"{len(provisional)} reporting date(s) of {current:%b-%y} are Provisional: some reporting units have not "
+                                 'submitted enough data yet. Figures use the data received; missing data is never counted as zero.',
+                                 len(provisional)))
     history = []
     for month in sorted({d.replace(day=1) for d in days if d < current}):
         month_dates = _month_dates(month)
@@ -141,4 +137,5 @@ def build() -> Dataset:
         workbook_name='New data layer', modified_at=stamp, loaded_at=pd.Timestamp.now().to_pydatetime(), warnings=tuple(warnings),
         months=months, monthly_outage=monthly_outage, outage_columns=(0, 0), daily_history=tuple(history), sheets=(), uploaded_at=stamp,
         complete_dates=tuple(d for d in info['complete'] if dates[0] <= d <= dates[-1]),
+        unit_coverage=info['unit_coverage'],
     )

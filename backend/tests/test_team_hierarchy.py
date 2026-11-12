@@ -15,6 +15,7 @@ Covers:
 from datetime import date
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError, PermissionDenied
+from django.db.models import ProtectedError
 from django.test import TestCase
 from django.urls import reverse
 
@@ -40,7 +41,8 @@ from apps.organization.hierarchy_services import (
     confirm_personnel_merge,
     rollback_personnel_merge,
 )
-from apps.uptimedb.models import DataImportBatch, UptimeSite
+from apps.sitedata.models import Site
+from tests.sitedata_factory import make_site
 from tests.auth_helpers import portal_user
 
 
@@ -51,42 +53,14 @@ class TeamHierarchyBaseTestCase(TestCase):
         self.ci_user = portal_user('hier-ci-user', 'ci')
         self.client.force_login(self.admin)
         
-        self.batch = DataImportBatch.objects.create(
-            original_filename='test_batch.xlsx',
-            checksum_sha256='test_hash',
-            sheet_name='Up-Time Report',
-            stored_path='-',
-            status=DataImportBatch.Status.COMMITTED,
-        )
-        
         self.circle_mp = Circle.objects.get(code='MP')
         self.circle_rj = Circle.objects.get(code='RJ')
         self.project_4g = Project.objects.get(key='4G Saturation')
         self.project_lwe = Project.objects.get(key='LWE')
-        
-        # Create test site 1
-        self.test_site = UptimeSite.objects.create(
-            project=self.project_4g,
-            circle=self.circle_mp,
-            site_id='MP_IND_001',
-            site_key='MP_IND_001',
-            site_name='Indore Tower 1',
-            batch=self.batch,
-            source_row=1,
-            on_air=True,
-        )
-        
-        # Create test site 2
-        self.test_site_2 = UptimeSite.objects.create(
-            project=self.project_4g,
-            circle=self.circle_mp,
-            site_id='MP_IND_002',
-            site_key='MP_IND_002',
-            site_name='Indore Tower 2',
-            batch=self.batch,
-            source_row=2,
-            on_air=True,
-        )
+
+        # Sites of the data layer's site master (sitedata.Site, dashboard scope)
+        self.test_site = make_site('MP_IND_001', technology='4G Saturation', circle='MP', site_name='Indore Tower 1')
+        self.test_site_2 = make_site('MP_IND_002', technology='4G Saturation', circle='MP', site_name='Indore Tower 2')
 
 
 class TestHalfOpenIntervalValidation(TeamHierarchyBaseTestCase):
@@ -614,3 +588,84 @@ class TestHierarchyApiEndpoints(TeamHierarchyBaseTestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertGreaterEqual(data['count'], 1)
+
+
+class TestSitePersonnelAssignmentOnSiteMaster(TeamHierarchyBaseTestCase):
+    """Assignments reference the data layer's site master (sitedata.Site): dashboard scope only, never removed by a site deletion."""
+
+    def setUp(self):
+        super().setUp()
+        self.ci_personnel = Personnel.objects.create(canonical_name='SITE CI', display_name='Site CI', role_type='ci')
+        self.ie_personnel = Personnel.objects.create(canonical_name='SITE IE', display_name='Site IE', role_type='ie')
+
+    def test_service_assigns_a_dashboard_site(self):
+        ci = save_site_personnel_assignment(site=self.test_site, personnel=self.ci_personnel, role_type='ci', effective_from=date(2026, 1, 1))
+        ie = save_site_personnel_assignment(site_id=self.test_site.pk, personnel_id=self.ie_personnel.pk, role_type='ie',
+                                            effective_from=date(2026, 2, 1), parent_ci_id=self.ci_personnel.pk)
+        self.assertEqual((ci.site_id, ie.site_id, ie.parent_ci_id), (self.test_site.pk, self.test_site.pk, self.ci_personnel.pk))
+
+    def test_service_rejects_a_site_outside_the_dashboard_scope(self):
+        outside = make_site('STL_MP_001', circle='MP', outside_scope=True)
+        with self.assertRaises(ValidationError) as ctx:
+            save_site_personnel_assignment(site=outside, personnel=self.ci_personnel, role_type='ci', effective_from=date(2026, 1, 1))
+        self.assertIn('outside the dashboard reporting scope', str(ctx.exception))
+        self.assertFalse(SitePersonnelAssignment.objects.exists())
+
+    def test_service_rejects_an_unknown_site(self):
+        with self.assertRaises(ValidationError):
+            save_site_personnel_assignment(site_id=999999, personnel=self.ci_personnel, role_type='ci', effective_from=date(2026, 1, 1))
+
+    def test_parent_ci_error_names_the_bsnl_site_id(self):
+        with self.assertRaises(ValidationError) as ctx:
+            save_site_personnel_assignment(site=self.test_site, personnel=self.ie_personnel, role_type='ie', effective_from=date(2026, 1, 1),
+                                           parent_ci=self.ci_personnel)
+        self.assertIn('MP_IND_001', str(ctx.exception))
+
+    def test_deleting_a_site_with_an_assignment_is_protected(self):
+        SitePersonnelAssignment.objects.create(site=self.test_site, personnel=self.ci_personnel, role_type='ci', effective_from=date(2026, 1, 1))
+        with self.assertRaises(ProtectedError):
+            Site.objects.filter(pk=self.test_site.pk).delete()
+        self.assertTrue(SitePersonnelAssignment.objects.filter(site=self.test_site).exists())
+
+    def test_api_creates_and_lists_with_the_frontend_field_names(self):
+        resp = self.client.post(reverse('org-hierarchy-site-assignments'), {
+            'site': self.test_site.pk, 'personnel': self.ci_personnel.pk, 'role_type': 'ci', 'effective_from': '2026-01-01',
+        }, content_type='application/json')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()
+        self.assertEqual((body['site'], body['site_id_str'], body['site_name'], body['circle_code'], body['project_key']),
+                         (self.test_site.pk, 'MP_IND_001', 'Indore Tower 1', 'MP', '4G Saturation'))
+        listed = self.client.get(reverse('org-hierarchy-site-assignments'), {'site_id': 'ind_001', 'circle': 'mp'}).json()
+        self.assertEqual([r['site_id_str'] for r in listed['results']], ['MP_IND_001'])
+
+    def test_api_rejects_an_outside_scope_site(self):
+        outside = make_site('STL_MP_002', circle='MP', outside_scope=True)
+        resp = self.client.post(reverse('org-hierarchy-site-assignments'), {
+            'site': outside.pk, 'personnel': self.ci_personnel.pk, 'role_type': 'ci', 'effective_from': '2026-01-01',
+        }, content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('outside the dashboard reporting scope', str(resp.json()))
+
+    def test_merge_preview_reports_overlaps_by_bsnl_site_id(self):
+        other_ci = Personnel.objects.create(canonical_name='OTHER CI', display_name='Other CI', role_type='ci')
+        SitePersonnelAssignment.objects.create(site=self.test_site, personnel=self.ci_personnel, role_type='ci',
+                                               effective_from=date(2026, 1, 1), effective_to=date(2026, 3, 1))
+        SitePersonnelAssignment.objects.create(site=self.test_site, personnel=other_ci, role_type='ci', effective_from=date(2026, 2, 1))
+        preview = preview_personnel_merge(self.ci_personnel.id, other_ci.id)
+        self.assertEqual([o['site_id'] for o in preview['assignment_overlaps']], ['MP_IND_001'])
+
+
+class TestReconciliationDryRun(TeamHierarchyBaseTestCase):
+    def test_dry_run_reads_the_site_master_and_writes_nothing(self):
+        from io import StringIO
+        from django.core.management import call_command
+        make_site('MP_IND_003', technology='LWE', circle='MP', ci_name='Ravi Kumar', ci_emp_code='E1', ie_name='Amit  Verma', oa='Indore',
+                  om_manager_name='Vacant')
+        make_site('STL_MP_009', circle='MP', outside_scope=True, ci_name='Outside CI')
+        out = StringIO()
+        call_command('hierarchy_reconciliation_dry_run', stdout=out)
+        text = out.getvalue()
+        self.assertIn('Dashboard-scope sites: 3', text)
+        self.assertIn('Outside-scope sites (excluded): 1', text)
+        self.assertIn('Proposed Distinct Canonical CI Personnel (Circle-scoped): 1', text)
+        self.assertEqual((Personnel.objects.count(), SitePersonnelAssignment.objects.count()), (0, 0))

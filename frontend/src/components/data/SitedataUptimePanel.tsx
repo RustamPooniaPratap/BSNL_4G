@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, Database, Download, Info, Loader2, Upload } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Database, Download, Loader2, Upload } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -90,15 +90,9 @@ export function SitedataUptimePanel({ onCommitted }: { onCommitted: () => void }
               <Download className="size-3.5" /> Rejected and unmatched rows (CSV)
             </a>
           </div>
-          {r.already_imported ? (
+          {r.already_imported && (
             <Alert><CheckCircle2 /><AlertTitle>This exact file was already imported into the new data layer</AlertTitle>
               <AlertDescription>Upload #{r.already_imported.batch} on {formatDateTime(r.already_imported.committed_at)}. Committing again adds no record that is already stored.</AlertDescription></Alert>
-          ) : (r.legacy_imports ?? []).length > 0 && (
-            <Alert><Info /><AlertTitle>Imported before into the legacy tables only</AlertTitle>
-              <AlertDescription>
-                Legacy import {r.legacy_imports!.map((l) => `#${l.batch}`).join(', ')} stored this file in the old tables, which the dashboard pages no longer read.
-                It has not been imported into the new data layer yet.
-              </AlertDescription></Alert>
           )}
           <p className="text-xs text-muted-foreground">
             Months in the file: {(r.months_in_file ?? []).join(', ') || 'none'} · imported months: {(r.months_in_scope ?? []).join(', ')}

@@ -151,8 +151,10 @@ def account_activate(request):
 
 
 def _worker() -> dict:
-    from apps.uptimedb.models import AppSetting
-    seen = AppSetting.objects.filter(key='alerts_worker_heartbeat').values_list('value', flat=True).first()
+    from apps.common.models import Setting
+
+    from .engine import HEARTBEAT
+    seen = Setting.get(HEARTBEAT)
     when = datetime.fromisoformat(seen) if seen else None
     return {'last_seen': seen, 'running': bool(when and timezone.now() - when < timedelta(minutes=3))}
 
@@ -165,6 +167,7 @@ def _automation_json(a: Automation) -> dict:
             'weekday': a.weekday, 'month_day': a.month_day, 'start_date': a.start_date.isoformat() if a.start_date else None,
             'end_date': a.end_date.isoformat() if a.end_date else None, 'next_run_at': a.next_run_at.isoformat() if a.next_run_at else None,
             'last_run_at': a.last_run_at.isoformat() if a.last_run_at else None, 'project': a.project, 'circles': a.circles, 'report_day': a.report_day,
+            'population': a.population, 'population_label': a.get_population_display(),
             'to_users': list(a.to_users.values_list('id', flat=True)), 'to_emails': a.to_emails, 'cc': a.cc, 'bcc': a.bcc,
             'include_responsible': a.include_responsible, 'attachments': a.attachments, 'extra_file': a.extra_file_id,
             'extra_file_name': a.extra_file.name if a.extra_file else None, 'distribution': a.distribution, 'template': a.template,
@@ -184,6 +187,8 @@ class AutomationSerializer(serializers.Serializer):
     project = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
     circles = serializers.ListField(child=serializers.CharField(max_length=20), required=False, default=list)
     report_day = serializers.ChoiceField(choices=['today', 'yesterday', 'latest'], default='yesterday')
+    # Site population of the attached uptime reports (the portal's scope): on_air | om_start, default on_air.
+    population = serializers.ChoiceField(choices=Automation.Population.values, default=Automation.Population.ON_AIR)
     to_users = serializers.ListField(child=serializers.IntegerField(), required=False, default=list)
     to_emails = serializers.ListField(child=serializers.CharField(max_length=254), required=False, default=list)
     cc = serializers.ListField(child=serializers.CharField(max_length=254), required=False, default=list)
@@ -333,6 +338,7 @@ def automation_preview(request):
               'report_name': v['name'], 'report_period': {'today': 'Today', 'yesterday': 'Previous day', 'latest': 'Latest reporting date'}[v['report_day']]}
     if report:
         values['notification_title'] = v['name']
+        values['population'] = engine.population_label(v['population'])
     files = [{'name': reports.CATALOG[x['report']]['label'], 'format': x['format'], 'period': values['report_period']} for x in v['attachments']]
     if v.get('extra_file'):
         f = AlertFile.objects.get(pk=v['extra_file'])
@@ -349,6 +355,8 @@ def options(request):
     return Response({
         'kinds': [{'value': k, 'label': label, **{x: str(y) for x, y in KIND_DEFAULTS[k].items()}} for k, label in Automation.Kind.choices],
         'reports': [{'value': k, **v} for k, v in reports.CATALOG.items()],
+        'populations': [{'value': k, 'label': label} for k, label in Automation.Population.choices],
+        'default_population': Automation.Population.ON_AIR,
         'templates': [{'value': k, 'label': t['label'], 'subject': t['subject'], 'message': mailer.DEFAULT_MESSAGES[k]} for k, t in mailer.TEMPLATES.items()],
         'placeholders': list(mailer.PLACEHOLDERS),
         'users': [{'id': u.pk, 'username': u.get_username(), 'name': u.get_full_name(), 'email': u.email, 'role': ROLES.get(role_of(u) or '', '')}

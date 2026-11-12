@@ -1,11 +1,9 @@
 """Up-Time Report import into the new data layer (/api/sitedata/uptime/): preview, review, confirm, discard, issue report.
 
-The Data Source page's Up-Time Report workbook type offers two destinations: this one (apps.sitedata.uptime_master: the
-central daily table every dashboard page reads) and the legacy uptimedb tables (/api/imports/, unchanged). The two keep
-separate import histories, so a file imported into one destination is never reported as "already imported" by the
-other. Within the new layer, daily.py prevents duplicate site/date/technology records and keeps source precedence and
+The Up-Time Report goes into the central daily table every dashboard page reads (apps.sitedata.uptime_master).
+daily.py prevents duplicate site/date/technology records and keeps source precedence and
 authorized corrections. Writes only sitedata_dailysiteperformance, sitedata_dailyperformanceevent, the Uptime-only
-columns of sitedata_site and the upload record; never legacy tables or RCA data. Admins only.
+columns of sitedata_site and the upload record; never RCA data. Admins only.
 """
 import tempfile
 from pathlib import Path
@@ -19,8 +17,10 @@ from rest_framework.response import Response
 from apps.accounts.audit import audit
 from apps.accounts.permissions import IsAdminRole
 
+from django.db import IntegrityError
+
 from . import uploads, uptime_master
-from .matrix_views import MAX_BYTES, _batch_json, _get
+from .matrix_views import MAX_BYTES, _batch_json, _get, exception_csv_response
 from .models import Technology, UploadBatch
 
 KIND, LABEL = uptime_master.KIND, 'Up-Time Report'
@@ -83,6 +83,9 @@ def uptime_commit(request, batch_id: int):
         batch = uptime_master.commit(batch, user=request.user, request=request)
     except uploads.UploadRejected as exc:
         return Response({'error': str(exc), 'details': {}}, status=status.HTTP_409_CONFLICT)
+    except IntegrityError:
+        return Response({'error': f'Upload #{batch.pk} could not be committed: a site-day would be stored twice (written by another '
+                                  'import at the same time). Preview the file again.', 'details': {}}, status=status.HTTP_409_CONFLICT)
     from . import portfolio
     portfolio.clear_cache()  # the dashboard pages read the new values on their next request
     return Response(_batch_json(batch))
@@ -103,24 +106,10 @@ def uptime_discard(request, batch_id: int):
 @api_view(['GET'])
 @permission_classes([IsAdminRole])
 def uptime_issues_csv(request, batch_id: int):
-    """Every rejected row, unmatched site and conflict of the preview (the exception report), as CSV."""
-    import csv
-    import io
-
-    from django.http import HttpResponse
-
-    from . import exceptions
+    """Every rejected row, unmatched site and conflict of the preview (the exception report), as CSV (410 when the
+    recorded report file is missing on this server)."""
     batch = _uptime(batch_id)
-    path = (batch.report or {}).get('exception_report')
-    if path and Path(path).is_file():
-        data = Path(path).read_bytes()
-    else:
-        out = io.StringIO()
-        csv.writer(out).writerow(exceptions.COLUMNS)
-        data = out.getvalue().encode('utf-8')
-    response = HttpResponse(data, content_type='text/csv; charset=utf-8')
-    response['Content-Disposition'] = f'attachment; filename="uptime-{batch.pk}-issues.csv"'
-    return response
+    return exception_csv_response(batch, f'uptime-{batch.pk}-issues.csv')
 
 
 # --- Sites of Up-Time Reports that are not in the site master (apps/sitedata/unmatched.py) ---------------------------

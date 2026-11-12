@@ -1,3 +1,5 @@
+import type { FinalizationStatus, MonthFinalization } from './reporting';
+
 /** Consolidation Matrix import into the new data layer (/api/sitedata/matrix/). */
 
 export interface MatrixRejectedRow {
@@ -89,15 +91,60 @@ export interface UptimeImportBatch {
     warnings?: string[];
     /** A committed import of this exact file into the new data layer (this destination only). */
     already_imported?: { batch: number; committed_at: string } | null;
-    /** Imports of the same file into the legacy tables: another destination, information only. */
-    legacy_imports?: { batch: number; committed_at: string | null }[];
   };
 }
 
-/** One upload of the new data layer in the import history (either workbook type). */
+/** LWE Band ID mapping import (/api/sitedata/lwe-mapping/): raw LWE band IDs (2100 / 700 MHz, BTS IP ID) -> master sites. */
+export interface LweMappingReport {
+  error?: string;
+  sheet?: string;
+  rows?: number;
+  rejected_by_reason?: Record<string, number>;
+  changes?: { added: number; changed: number; unchanged: number; kept_new_row_rejected: number; not_in_this_workbook_kept: number };
+  kept_new_row_rejected?: string[];
+  not_in_this_workbook_kept?: string[];
+  lwe_sites_mapped_after_import?: number;
+  lwe_sites_without_mapping?: number;
+  quality?: Record<string, unknown>;
+  warnings?: string[];
+  identifiers_created?: number;
+}
+
+export interface LweMappingBatch {
+  id: number;
+  kind: 'lwe_band_mapping';
+  technology: string | null;
+  file: string;
+  checksum?: string;
+  status: 'previewed' | 'committed' | 'failed' | 'discarded';
+  validation_status: 'pending' | 'passed' | 'passed_with_warnings' | 'failed';
+  uploaded_at: string | null;
+  committed_at: string | null;
+  uploaded_by: string | null;
+  error: string | null;
+  can_commit: boolean;
+  counts: { received: number; accepted: number; rejected: number; duplicate: number; unmatched: number; conflict: number; superseded: number };
+  report: LweMappingReport;
+}
+
+/** Monthly results of the data layer (/api/sitedata/months/); month is 'YYYY-MM-01'. */
+export interface MonthlyResult {
+  month: string;
+  records: number;
+  finalized: boolean;
+  calculated_at: string | null;
+  /** Finalization state (absent in older responses): open, complete, incomplete_missing_data or reopened. */
+  finalization_status?: FinalizationStatus;
+  finalization_label?: string;
+  /** The latest finalization record (also when reopened), or null when never finalized. */
+  finalization?: MonthFinalization | null;
+}
+export interface MonthlyResultsResponse { months: MonthlyResult[] }
+
+/** One upload of the new data layer in the import history (any workbook type). */
 export interface NewLayerUpload {
   id: number;
-  kind: 'uptime_master' | 'consolidation_matrix';
+  kind: 'uptime_master' | 'consolidation_matrix' | 'lwe_band_mapping';
   technology: string | null;
   file: string;
   status: 'previewed' | 'committed' | 'failed' | 'discarded';

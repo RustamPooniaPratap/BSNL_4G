@@ -21,7 +21,6 @@ and audited. A site already processed for an upload is not processed again.
 from __future__ import annotations
 
 from collections import defaultdict
-from pathlib import Path
 
 from django.db import transaction
 from django.utils import timezone
@@ -79,6 +78,13 @@ def map_alternate(value: str, site: Site, *, user, reason: str, request=None) ->
     return identifier
 
 
+def unmatched_keys(report: dict) -> set[str]:
+    """Every unmatched site key of an upload's report: the uncapped list stored since 12 Nov 2026 (unmatched_keys),
+    plus the capped lists of older uploads."""
+    return ({key_of(k) for k in report.get('unmatched_keys', [])} | {key_of(s) for s in report.get('sites_not_in_site_master', [])}
+            | {key_of(d['site_id']) for d in report.get('unmatched_sites', [])})
+
+
 def _uploads():
     return UploadBatch.objects.filter(kind=UploadBatch.Kind.UPTIME_MASTER, processing_status=UploadBatch.Processing.COMMITTED).order_by('committed_at', 'id')
 
@@ -116,6 +122,9 @@ def report() -> dict:
                 details = [{'site_id': s} for s in rep.get('sites_not_in_site_master', [])]
             else:
                 details = []
+        listed = {key_of(d['site_id']) for d in details}
+        # Sites beyond the capped detail list: known by key only (dates and site-days are in the staged copy).
+        details = [*details, *({'site_id': k} for k in sorted(set(rep.get('unmatched_keys', [])) - listed))]
         for d in details:
             key = key_of(d['site_id'])
             entry = rows.setdefault(key, {'site_id': d['site_id'], 'project': d.get('project'), 'circle': d.get('circle'), 'uploads': [],
@@ -147,7 +156,13 @@ def report() -> dict:
 
 
 def process_pending(*, user, request=None) -> dict:
-    """Import the pending values of sites that now resolve, under their original uploads (see the module notes)."""
+    """Import the pending values of sites that now resolve, under their original uploads (see the module notes).
+
+    Each upload is processed in its own transaction: the data-layer write lock and the upload row are taken first, then
+    the processed sites are re-read from the locked report and the staged copy is analysed and classified inside the lock,
+    so a correction or another import made meanwhile is respected (never overwritten). An upload whose values fall in a
+    finalized month is skipped (reported with the reason) and the others continue; the monthly results of every date
+    actually written are refreshed even when a later upload fails."""
     from apps.accounts.roles import ADMIN, role_of
 
     from . import uptime_master
@@ -155,37 +170,49 @@ def process_pending(*, user, request=None) -> dict:
         raise ResolutionRejected('Only an Admin can process pending records.')
     lookup = site_lookup()
     totals = defaultdict(int)
-    processed_uploads = []
-    for batch in _uploads():
-        rep = batch.report or {}
-        unmatched = {key_of(s) for s in rep.get('sites_not_in_site_master', [])} | {key_of(d['site_id']) for d in rep.get('unmatched_sites', [])}
-        done = set(rep.get('pending_processed_sites', []))
-        ready = {k for k in unmatched - done if k in lookup}
-        if not ready:
-            continue
-        result = uptime_master.analyse(uploads.staged_file(batch), batch.original_filename, batch.technology or None)
-        values = [v for v in result['values'] if key_of(v.source_identifier) in ready]
-        rejected = [r for r in result['report']['rejected_rows'] if key_of(r['site_id']) in ready]
-        classified = daily.classify(values, uptime_master.KIND)
-        counts = classified.counts()
-        with transaction.atomic():
-            locked = UploadBatch.objects.select_for_update().get(pk=batch.pk)
-            daily.write(locked, classified)
-            history = (locked.report or {}).get('pending_processed', [])
-            locked.report = {**(locked.report or {}),
-                             'pending_processed_sites': sorted(done | ready),
-                             'pending_processed': [*history, {'at': timezone.now().isoformat(), 'by': user.get_username(), 'sites': sorted(ready),
-                                                             'counts': counts, 'rejected_rows': rejected}]}
-            locked.save(update_fields=['report'])
-        for k, v in counts.items():
-            totals[k] += v
-        processed_uploads.append({'upload': batch.pk, 'sites': sorted(ready), 'counts': counts, 'rejected_rows': len(rejected)})
-    if processed_uploads:
-        from . import portfolio
-        portfolio.clear_cache()
-        audit('sitedata.pending_processed', request, uploads=[u['upload'] for u in processed_uploads], **dict(totals))
-    return {'uploads': processed_uploads, 'counts': dict(totals)}
+    processed_uploads, skipped_uploads, written_dates = [], [], set()
+    try:
+        for batch in _uploads():
+            rep = batch.report or {}
+            if not {k for k in unmatched_keys(rep) - set(rep.get('pending_processed_sites', [])) if k in lookup}:
+                continue
+            try:
+                with transaction.atomic():
+                    uploads.write_lock()
+                    locked = UploadBatch.objects.select_for_update().get(pk=batch.pk)
+                    rep = locked.report or {}
+                    done = set(rep.get('pending_processed_sites', []))
+                    ready = {k for k in unmatched_keys(rep) - done if k in lookup}
+                    if not ready:
+                        continue
+                    result = uptime_master.analyse(uploads.staged_file(locked), locked.original_filename, locked.technology or None)
+                    values = [v for v in result['values'] if key_of(v.source_identifier) in ready]
+                    rejected = [r for r in result['report']['rejected_rows'] if key_of(r['site_id']) in ready]
+                    classified = daily.classify(values, uptime_master.KIND)
+                    counts = classified.counts()
+                    daily.write(locked, classified)
+                    history = rep.get('pending_processed', [])
+                    locked.report = {**rep,
+                                     'pending_processed_sites': sorted(done | ready),
+                                     'pending_processed': [*history, {'at': timezone.now().isoformat(), 'by': user.get_username(), 'sites': sorted(ready),
+                                                                     'counts': counts, 'rejected_rows': rejected}]}
+                    locked.save(update_fields=['report'])
+            except daily.FinalizedPeriod as exc:
+                skipped_uploads.append({'upload': batch.pk, 'reason': str(exc)})
+                continue
+            written_dates |= classified.written_dates()
+            for k, v in counts.items():
+                totals[k] += v
+            processed_uploads.append({'upload': batch.pk, 'sites': sorted(ready), 'counts': counts, 'rejected_rows': len(rejected)})
+    finally:
+        if written_dates:
+            uploads.refresh_after_daily_write(written_dates, request)
+    if processed_uploads or skipped_uploads:
+        audit('sitedata.pending_processed', request, uploads=[u['upload'] for u in processed_uploads],
+              skipped=[u['upload'] for u in skipped_uploads], **dict(totals))
+    return {'uploads': processed_uploads, 'skipped': skipped_uploads, 'counts': dict(totals)}
 
 
 def staged_exists(batch: UploadBatch) -> bool:
-    return bool(batch.stored_path) and Path(batch.stored_path).is_file()
+    path = uploads.staged_path(batch)
+    return path is not None and path.is_file()

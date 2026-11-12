@@ -16,6 +16,18 @@ export interface RawUploadOptions {
 
 export type RawRowStatus = 'ready' | 'identical' | 'duplicate' | 'out_of_scope' | 'scope_mismatch' | 'unresolved' | 'availability' | 'date' | 'other';
 
+/** Programme classification of a row: every row is in exactly one category (their counts add up to the rows). */
+export type RawRowCategory = 'matched' | 'unmatched_programme' | 'outside_programme' | 'invalid';
+
+export interface RawClassification {
+  matched: number;
+  /** In the programme (Consolidation Matrix) but not yet resolved to a master site: kept pending. */
+  unmatched_programme: number;
+  /** Not in the Consolidation Matrix: outside the programme scope, not counted as unmatched. */
+  outside_programme: number;
+  invalid: number;
+}
+
 export interface RawRow {
   line: number;
   raw_id: string;
@@ -26,7 +38,9 @@ export interface RawRow {
   raw_availability: string;
   availability: number | null;
   outage_minutes: number | null;
+  /** A status group; a newer backend may send groups this frontend does not know yet. */
   status: RawRowStatus;
+  category?: RawRowCategory;
   code: string;
   label: string;
   message: string;
@@ -48,6 +62,10 @@ export interface RawSummary {
   project_or_circle_mismatches: number;
   other_invalid: number;
   by_code: Record<string, number>;
+  /** Rows per status group (the row filter's counts). */
+  by_status: Partial<Record<RawRowStatus, number>>;
+  /** Rows per programme category (sum = rows); absent in older responses. */
+  classification?: RawClassification;
 }
 
 export interface RawUpload {
@@ -66,7 +84,7 @@ export interface RawUpload {
   error: string | null;
   summary: RawSummary | null;
   /** After the import: what was written. */
-  daily: { inserted: number; filled: number; skipped_identical: number; skipped_repeats: number; rejected: number } | null;
+  daily: { inserted: number; filled: number; skipped_identical: number; skipped_repeats: number; rejected: number; conflicts: number; pending: number } | null;
   rejected_count: number;
   skipped_count: number;
   // Detail only.
@@ -78,6 +96,8 @@ export interface RawUpload {
   resolver?: { project: RawProject; configured: boolean };
   master_scope?: { sites: number; sites_in_file: number; missing_from_file: number; missing_examples: string[] };
   already_imported?: { batch: number; committed_at: string } | null;
+  /** Genuine unmatched programme raw IDs: their rows are kept pending (no site is created). Outside-programme IDs are not listed. */
+  pending_sites?: string[];
   rows?: RawRowsPage | null;
 }
 
@@ -120,8 +140,14 @@ export interface TrackerItem {
   sites_missing: number;
   records_observed: number;
   coverage_pct: number | null;
+  /** The coverage threshold applied on the date (null/absent in older responses). */
+  coverage_threshold_pct?: number | null;
+  /** False when the reporting unit is not expected on the date (inactive); absent in older responses. */
+  active?: boolean;
+  /** 'no_scope': no On-Air sites in the master, or the unit is not expected on this date (inactive). */
   data_state: DataState;
-  data_source: { master_workbook: number; raw_daily_csv: number };
+  /** Usable records per origin: the Uptime Master import, raw daily CSV uploads and Admin corrections. */
+  data_source: { master_workbook: number; raw_daily_csv: number; correction: number };
   latest_data_date: string | null;
   latest_complete_date: string | null;
   latest_upload_date: string | null;

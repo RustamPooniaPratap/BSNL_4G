@@ -6,11 +6,12 @@ from django.core.management.base import BaseCommand
 from django.db.models import Count, Min, Q
 
 from apps.organization.models import Circle, Project
-from apps.uptimedb.models import EscalationSite, UptimeSite
+from apps.sitedata.models import Site
 
 
 class Command(BaseCommand):
-    help = "Dry-run reconciliation and bootstrap inspection for Team Performance Hierarchy."
+    help = ("Dry-run reconciliation and bootstrap inspection for Team Performance Hierarchy, read from the data layer's site "
+            "master (sitedata.Site, Consolidation Matrix): OA, CI, IE and O&M manager of dashboard-scope sites. Read only.")
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -29,17 +30,19 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.SUCCESS("MODE: STRICT DRY-RUN (Read-only, no database writes)"))
 
-        total_uptime_sites = UptimeSite.objects.count()
-        total_escalation_sites = EscalationSite.objects.count()
-        self.stdout.write(f"\nSource Records:")
-        self.stdout.write(f"  • Total UptimeSite records: {total_uptime_sites}")
-        self.stdout.write(f"  • Total EscalationSite records: {total_escalation_sites}")
+        # Only dashboard-scope sites take part in the hierarchy; outside-scope matrix rows are counted, never assigned.
+        sites = Site.objects.filter(reporting_scope=Site.Scope.DASHBOARD)
+        total_sites = sites.count()
+        total_outside_scope = Site.objects.exclude(reporting_scope=Site.Scope.DASHBOARD).count()
+        self.stdout.write(f"\nSource Records (Consolidation Matrix, sitedata.Site):")
+        self.stdout.write(f"  • Dashboard-scope sites: {total_sites}")
+        self.stdout.write(f"  • Outside-scope sites (excluded): {total_outside_scope}")
 
         # ----------------------------------------------------------------------
         # 1. Operational Areas (OAs)
         # ----------------------------------------------------------------------
         self.stdout.write(self.style.MIGRATE_LABEL("\n--- 1. OPERATIONAL AREAS (OAs) RECONCILIATION ---"))
-        oa_sites = UptimeSite.objects.exclude(oa="").exclude(oa__isnull=True).values("circle", "oa")
+        oa_sites = sites.exclude(oa="").values("circle", "oa")
 
         canonical_oas: Dict[str, Set[str]] = defaultdict(set)
         oa_raw_variants: Dict[str, Dict[str, Set[str]]] = defaultdict(lambda: defaultdict(set))
@@ -76,9 +79,9 @@ class Command(BaseCommand):
         # ----------------------------------------------------------------------
         self.stdout.write(self.style.MIGRATE_LABEL("\n--- 2. PERSONNEL IDENTITY & CONFLICT AUDIT ---"))
 
-        # Inspect EscalationSite for rich identity fields (code, contact, name)
-        esc_rows = EscalationSite.objects.values(
-            "circle", "project", "ci_name", "ci_emp_code", "ci_contact",
+        # The matrix holds the identity fields (name, employee code, contact) of each site's CI and IE
+        esc_rows = sites.values(
+            "circle", "technology", "ci_name", "ci_emp_code", "ci_contact",
             "ie_name", "ie_emp_code", "ie_contact"
         )
 
@@ -136,35 +139,6 @@ class Command(BaseCommand):
                     ie_code_to_names[ie_code].add(i_key[1])
                     ie_name_to_codes[i_key].add(ie_code)
 
-        # Also inspect UptimeSite for any CI/IE names absent from EscalationSite
-        uptime_rows = UptimeSite.objects.values("circle", "ci_name", "ie_name")
-        for ur in uptime_rows:
-            c = ur["circle"].strip() if ur["circle"] else ""
-            ci = (ur["ci_name"] or "").strip()
-            ie = (ur["ie_name"] or "").strip()
-            if ci and ci not in ("-", "TBD", "NA"):
-                ck = (c, " ".join(ci.lower().split()))
-                if ck not in ci_candidates:
-                    ci_candidates[ck] = {
-                        "name": " ".join(ci.split()).title(),
-                        "canonical_name": " ".join(ci.lower().split()),
-                        "circle": c,
-                        "role": "ci",
-                        "emp_code": "",
-                        "contact": "",
-                    }
-            if ie and ie not in ("-", "TBD", "NA"):
-                ik = (c, " ".join(ie.lower().split()))
-                if ik not in ie_candidates:
-                    ie_candidates[ik] = {
-                        "name": " ".join(ie.split()).title(),
-                        "canonical_name": " ".join(ie.lower().split()),
-                        "circle": c,
-                        "role": "ie",
-                        "emp_code": "",
-                        "contact": "",
-                    }
-
         conflicting_ie_codes = {code: names for code, names in ie_code_to_names.items() if len(names) > 1}
         shared_ci_ie_codes = set(ci_code_to_names.keys()) & set(ie_code_to_names.keys())
 
@@ -177,11 +151,11 @@ class Command(BaseCommand):
         self.stdout.write(f"  • Code Collisions between CI and IE roles: {len(shared_ci_ie_codes)} ({', '.join(sorted(shared_ci_ie_codes))})")
 
         # ----------------------------------------------------------------------
-        # 3. Site Assignment Reconciliation (UptimeSite)
+        # 3. Site Assignment Reconciliation (dashboard-scope sitedata.Site)
         # ----------------------------------------------------------------------
         self.stdout.write(self.style.MIGRATE_LABEL("\n--- 3. SITE-PERSONNEL ASSIGNMENTS RECONCILIATION ---"))
 
-        uptime_site_rows = list(UptimeSite.objects.values("site_id", "circle", "project", "ci_name", "ie_name"))
+        site_rows = [{**r, "site_id": r["bsnl_site_id"]} for r in sites.values("bsnl_site_id", "circle", "technology", "ci_name", "ie_name")]
 
         valid_ci_assignments = 0
         unassigned_ci_sites = []
@@ -190,7 +164,7 @@ class Command(BaseCommand):
         whitespace_normalized_ie = 0
         ie_without_parent_ci_sites = []
 
-        for s in uptime_site_rows:
+        for s in site_rows:
             ci = (s["ci_name"] or "").strip()
             ie = (s["ie_name"] or "").strip()
 
@@ -210,10 +184,10 @@ class Command(BaseCommand):
                 if not has_valid_ci:
                     ie_without_parent_ci_sites.append(s["site_id"])
 
-        ci_coverage_pct = (valid_ci_assignments / total_uptime_sites) * 100 if total_uptime_sites else 0
-        ie_coverage_pct = (valid_ie_assignments / total_uptime_sites) * 100 if total_uptime_sites else 0
+        ci_coverage_pct = (valid_ci_assignments / total_sites) * 100 if total_sites else 0
+        ie_coverage_pct = (valid_ie_assignments / total_sites) * 100 if total_sites else 0
 
-        self.stdout.write(f"  • Total Eligible UptimeSite Records: {total_uptime_sites}")
+        self.stdout.write(f"  • Total Eligible Dashboard-Scope Sites: {total_sites}")
         self.stdout.write(f"  • Valid CI Site Assignments: {valid_ci_assignments} ({ci_coverage_pct:.2f}%)")
         self.stdout.write(f"  • Unassigned CI Sites: {len(unassigned_ci_sites)} ({', '.join(unassigned_ci_sites) if unassigned_ci_sites else 'None'})")
         self.stdout.write(f"  • Valid IE Site Assignments: {valid_ie_assignments} ({ie_coverage_pct:.2f}%)")
@@ -230,8 +204,8 @@ class Command(BaseCommand):
         self.stdout.write(f"  {'Circle':<8} | {'Proposed O&M Manager':<24} | {'Status':<8} | {'Emp Code':<10} | {'Contact':<12} | {'Effective':<10} | {'Scope'}")
         self.stdout.write("  " + "-" * 100)
 
-        # Group EscalationSite records by Circle
-        om_records = EscalationSite.objects.values(
+        # Group the matrix's O&M manager columns by Circle
+        om_records = sites.values(
             'circle', 'om_manager_name', 'om_manager_emp_code', 'om_manager_contact'
         ).annotate(
             site_count=Count('id'),

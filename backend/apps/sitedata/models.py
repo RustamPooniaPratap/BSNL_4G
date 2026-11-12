@@ -14,7 +14,7 @@
 - UploadBatch is the upload history of every file kind.
 
 Missing values are never 0: a site-day without a value has no DailySitePerformance record.
-These tables are separate from the current uptimedb tables, which stay in use until the approved cutover.
+These tables are the only operational data of the application (the legacy uptimedb tables were removed).
 """
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
@@ -370,3 +370,118 @@ class MonthlySitePerformance(models.Model):
             models.CheckConstraint(condition=Q(reporting_days__lte=F('calendar_days')), name='sitedata_monthly_days'),
         ]
         indexes = [models.Index(fields=['month', 'technology', 'is_current'])]
+
+
+class ReportingUnit(models.Model):
+    """A reporting unit: one circle and technology that submits its own daily CSV (approved rule B-1 / B-2). Expected on
+    the dates from ``active_from`` to ``active_until`` (inclusive; open-ended when blank). Initially derived from the
+    Consolidation Matrix; Admins add, deactivate and correct units, every change audited (ReportingUnitChange)."""
+
+    technology = models.CharField(max_length=20, choices=Technology.choices)
+    circle = models.CharField(max_length=20)
+    active_from = models.DateField(help_text='First reporting date on which the unit is expected to submit data.')
+    active_until = models.DateField(null=True, blank=True, help_text='Last expected reporting date (inclusive); blank = still active.')
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['technology', 'circle']
+        constraints = [
+            models.UniqueConstraint(fields=['technology', 'circle'], name='sitedata_reporting_unit_unique'),
+            models.CheckConstraint(condition=Q(active_until__isnull=True) | Q(active_until__gte=F('active_from')), name='sitedata_reporting_unit_dates'),
+        ]
+
+    def __str__(self):
+        return f'{self.technology} {self.circle}'
+
+    def active_on(self, day) -> bool:
+        return self.active_from <= day and (self.active_until is None or day <= self.active_until)
+
+
+class ReportingUnitChange(models.Model):
+    """Append-only audit trail of reporting-unit configuration changes (who, when, why, before and after)."""
+
+    class Action(models.TextChoices):
+        CREATED = 'created', 'Created'
+        CORRECTED = 'corrected', 'Corrected'
+        DEACTIVATED = 'deactivated', 'Deactivated'
+        REACTIVATED = 'reactivated', 'Reactivated'
+
+    unit = models.ForeignKey(ReportingUnit, on_delete=models.PROTECT, related_name='changes')
+    action = models.CharField(max_length=20, choices=Action.choices)
+    before = models.JSONField(default=dict, blank=True)
+    after = models.JSONField(default=dict, blank=True)
+    reason = models.TextField()
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = AppendOnlyQuerySet.as_manager()
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise PermissionDenied('Reporting-unit changes are append-only.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise PermissionDenied('Reporting-unit changes are append-only.')
+
+
+class CoverageThreshold(models.Model):
+    """The coverage threshold (approved rule B-6): the share of a unit's On-Air sites that must have a daily record for
+    the unit-day to count as covered. Separate from the 98.5 % availability threshold. Effective-dated and append-only:
+    each row records the new value, the previous value, the administrator, the time and the date it applies from, so
+    earlier dates keep the threshold that applied to them."""
+
+    value_pct = models.DecimalField(max_digits=5, decimal_places=2, help_text='Required coverage, 0-100 %.')
+    previous_value_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    effective_from = models.DateField(help_text='First reporting date the value applies to.')
+    reason = models.TextField()
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name='+')
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    objects = AppendOnlyQuerySet.as_manager()
+
+    class Meta:
+        ordering = ['-effective_from', '-id']
+        constraints = [models.CheckConstraint(condition=Q(value_pct__gte=0) & Q(value_pct__lte=100), name='sitedata_coverage_threshold_range')]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise PermissionDenied('Coverage threshold history is append-only.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise PermissionDenied('Coverage threshold history is append-only.')
+
+
+class MonthFinalization(models.Model):
+    """Finalization of a reporting month (approved rule B-7). A month may be finalized with missing data; it is then
+    "Incomplete - Missing Data" and the missing unit-days are kept here. Late data after finalization needs the month to be
+    reopened by an Admin with a reason (audited); the next finalization is a new revision."""
+
+    class Status(models.TextChoices):
+        COMPLETE = 'complete', 'Complete'
+        INCOMPLETE = 'incomplete_missing_data', 'Incomplete — Missing Data'
+
+    month = models.DateField(help_text='First day of the month.')
+    revision = models.PositiveIntegerField(default=1)
+    status = models.CharField(max_length=30, choices=Status.choices)
+    missing = models.JSONField(default=list, blank=True, help_text='[{"technology", "circle", "dates": [...]}] not covered at finalization.')
+    coverage = models.JSONField(default=dict, blank=True, help_text='Snapshot: dates, threshold(s) and covered unit-days at finalization.')
+    finalized_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name='+')
+    finalized_at = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(blank=True)
+    reopened_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name='+')
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    reopen_reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-month', '-revision']
+        constraints = [
+            models.UniqueConstraint(fields=['month', 'revision'], name='sitedata_month_finalization_revision'),
+            models.UniqueConstraint(fields=['month'], condition=Q(reopened_at__isnull=True), name='sitedata_month_finalization_open'),
+        ]

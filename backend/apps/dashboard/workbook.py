@@ -101,6 +101,9 @@ class Dataset:
     # Complete reporting dates of the month (every technology / circle of the site master has values), when the source
     # knows them (the new data layer); None: not known (a single workbook), so every date with data counts.
     complete_dates: tuple[date, ...] | None = None
+    # Data layer only: {date: {(technology, circle): {'expected', 'with_data', 'covered', 'threshold'}}} for the reporting
+    # units active on the date (apps.sitedata.reporting); the statuses Complete / Provisional are derived from it.
+    unit_coverage: dict | None = field(default=None, repr=False)
     _positions: dict = field(default_factory=dict, repr=False)
     _memo: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 

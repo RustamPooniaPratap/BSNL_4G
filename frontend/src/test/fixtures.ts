@@ -25,7 +25,6 @@ export const filterOptions: FilterOptions = {
   scopes: [
     { value: 'on_air', label: 'On-Air sites', available: true },
     { value: 'om_start', label: 'O&M Start sites', available: true },
-    { value: 'all', label: 'All sites', available: true },
   ],
   default_scope: 'on_air',
   buckets: [],
@@ -306,7 +305,7 @@ export const period: PeriodSummary = {
 /** One project circle as the server reports it; defaults: 10 On-Air sites, no data, no upload. */
 export const trackerItem = (project: RawProject, circle: string, overrides: Partial<TrackerItem> = {}): TrackerItem => ({
   project, circle, sites_total: 12, sites_expected: 10, sites_with_data: 0, sites_invalid: 0, sites_missing: 10, records_observed: 0,
-  coverage_pct: 0, data_state: 'none', data_source: { master_workbook: 0, raw_daily_csv: 0 },
+  coverage_pct: 0, data_state: 'none', data_source: { master_workbook: 0, raw_daily_csv: 0, correction: 0 },
   latest_data_date: null, latest_complete_date: null, latest_upload_date: null, latest_import_date: null,
   upload_state: 'none', uploads: [], range: [], ...overrides,
 });

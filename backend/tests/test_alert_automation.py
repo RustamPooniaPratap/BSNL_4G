@@ -23,7 +23,8 @@ from apps.alerts.models import Automation, EmailAccount, Execution, Message
 from apps.alerts.schedule import next_run
 from apps.rca import cycles
 from apps.rca.models import RcaImportBatch
-from apps.uptimedb.models import DataImportBatch, SiteDailyPerformance, UptimeSite
+from apps.sitedata.models import Site
+from tests.sitedata_factory import make_daily, make_site
 from tests.auth_helpers import portal_user
 
 IST = ZoneInfo('Asia/Kolkata')
@@ -134,12 +135,11 @@ class ReminderTests(AlertTestCase):
     def setUp(self):
         super().setUp()
         self.account()
-        batch = DataImportBatch.objects.create(original_filename='m.xlsx', checksum_sha256='x', sheet_name='S', stored_path='-', status='committed')
         for project, circle, n in (('4G Saturation', 'OD', 2), ('4G Saturation', 'MP', 1)):
             for i in range(n):
-                UptimeSite.objects.create(project=project, circle=circle, site_id=f'{circle}{i}', site_key=f'{circle}{i}', batch=batch, source_row=1, on_air=True)
+                make_site(f'{circle}{i}', technology=project, circle=circle)
         self.day = timezone.localdate() - timedelta(days=1)
-        SiteDailyPerformance.objects.create(site=UptimeSite.objects.get(site_id='MP0'), date=self.day, outage_minutes=0, batch=batch)  # MP complete
+        make_daily(Site.objects.get(bsnl_site_id='MP0'), self.day, 0)  # MP complete
         self.ci = portal_user('al-ci-od', 'ci')
         self.ci.email = 'ci.od@bsnl.example'
         self.ci.save()

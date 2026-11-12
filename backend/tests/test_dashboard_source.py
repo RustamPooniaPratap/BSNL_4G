@@ -12,7 +12,6 @@ from apps.dashboard import metrics
 from apps.dashboard.metrics import Selection
 from apps.sitedata import portfolio, uptime_master
 from apps.sitedata.models import DailySitePerformance, Site, UploadBatch
-from apps.uptimedb.models import DataImportBatch, SiteDailyPerformance, UptimeSite
 from tests.auth_helpers import SignedInTestCase
 from tests.test_site_portfolio import MATRIX, SITES
 from tests.test_sitedata import SiteDataTestCase
@@ -53,39 +52,43 @@ class DashboardSourceTestCase(SignedInTestCase, SiteDataTestCase):
 
 
 class NewLayerOnlyTests(DashboardSourceTestCase):
-    def test_every_page_reads_the_new_layer_and_never_the_old_tables(self):
+    def test_every_page_reads_the_new_layer(self):
         self.load()
-        # Old tables with other values for the same sites: they must not change any page.
-        batch = DataImportBatch.objects.create(original_filename='old.xlsx', checksum_sha256='x', sheet_name='s', stored_path='-', status='committed')
-        old = UptimeSite.objects.create(project=G4, circle='MP', site_id='UVMP001', site_key='UVMP001', on_air=True, batch=batch, source_row=1)
-        SiteDailyPerformance.objects.create(site=old, date=date(2026, 11, 1), outage_minutes=1440, batch=batch)
         for name in DASHBOARD:
             params = {'group': 'ci'} if 'teams' in name else {}
             self.assertEqual(self.get(name, **params)['source']['data_layer'], 'sitedata', name)
-        self.assertEqual(self.get('dashboard-summary')['reporting_date'], OCT3)  # not the old table's 1 Nov
+        self.assertEqual(self.get('dashboard-summary')['reporting_date'], OCT3)
         for name in ('allkpis-summary', 'allkpis-filters'):
             self.get(name)
         self.assertEqual(self.get('allkpis-summary')['period']['end'], OCT3)
 
-    def test_no_data_in_the_new_layer_is_an_error_not_old_data(self):
-        batch = DataImportBatch.objects.create(original_filename='old.xlsx', checksum_sha256='x', sheet_name='s', stored_path='-', status='committed')
-        old = UptimeSite.objects.create(project=G4, circle='MP', site_id='UVMP001', site_key='UVMP001', on_air=True, batch=batch, source_row=1)
-        SiteDailyPerformance.objects.create(site=old, date=date(2026, 10, 1), outage_minutes=0, batch=batch)
+    def test_no_daily_data_in_the_layer_is_an_error(self):
         self.load_matrix(MATRIX)  # sites, but no daily records in the new layer
         portfolio.clear_cache()
         self.assertIn('new data layer', self.get('dashboard-summary', 503)['error'])
 
 
 class ReportingMonthTests(DashboardSourceTestCase):
-    def test_a_partial_november_does_not_replace_a_complete_october(self):
+    def units(self):
+        from tests.sitedata_factory import make_units
+        make_units((Site.objects.filter(reporting_scope='dashboard').values_list('technology', 'circle')))
+        portfolio.clear_cache()
+
+    def test_missing_lwe_data_never_holds_back_the_4g_data(self):
+        # Approved rule B-7: only the 4G CSVs of 1 Nov arrived. November is reported with the data received, labelled
+        # Provisional with the missing units; nothing waits for LWE, and nothing is counted as zero.
         self.load()
-        self.add_day(date(2026, 11, 1), ['UVMP001', 'UVRJ001'])  # only the 4G CSVs arrived: LWE MP and LWE OD missing
+        self.units()
+        self.add_day(date(2026, 11, 1), ['UVMP001', 'UVRJ001'])
         filters = self.get('dashboard-filters')
-        self.assertEqual((filters['default_date'], filters['source']['latest_reporting_date']), (OCT3, OCT3))
-        source = self.get('dashboard-source')
-        self.assertIn('pending_month', [w['code'] for w in source['warnings']])
-        self.assertEqual(self.get('allkpis-summary')['period']['end'], OCT3)
-        self.assertEqual(self.get('site-portfolio-summary', scope='all')['reporting_date'], OCT3)
+        self.assertEqual((filters['default_date'], filters['source']['latest_reporting_date']), ('2026-11-01', '2026-11-01'))
+        continuity = filters['source']['continuity']
+        self.assertEqual((continuity['incomplete_dates'], continuity['mtd_status']), (['2026-11-01'], 'Provisional'))
+        self.assertTrue({'LWE MP', 'LWE OD'} <= set(continuity['missing'][0]['units']))
+        summary = self.get('dashboard-summary', scope='all', report_type=G4)
+        self.assertEqual(summary['reporting_date'], '2026-11-01')
+        self.assertEqual(self.get('allkpis-summary')['period']['end'], '2026-11-01')
+        self.assertEqual(self.get('site-portfolio-summary', scope='all')['reporting_date'], '2026-11-01')
 
     def test_november_becomes_the_reporting_month_once_its_first_day_is_complete(self):
         self.load()
@@ -94,28 +97,36 @@ class ReportingMonthTests(DashboardSourceTestCase):
         months = [m['key'] for m in self.get('dashboard-monthly')['months']]
         self.assertEqual(months[-2:], ['2026-10', '2026-11'])  # October is history now, from its daily records
 
-    def test_an_incomplete_date_ends_the_mtd(self):
-        # On 3 Oct no Odisha LWE site reported (LWEOD01 blank, LWEOD02 not in the file): 3 Oct is incomplete.
+    def test_an_incomplete_date_is_provisional_and_still_shown(self):
+        # On 3 Oct no Odisha LWE site reported (LWEOD01 blank, LWEOD02 not in the file): 3 Oct is Provisional, and the
+        # other units' data of 3 Oct stays visible (approved rules B-4 / B-7).
         self.load([s for s in SITES if s[2] != 'LWEOD02'])
+        self.units()
         filters = self.get('dashboard-filters')
-        self.assertEqual(filters['default_date'], '2026-10-02')
+        self.assertEqual(filters['default_date'], OCT3)
         continuity = filters['source']['continuity']
-        self.assertEqual((continuity['continuous_until'], continuity['incomplete_dates']), ('2026-10-02', [OCT3]))
-        self.get('dashboard-summary', 400, reporting_date=OCT3)  # not offered
+        self.assertEqual((continuity['continuous_until'], continuity['excluded_after_gap']), (OCT3, []))
+        status = {s['date']: s for s in continuity['date_status']}
+        self.assertEqual(status[OCT3]['status'], 'Provisional')
+        self.assertIn('LWE OD', status[OCT3]['missing_units'])
+        self.get('dashboard-summary', 200, reporting_date=OCT3)
 
 
 class WeekAndMonthRuleTests(DashboardSourceTestCase):
-    def test_only_a_complete_week_has_a_value(self):
+    def test_a_provisional_week_shows_its_figures(self):
         seven = [(p, c, sid, n, a, o, [10, 20, 30, 40, 50, 60, 70, 80]) for p, c, sid, n, a, o, _ in SITES]  # 1-8 Oct
         self.load(seven)
         weeks = self.get('dashboard-trends', scope='all')['weeks']
         sites = len(self.get('dashboard-records', scope='all')['records'])
         self.assertTrue(weeks[0]['complete'])
         self.assertEqual(weeks[0]['uptime_pct'], round(100 * (1 - (280 * sites) / (1440 * 7 * sites)), 4))
-        self.assertEqual((weeks[1]['complete'], weeks[1]['uptime_pct'], weeks[1]['days_reported']), (False, None, 0))  # 8 Oct only
+        # 8 Oct only: Week 2 is Provisional and shows its figures (approved rule B-4).
+        self.assertEqual((weeks[1]['complete'], weeks[1]['status'], weeks[1]['uptime_pct'], weeks[1]['days_reported']),
+                         (False, 'Provisional', round(100 * (1 - 80 / 1440), 4), 1))
         periods = {p['key']: p for p in self.get('dashboard-thresholds', scope='all')['periods']}
-        self.assertEqual((periods['w1']['days_reported'], periods['w2']['days_reported']), (7, 0))
-        self.assertEqual(self.get('dashboard-period', scope='all', period='weeks', weeks='1,2')['days_reported'], 7)
+        self.assertEqual((periods['w1']['days_reported'], periods['w2']['days_reported'], periods['w2']['status']), (7, 1, 'Provisional'))
+        period = self.get('dashboard-period', scope='all', period='weeks', weeks='1,2')
+        self.assertEqual((period['days_reported'], period['status']), (8, 'Provisional'))
 
     def test_history_months_exclude_missing_days(self):
         # A history month from its daily records: a site with 2 of 30 reported days counts 2 days, not 30 (never zero outage).

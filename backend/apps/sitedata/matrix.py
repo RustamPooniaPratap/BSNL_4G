@@ -23,7 +23,11 @@ Rules (approved 4 Nov 2026, extended 5 Nov 2026):
 - Effective dates (Site On-Air Date, O&M Start Date) come from the matrix only. A date that is not readable, in the
   future, or an O&M Start before the On-Air Date is flagged for review (not imported as a date when unreadable, never
   guessed); a changed stored date is listed. The *_issue flags are recomputed from the resulting values.
-- Performance records (daily and monthly) and the legacy uptimedb tables are never touched by this import.
+- Daily performance records are never touched by this import (monthly results are recalculated after it, as the
+  effective dates may change). Every changed On-Air / O&M Start date (site, old, new) is stored in full in the committed
+  upload's report (effective_date_changes) and audited.
+- Every (technology, circle) of the dashboard sites written must be set up in the Organization
+  (organization.services.check_pairs); otherwise the preview fails with the set-up message.
 """
 from __future__ import annotations
 
@@ -36,10 +40,9 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 from apps.accounts.audit import audit
-from apps.dashboard.activity import ENTITIES
-from apps.uptimedb import escalation
-
 from . import exceptions, uploads
+from .rules import ENTITIES
+from .sources import matrix_sheet as escalation
 from .identifiers import key_of
 from .models import IdentifierConflict, Site, SiteIdentifier, Technology, UploadBatch
 from .rules import date_issue, om_start_date_issue
@@ -355,6 +358,12 @@ def analyse(path: Path, name: str) -> dict:
     items += date_reviews
     plan['exceptions'] = items
 
+    # The Organization must cover every (technology, circle) of the dashboard sites this import writes.
+    from apps.organization import services as organization
+    organization_check = organization.check_pairs({(row['_technology'], row['circle']) for key, row in rows.items()
+                                                   if row['_scope'] == Site.Scope.DASHBOARD and (key in plan['insert'] or key in plan['update'])})
+    organization_error = organization.blocking_message(organization_check) if organization_check['blocking'] else ''
+
     reasons = Counter(r['code'] for r in rejected)
     counts = {'received': len(data['rows']) + len(data['blank_id_rows']), 'accepted': len(plan['insert']) + len(plan['update']),
               'duplicate': len(plan['unchanged']), 'rejected': len(rejected), 'conflict': len(plan['identifier_conflicts']) + reasons['identity_change']}
@@ -391,14 +400,16 @@ def analyse(path: Path, name: str) -> dict:
         'by_technology_circle': dict(sorted(Counter(f"{r['_technology'] or 'Outside scope'} {r['circle']}" for r in rows.values()).items())),
         'no_longer_in_matrix': uploads.examples(plan['missing']),
         'new_identifiers': len(plan['identifiers']),
+        'organization': organization_check,
         'warnings': [w for w in (
+            organization_error,
             f'{len(rejected)} row(s) are rejected and not imported (see the rejected rows).' if rejected else '',
             f"{len(plan['missing'])} site(s) of the previous matrix are not in this file: kept and flagged, not deleted." if plan['missing'] else '',
             f"{len(plan['identifier_conflicts'])} identifier(s) are claimed by more than one site and were assigned to none." if plan['identifier_conflicts'] else '',
             f'{sum(review.values())} effective date(s) need review.' if review else '',
         ) if w],
     }
-    return {'plan': plan, 'counts': counts, 'report': report}
+    return {'plan': plan, 'counts': counts, 'report': report, 'organization_error': organization_error}
 
 
 FIELDS_BY_DST = {dst: src for src, dst in FIELDS.items()}
@@ -407,11 +418,14 @@ FIELDS_BY_DST = {dst: src for src, dst in FIELDS.items()}
 def preview(path: Path, name: str, *, user=None) -> UploadBatch:
     batch = uploads.new_batch(KIND, path, name, user)
     try:
-        result = analyse(Path(batch.stored_path), name)
+        result = analyse(uploads.staged_path(batch), name)
     except uploads.UploadRejected as exc:
         batch.error = str(exc)
         return uploads.record_preview(batch, {}, {'error': str(exc)}, failed=True)
-    return uploads.record_preview(batch, result['counts'], result['report'], exception_items=result['plan']['exceptions'])
+    if result['organization_error']:
+        batch.error = result['organization_error']
+    return uploads.record_preview(batch, result['counts'], result['report'], failed=bool(result['organization_error']),
+                                  exception_items=result['plan']['exceptions'])
 
 
 def commit(batch: UploadBatch, *, user=None, request=None) -> UploadBatch:
@@ -420,11 +434,27 @@ def commit(batch: UploadBatch, *, user=None, request=None) -> UploadBatch:
     uploads.require_previewed(batch)
     if batch.kind != KIND:
         raise uploads.UploadRejected(f'Upload #{batch.pk} is not a Consolidation Matrix.')
-    result = analyse(uploads.staged_file(batch), batch.original_filename)
-    if not uploads.same_counts(batch, result['counts']):
-        raise uploads.UploadRejected('The database changed since the preview; preview the file again before committing.')
-    plan = result['plan']
-    with transaction.atomic():
+    with uploads.committing(batch) as batch:
+        result = analyse(uploads.staged_file(batch), batch.original_filename)
+        if result['organization_error']:
+            raise uploads.UploadRejected(result['organization_error'])
+        if not uploads.same_counts(batch, result['counts']):
+            raise uploads.UploadRejected('The database changed since the preview; preview the file again before committing.')
+        plan = result['plan']
+        # Retrospective effective-date changes (On-Air / O&M Start), recorded in full before the sites are updated: they
+        # change which days count in months that may already have daily data (recalculated below).
+        stored = {key: (site_id, on_air, om_start) for key, site_id, on_air, om_start in Site.objects.filter(site_key__in=list(plan['update']))
+                  .values_list('site_key', 'bsnl_site_id', 'on_air_date', 'om_start_date')}
+        effective_date_changes = []
+        for key, change in plan['update'].items():
+            site_id, on_air, om_start = stored[key]
+            for field, old in (('on_air_date', on_air), ('om_start_date', om_start)):
+                new = change['values'].get(field)
+                if field in change['changed'] and old != new:
+                    old_text, new_text = (old.isoformat() if old else None), (new.isoformat() if new else None)
+                    # 'from' / 'to' as in the preview list (same key), 'old' / 'new' as recorded at commit.
+                    effective_date_changes.append({'site_id': site_id, 'field': field, 'old': old_text, 'new': new_text,
+                                                   'from': old_text, 'to': new_text, 'row': change['values'].get('source_row')})
         Site.objects.bulk_create([Site(site_key=key, matrix_batch=batch, present_in_latest_matrix=True, **values)
                                   for key, values in plan['insert'].items()], batch_size=2000)
         for key, change in plan['update'].items():
@@ -448,8 +478,15 @@ def commit(batch: UploadBatch, *, user=None, request=None) -> UploadBatch:
             if (conflict.kind, conflict.key) not in conflicts:
                 conflict.active = False
                 conflict.save(update_fields=['active', 'updated_at'])
-        uploads.mark_committed(batch, {'committed': result['report']['sites']})
-    audit('sitedata.matrix_committed', request, batch=batch.pk, file=batch.original_filename, **result['report']['sites'])
+        uploads.mark_committed(batch, {'committed': result['report']['sites'], 'effective_date_changes': effective_date_changes})
+    # Effective dates may have changed: monthly results of the months with daily records follow the matrix.
+    from .models import DailySitePerformance
+    uploads.refresh_after_daily_write(DailySitePerformance.objects.dates('report_date', 'month'), request)
+    audit('sitedata.matrix_committed', request, batch=batch.pk, file=batch.original_filename, effective_date_changes=len(effective_date_changes),
+          **result['report']['sites'])
+    if effective_date_changes:
+        audit('sitedata.matrix_effective_dates_changed', request, batch=batch.pk, changes=len(effective_date_changes),
+              sites=len({c['site_id'] for c in effective_date_changes}))
     return batch
 
 

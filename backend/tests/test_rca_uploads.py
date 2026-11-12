@@ -1,7 +1,7 @@
 """Upload Circle RCA and Upload Consolidated RCA: one central RcaRecord table and RCA Summary, circle submissions kept
 apart from data availability, daily periods, scope-limited withdrawals, and who may upload what.
 
-Synthetic workbooks and Up-Time sites in the test database only; files go to a temporary DATA_DIR.
+Synthetic workbooks and site master (sitedata) sites in the test database only; files go to a temporary DATA_DIR.
 """
 from datetime import datetime
 from pathlib import Path
@@ -265,3 +265,22 @@ class LegacyTests(UploadCase):
         self.assertIsNone(manual.withdrawn_at)  # manual records are never compared, listed as missing or withdrawn
         legacy.refresh_from_db()
         self.assertEqual((legacy.upload_type, legacy.status), ('legacy', 'committed'))
+
+
+class SiteMasterValidationTests(UploadCase):
+    """Uploaded Site IDs are checked against the site master of the data layer (sitedata, dashboard scope)."""
+
+    def test_a_site_of_the_data_layer_is_accepted_and_an_unknown_one_rejected(self):
+        from tests.sitedata_factory import make_site
+        make_site('OD0009', circle='OD', outside_scope=True)  # in the matrix, but outside the dashboard reporting scope
+        make_site('LWEOD0009', technology='LWE', circle='OD')  # a dashboard site of the other project
+        extra = [[D21, '4G Satu', 'Odisha', 'OD9999', 'Unknown', '', '', 'Yes', 5, 'TCS', 'TCS', 'x'],
+                 [D21, '4G Satu', 'Odisha', 'OD0009', 'Outside', '', '', 'Yes', 5, 'TCS', 'TCS', 'x'],
+                 [D21, '4G Satu', 'Odisha', 'LWEOD0009', 'Other project', '', '', 'Yes', 5, 'TCS', 'TCS', 'x'],
+                 [D21, '4G Satu', 'Odisha', ' od0002 ', 'Spacing', '', '', 'Yes', 7, 'DMW', 'DMW', 'x']]  # normalised key
+        preview = self.circle(OD_21[:1] + extra).json()
+        self.assertEqual(preview['status'], 'previewed')
+        self.assertEqual(preview['report']['issue_counts'].get('unknown_site'), 3)
+        self.assertEqual((preview['counts']['valid'], preview['counts']['rejected']), (2, 3))
+        self.assertEqual(self.commit(preview['id'], accept_rejected=True).status_code, 200)
+        self.assertEqual(set(RcaRecord.objects.values_list('site_key', flat=True)), {'OD0001', 'OD0002'})

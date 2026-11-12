@@ -12,11 +12,13 @@ import { SiteDetailSheet } from '../components/dashboard/SiteDetailSheet';
 import { SiteTable } from '../components/dashboard/SiteTable';
 import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { useFilterOptions } from '../hooks/useFilterOptions';
 import { useDashboardFilters } from '../hooks/useDashboardFilters';
 import { TEAM_SITES_PARAMS } from '../lib/teams';
 import { cn } from '@/lib/utils';
-import { fetchBreakdowns, fetchFilterOptions } from '../services/api';
+import { fetchBreakdowns } from '../services/api';
 import type { BucketId, SiteRecord, TeamGroup } from '../types';
+import { populationSites } from '../lib/population';
 
 /** A CI / IE opened from CI & IE Performance (Flow B): all four values identify the person; otherwise null (Flow A). */
 function teamFrom(params: URLSearchParams) {
@@ -39,7 +41,7 @@ function teamFrom(params: URLSearchParams) {
 export function BucketsSitesPage() {
   const workbook = useWorkbook();
   const { version } = workbook;
-  const options = useApiQuery(workbook.active ? `${version}|filters` : null, fetchFilterOptions);
+  const options = useFilterOptions();
   const { filters, setFilters, isDefault } = useDashboardFilters(options.data);
   const [searchParams, setSearchParams] = useSearchParams();
   const team = teamFrom(searchParams);
@@ -92,9 +94,9 @@ export function BucketsSitesPage() {
     return (
       <Card className="mx-auto mt-10 max-w-xl items-center gap-3 px-8 py-10 text-center">
         <FileUp className="size-8 text-muted-foreground" aria-hidden="true" />
-        <h1 className="text-lg font-semibold">No Master workbook loaded</h1>
-        <p className="text-sm text-muted-foreground">Upload the consolidated 4G Saturation &amp; LWE workbook to see uptime buckets and site details.</p>
-        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Upload workbook</Link>
+        <h1 className="text-lg font-semibold">No reporting data loaded</h1>
+        <p className="text-sm text-muted-foreground">Import the Uptime Master and Consolidation Matrix (Data Source page) to see uptime buckets and site details.</p>
+        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Import data</Link>
       </Card>
     );
   }
@@ -117,8 +119,8 @@ export function BucketsSitesPage() {
     );
   }
 
-  const scopeLabel = options.data.scopes.find((s) => s.value === filters.scope)?.label ?? filters.scope;
-  const summary = [filters.reportType || 'All projects', filters.circle ? `Circle ${filters.circle}` : 'All circles', scopeLabel].join(' · ');
+  const scopeLabel = populationSites(filters.scope);
+  const summary = [filters.reportType || 'All projects', filters.circle ? `Circle ${filters.circle}` : 'All circles', `Population: ${scopeLabel}`].join(' · ');
   const outsideScope = team && ((filters.reportType && filters.reportType !== team.project) || (filters.circle && filters.circle !== team.circle));
 
   return (

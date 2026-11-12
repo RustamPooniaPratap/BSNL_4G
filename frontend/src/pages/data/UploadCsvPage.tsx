@@ -21,7 +21,7 @@ import {
   commitRawUpload, discardRawUpload, fetchRawUploadOptions, fetchRawUploadRows, fetchRawUploads, fetchRawUpload, previewRawUpload,
   rawUploadIssuesUrl,
 } from '../../services/api';
-import type { RawRowStatus, RawUpload, RawUploadOptions } from '../../types/rawUpload';
+import type { RawClassification, RawRowCategory, RawRowStatus, RawUpload, RawUploadOptions } from '../../types/rawUpload';
 
 const STATUS: Record<RawRowStatus, { label: string; tone: string }> = {
   ready: { label: 'Ready', tone: 'border-emerald-300 bg-emerald-50 text-emerald-800' },
@@ -34,11 +34,36 @@ const STATUS: Record<RawRowStatus, { label: string; tone: string }> = {
   date: { label: 'Date problem', tone: 'border-red-300 bg-red-50 text-red-800' },
   other: { label: 'Invalid row', tone: 'border-red-300 bg-red-50 text-red-800' },
 };
+/** A status group this frontend does not know yet (a newer backend): shown with the server's label. */
+const statusTone = (status: string) => (STATUS as Record<string, { tone: string } | undefined>)[status]?.tone ?? 'border-slate-300 bg-slate-50 text-slate-700';
+
+/** The programme classification of the rows: every row is in exactly one category. */
+const CATEGORY: Record<RawRowCategory, { label: string; description: string; tone: string }> = {
+  matched: { label: 'Matched', description: 'Resolved to a master site of the Consolidation Matrix', tone: 'text-emerald-700' },
+  unmatched_programme: { label: 'Unmatched programme', description: 'In the programme but not yet resolved to a master site: kept pending', tone: 'text-orange-700' },
+  outside_programme: { label: 'Outside programme scope', description: 'Outside programme scope (not in the Consolidation Matrix; not counted as unmatched)', tone: 'text-slate-600' },
+  invalid: { label: 'Invalid', description: 'Rows that cannot be used (availability, date, circle or format problems)', tone: 'text-destructive' },
+};
+const CATEGORY_ORDER: RawRowCategory[] = ['matched', 'unmatched_programme', 'outside_programme', 'invalid'];
+
+function ClassificationTiles({ classification }: { classification: RawClassification }) {
+  return (
+    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Row classification">
+      {CATEGORY_ORDER.map((key) => (
+        <div key={key} className="rounded-lg border px-3 py-2" data-category={key}>
+          <dt className="text-xs font-medium">{CATEGORY[key].label}</dt>
+          <dd className={cn('text-lg font-semibold tabular-nums', classification[key] ? CATEGORY[key].tone : '')}>{formatNumber(classification[key] ?? 0)}</dd>
+          <dd className="text-[11px] text-muted-foreground">{CATEGORY[key].description}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 /**
  * Data Entry -> Upload CSV: the raw daily CNMC availability file of one circle and date. The server validates it against
  * the approved site master, calculates outage minutes and shows a preview; nothing is saved until the import is
- * confirmed, and the result shown is the server's. The dashboard source setting is never changed by an import.
+ * confirmed, and the result shown is the server's. Committed rows are saved to the reporting data (the data layer).
  */
 export function UploadCsvPage() {
   const { user } = useAuth();
@@ -100,7 +125,7 @@ export function UploadCsvPage() {
           onCommit={() => run('importing', async () => {
             setBatch(await commitRawUpload(batch.id));
             setVersion((v) => v + 1);
-            workbook.refresh();  // database-backed pages reload their figures; the source setting is unchanged
+            workbook.refresh();  // every page reloads its figures from the reporting data
           })}
           onDiscard={() => run('discarding', async () => { await discardRawUpload(batch.id); setBatch(null); setVersion((v) => v + 1); })} />
       )}
@@ -129,7 +154,7 @@ export function UploadCsvPage() {
                       <TableCell className="whitespace-nowrap">{formatDateTime(b.uploaded_at)}</TableCell>
                       <TableCell>{b.uploaded_by ?? '—'}</TableCell>
                       <TableCell className={cn((b.status === 'failed' || b.status === 'rejected') && 'text-destructive')}>{b.status_label}</TableCell>
-                      <TableCell className="text-xs tabular-nums">{b.daily ? `${formatNumber(b.daily.inserted + b.daily.filled)} · ${formatNumber(b.daily.skipped_identical + b.daily.skipped_repeats)} · ${formatNumber(b.daily.rejected)}` : b.error ? <span className="text-destructive">{b.error}</span> : '—'}</TableCell>
+                      <TableCell className="text-xs tabular-nums">{b.daily ? `${formatNumber(b.daily.inserted)} · ${formatNumber(b.daily.skipped_identical)} · ${formatNumber(b.daily.rejected)}` : b.error ? <span className="text-destructive">{b.error}</span> : '—'}</TableCell>
                       <TableCell><Button type="button" size="sm" variant="ghost" onClick={() => run('loading', async () => setBatch(await fetchRawUpload(b.id)))}>View</Button></TableCell>
                     </TableRow>
                   ))}
@@ -228,7 +253,7 @@ function UploadPanel({ options, username, form, circle, fixed, file, batch, phas
         </div>
         {!project?.configured && (
           <Alert><AlertDescription className="text-xs">
-            LWE files can be validated, but no LWE row can be imported yet: the mapping of raw LWE IDs to master sites (and the 2100 / 700 MHz selection) is not configured.
+            LWE rows cannot be imported yet: the LWE Band ID mapping has not been imported. An Admin imports it on the Data Source page.
           </AlertDescription></Alert>
         )}
       </Card>
@@ -266,13 +291,17 @@ const TILES: [keyof NonNullable<RawUpload['summary']>, string, string][] = [
 
 function PreviewCard({ batch, busy, onCommit, onDiscard }: { batch: RawUpload; busy: boolean; onCommit: () => void; onDiscard: () => void }) {
   const [status, setStatus] = useState<RawRowStatus | ''>('');
+  const [category, setCategory] = useState<RawRowCategory | ''>('');
   const [page, setPage] = useState(1);
   const [confirming, setConfirming] = useState(false);
-  const rows = useApiQuery(`raw-rows-${batch.id}-${batch.status}-${status}-${page}`, (signal) => fetchRawUploadRows(batch.id, status, page, signal));
+  const rows = useApiQuery(`raw-rows-${batch.id}-${batch.status}-${status}-${category}-${page}`,
+    (signal) => fetchRawUploadRows(batch.id, status, page, signal, category));
   const s = batch.summary;
+  const classification = s?.classification;
+  const showCategory = Boolean(classification) || (rows.data?.rows ?? []).some((r) => r.category);
   const committed = batch.status === 'committed';
   const canCommit = batch.status === 'previewed' && !!s?.ready_to_import;
-  const byStatus = (st: RawRowStatus) => Object.entries(s?.by_code ?? {}).filter(([code]) => statusOf(code) === st).reduce((a, [, n]) => a + n, 0);
+  const byStatus = (st: RawRowStatus) => s?.by_status?.[st] ?? 0;
   return (
     <Card className="gap-3 rounded-xl px-4 py-3" aria-label={committed ? 'Import result' : 'Validation preview'}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -293,14 +322,22 @@ function PreviewCard({ batch, busy, onCommit, onDiscard }: { batch: RawUpload; b
       {committed && batch.daily && (
         <Alert className="border-emerald-300 bg-emerald-50" role="status">
           <CircleCheck className="text-emerald-700" />
-          <AlertTitle>Saved to the database {formatDateTime(batch.committed_at)}</AlertTitle>
+          <AlertTitle>Saved {formatDateTime(batch.committed_at)}</AlertTitle>
           <AlertDescription>
-            {formatNumber(batch.daily.inserted)} daily records inserted{batch.daily.filled ? `, ${formatNumber(batch.daily.filled)} empty days filled` : ''},
-            {' '}{formatNumber(batch.daily.skipped_identical)} already stored and {formatNumber(batch.daily.skipped_repeats)} repeated rows skipped, {formatNumber(batch.daily.rejected)} rows not imported.
-            Database-backed dashboard pages now include them; the dashboard data source setting is unchanged.
+            Saved to the reporting data: {formatNumber(batch.daily.inserted)} new daily records, {formatNumber(batch.daily.skipped_identical)} already stored,
+            {' '}{formatNumber(batch.daily.conflicts ?? 0)} conflicting values kept (higher-precedence values stay), {formatNumber(batch.daily.pending ?? 0)} rows pending
+            (unmatched programme sites, not yet in the site master), {formatNumber(batch.daily.rejected)} rejected.
+            {classification?.outside_programme ? ` ${formatNumber(classification.outside_programme)} rows outside the programme scope were not imported and are not pending.` : ''}
           </AlertDescription>
         </Alert>
       )}
+      {(batch.pending_sites ?? []).length > 0 && (
+        <p className="text-xs text-muted-foreground" aria-label="Pending sites">
+          Unmatched programme IDs, kept pending until they are resolved to a master site (no site is created): {batch.pending_sites!.slice(0, 20).join(', ')}
+          {batch.pending_sites!.length > 20 ? ` and ${formatNumber(batch.pending_sites!.length - 20)} more` : ''}.
+        </p>
+      )}
+      {classification && <ClassificationTiles classification={classification} />}
       {s && (
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-6">
           {TILES.map(([key, label, tone]) => (
@@ -338,10 +375,24 @@ function PreviewCard({ batch, busy, onCommit, onDiscard }: { batch: RawUpload; b
           );
         })}
       </div>
+      {classification && (
+        <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Show category">
+          {(['', ...CATEGORY_ORDER] as const).map((c) => {
+            const n = c ? classification[c] ?? 0 : s?.total_rows ?? 0;
+            if (c && !n) return null;
+            return (
+              <Button key={c || 'all'} type="button" size="sm" variant={category === c ? 'default' : 'outline'} className="h-7 text-xs" aria-pressed={category === c}
+                onClick={() => { setCategory(c); setPage(1); }}>
+                {c ? CATEGORY[c].label : 'All categories'} ({formatNumber(n)})
+              </Button>
+            );
+          })}
+        </div>
+      )}
       <div className="overflow-x-auto">
         <Table aria-label="Rows">
           <TableHeader>
-            <TableRow>{['Line', 'Raw BTS IP ID', 'Master site', 'Circle', 'Report date', 'Availability %', 'Outage min', 'Status', 'Reason'].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow>
+            <TableRow>{['Line', 'Raw BTS IP ID', 'Master site', 'Circle', 'Report date', 'Availability %', 'Outage min', 'Status', ...(showCategory ? ['Category'] : []), 'Reason'].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow>
           </TableHeader>
           <TableBody>
             {(rows.data?.rows ?? []).map((r) => (
@@ -353,7 +404,8 @@ function PreviewCard({ batch, busy, onCommit, onDiscard }: { batch: RawUpload; b
                 <TableCell className="whitespace-nowrap">{r.report_date}</TableCell>
                 <TableCell className="tabular-nums">{r.availability ?? (r.raw_availability ? <span className="text-destructive">{r.raw_availability}</span> : <span className="text-muted-foreground italic">blank</span>)}</TableCell>
                 <TableCell className="tabular-nums">{r.outage_minutes == null ? '—' : r.outage_minutes.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</TableCell>
-                <TableCell><Badge variant="outline" className={cn('font-medium', STATUS[r.status].tone)}>{r.label}</Badge></TableCell>
+                <TableCell><Badge variant="outline" className={cn('font-medium', statusTone(r.status))}>{r.label}</Badge></TableCell>
+                {showCategory && <TableCell className="text-xs whitespace-nowrap">{r.category ? CATEGORY[r.category]?.label ?? r.category : '—'}</TableCell>}
                 <TableCell className="max-w-96 text-xs whitespace-normal">{r.message}{r.note && <span className="block text-muted-foreground">{r.note}</span>}</TableCell>
               </TableRow>
             ))}
@@ -374,7 +426,7 @@ function PreviewCard({ batch, busy, onCommit, onDiscard }: { batch: RawUpload; b
           {!canCommit ? <p className="text-sm text-muted-foreground">No row is ready to import.</p>
             : confirming ? (
               <>
-                <p className="text-sm">Save <strong>{formatNumber(s!.ready_to_import)}</strong> daily records for {batch.circle} · {formatDate(batch.reporting_date)} to the database?</p>
+                <p className="text-sm">Save <strong>{formatNumber(s!.ready_to_import)}</strong> daily records for {batch.circle} · {formatDate(batch.reporting_date)} to the reporting data?</p>
                 <Button type="button" onClick={onCommit} disabled={busy}>{busy ? 'Importing…' : 'Yes, import'}</Button>
                 <Button type="button" variant="ghost" onClick={() => setConfirming(false)} disabled={busy}>Back</Button>
               </>
@@ -384,16 +436,4 @@ function PreviewCard({ batch, busy, onCommit, onDiscard }: { batch: RawUpload; b
       )}
     </Card>
   );
-}
-
-/** Reason code -> preview status group (mirrors the server's grouping for the filter counts). */
-function statusOf(code: string): RawRowStatus {
-  const groups: Record<string, RawRowStatus> = {
-    ready: 'ready', fills_missing: 'ready', identical: 'identical', duplicate_row: 'duplicate', conflicting_duplicate: 'duplicate',
-    conflict_existing: 'duplicate', unknown_site: 'out_of_scope', other_circle: 'scope_mismatch', other_project: 'scope_mismatch',
-    circle_mismatch: 'scope_mismatch', blank_site_id: 'unresolved', ambiguous_site: 'unresolved', lwe_mapping_not_configured: 'unresolved',
-    missing_availability: 'availability', invalid_availability: 'availability', availability_out_of_range: 'availability',
-    date_mismatch: 'date', invalid_date: 'date',
-  };
-  return groups[code] ?? 'other';
 }

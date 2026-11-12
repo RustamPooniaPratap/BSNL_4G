@@ -1,5 +1,6 @@
-"""Data Panel editing: per-dataset View / Add / Edit / Export permissions, one-transaction saves with validation and
-rollback, project/circle scope, provenance and no delete. Synthetic records in the test database only."""
+"""Data Panel editing on the data layer (apps.sitedata): per-dataset View / Add / Edit / Export permissions, read-only
+matrix datasets, Daily Performance changes as authorized corrections (with a reason) in one transaction, project/circle
+scope and no delete. Synthetic records in the test database only."""
 import importlib
 from datetime import date
 from unittest import mock
@@ -7,34 +8,39 @@ from unittest import mock
 from django.apps import apps as django_apps
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts import catalog
 from apps.accounts.models import Role, RolePermission
 from apps.masterdata import datasets
 from apps.rca.models import RcaEvent, RcaRecord
-from apps.uptimedb.models import DataImportBatch, EscalationImportBatch, EscalationSite, SiteDailyPerformance, UptimeSite
+from apps.sitedata import daily, portfolio
+from apps.sitedata.models import DailyPerformanceEvent, DailySitePerformance, MonthlySitePerformance, Site, UploadBatch
 from tests.auth_helpers import portal_user
+from tests.sitedata_factory import make_daily, make_site
 
 G4 = '4G Saturation'
+REASON = 'CNMC ticket 4711: outage window confirmed'
 
 
 class DataPanelCase(TestCase):
     def setUp(self):
         self.admin = portal_user('dp-admin', 'admin')
-        batch = DataImportBatch.objects.create(original_filename='master.xlsx', checksum_sha256='x', sheet_name='Up-Time Report', stored_path='-',
-                                               status=DataImportBatch.Status.COMMITTED)
-        self.mp = UptimeSite.objects.create(project=G4, circle='MP', site_id='UVMP1', site_key='UVMP1', site_name='Alpha', on_air=True,
-                                            on_air_raw='Yes', batch=batch, source_row=2)
-        self.rj = UptimeSite.objects.create(project=G4, circle='RJ', site_id='UVRJ1', site_key='UVRJ1', site_name='Delta', batch=batch, source_row=3)
-        self.day = SiteDailyPerformance.objects.create(site=self.mp, date=date(2026, 10, 1), outage_minutes=10, batch=batch)
-        self.import_batch = batch
+        self.mp = make_site('UVMP1', circle='MP', site_name='Alpha', ci_contact='9999900000')
+        self.rj = make_site('UVRJ1', circle='RJ', site_name='Delta')
+        self.day = make_daily(self.mp, date(2026, 10, 1), outage=10)
+        self.rj_day = make_daily(self.rj, date(2026, 10, 1), outage=0)
+        portfolio.clear_cache()
+        self.addCleanup(portfolio.clear_cache)
 
-    def save(self, key, user=None, changes=(), additions=()):
+    def save(self, key, user=None, changes=(), additions=(), reason=REASON):
         self.client.force_login(user or self.admin)
-        return self.client.post(reverse('master-save', args=[key]), {'changes': list(changes), 'additions': list(additions)},
-                                content_type='application/json')
+        body = {'changes': list(changes), 'additions': list(additions)}
+        if reason is not None:
+            body['reason'] = reason
+        return self.client.post(reverse('master-save', args=[key]), body, content_type='application/json')
 
-    def role(self, name, *actions, dataset='uptime_sites'):
+    def role(self, name, *actions, dataset='uptime_daily'):
         role = Role.objects.create(name=name)
         for action in actions:
             RolePermission.objects.create(role=role, module=catalog.data_module(dataset), action=action)
@@ -46,55 +52,125 @@ class DataPanelCase(TestCase):
         services.assign(self.admin, user, role, project, [circle])
         return user
 
+    def corrections(self):
+        return UploadBatch.objects.filter(kind=UploadBatch.Kind.CORRECTION)
 
-class AdminEditingTests(DataPanelCase):
-    def test_several_edits_save_together_with_provenance_and_persist(self):
-        response = self.save('uptime_sites', changes=[{'id': self.mp.pk, 'values': {'site_name': 'Alpha North', 'on_air': 'No'}},
-                                                       {'id': self.rj.pk, 'values': {'oa': 'JAIPUR'}}])
-        self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(response.json()['updated'], 2)
+
+class ReadOnlyDatasetTests(DataPanelCase):
+    def test_matrix_and_monthly_datasets_refuse_every_save(self):
+        self.client.force_login(self.admin)
+        listed = {d['key']: d['permissions'] for d in self.client.get(reverse('master-datasets')).json()['datasets']}
+        for key in ('uptime_sites', 'uptime_monthly', 'escalation'):
+            self.assertEqual((listed[key]['edit'], listed[key]['add'], listed[key]['editable'], listed[key]['addable']), (False, False, [], []), key)
+            response = self.save(key, changes=[{'id': self.mp.pk, 'values': {'site_name': 'Changed'}}],
+                                 additions=[{'values': {'site_id': 'NEW1'}}])
+            self.assertEqual(response.status_code, 400, key)
+            self.assertIn('read-only', response.json()['error'])
         self.mp.refresh_from_db()
-        self.assertEqual((self.mp.site_name, self.mp.on_air, self.mp.on_air_raw), ('Alpha North', False, 'No'))
-        self.assertEqual(self.mp.batch.kind, DataImportBatch.Kind.DATA_PANEL)  # traceable to this save
-        self.assertEqual(self.mp.batch.imported_by, self.admin)
-        rows = self.client.get(reverse('master-records', args=['uptime_sites']), {'q': 'UVMP1'}).json()['rows']
-        self.assertEqual(rows[0]['site_name'], 'Alpha North')  # as stored
+        self.assertEqual((self.mp.site_name, Site.objects.count()), ('Alpha', 2))
+        self.assertEqual((listed['uptime_daily']['edit'], listed['uptime_daily']['add'], listed['uptime_daily']['reason_required']), (True, True, True))
+        self.assertEqual(listed['uptime_daily']['editable'], ['availability_pct', 'outage_minutes'])
 
-    def test_any_admin_may_edit_and_add(self):
-        second = portal_user('dp-admin-2', 'admin')
-        added = self.save('uptime_daily', second, additions=[{'values': {'project': G4, 'circle': 'MP', 'site_id': 'uvmp1', 'date': '2026-10-02',
-                                                                          'outage_minutes': '0'}}])
-        self.assertEqual(added.status_code, 200, added.content)
-        self.assertTrue(SiteDailyPerformance.objects.filter(site=self.mp, date=date(2026, 10, 2), outage_minutes=0).exists())
+
+class DailyCorrectionTests(DataPanelCase):
+    def test_an_edit_is_an_authorized_correction_with_its_reason(self):
+        response = self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'availability_pct': '99.5'}}])
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual((response.json()['updated'], response.json()['added']), (1, 0))
+        self.day.refresh_from_db()
+        self.assertAlmostEqual(self.day.availability_pct, 99.5)
+        self.assertAlmostEqual(self.day.outage_minutes, 7.2)
+        self.assertEqual((self.day.revision, self.day.batch.kind, daily.rank(self.day.batch.kind)), (2, UploadBatch.Kind.CORRECTION, 3))
+        self.assertEqual((self.day.batch.uploaded_by, self.day.batch.remarks), (self.admin, REASON))
+        event = DailyPerformanceEvent.objects.get(site=self.mp, report_date=date(2026, 10, 1))
+        self.assertEqual((event.action, event.reason, event.user), (DailyPerformanceEvent.Action.CORRECTION, REASON, self.admin))
+        self.assertAlmostEqual(event.stored_outage_minutes, 10)
+        rows = self.client.get(reverse('master-records', args=['uptime_daily']), {'period': 'overall', 'site_id': 'UVMP1'}).json()['rows']
+        self.assertEqual((rows[0]['source'], rows[0]['revision']), ('correction', 2))
+
+    def test_outage_minutes_may_be_entered_instead(self):
+        self.assertEqual(self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'outage_minutes': '0'}}]).status_code, 200)
+        self.day.refresh_from_db()
+        self.assertEqual((self.day.availability_pct, self.day.outage_minutes), (100, 0))
+
+    def test_the_same_value_is_no_correction(self):
+        response = self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'outage_minutes': '10'}}])
+        self.assertEqual((response.status_code, response.json()['updated']), (200, 0))
+        self.assertFalse(self.corrections().exists())
+
+    def test_a_missing_site_day_is_added(self):
+        response = self.save('uptime_daily', additions=[{'values': {'project': G4, 'circle': 'mp', 'site_id': ' uvmp1 ', 'date': '2026-10-02',
+                                                                     'outage_minutes': '0'}}])
+        self.assertEqual(response.status_code, 200, response.content)
+        record = DailySitePerformance.objects.get(site=self.mp, report_date=date(2026, 10, 2))
+        self.assertEqual((record.availability_pct, record.batch.kind, record.batch.remarks, record.technology, record.circle),
+                         (100, UploadBatch.Kind.CORRECTION, REASON, G4, 'MP'))
+        again = self.save('uptime_daily', additions=[{'values': {'site_id': 'UVMP1', 'date': '2026-10-02', 'availability_pct': '50'}}])
+        self.assertEqual(again.status_code, 400)
+        self.assertIn('already has a value', again.json()['details']['additions']['0']['_row'])
+
+    def test_a_reason_is_required(self):
+        for reason in (None, '', '   '):
+            response = self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'availability_pct': '50'}}], reason=reason)
+            self.assertEqual(response.status_code, 400, reason)
+            self.assertEqual(response.json()['details'], {'reason': 'Required.'})
+        self.day.refresh_from_db()
+        self.assertEqual((self.day.outage_minutes, self.corrections().count()), (10, 0))
+
+    def test_a_finalized_month_is_refused(self):
+        MonthlySitePerformance.objects.create(
+            site=self.mp, month=date(2026, 10, 1), technology=G4, calculation_category=MonthlySitePerformance.Category.DAILY_DERIVED,
+            total_outage_minutes=10, availability_pct=99.3, reporting_days=1, calendar_days=31, effective_from=date(2026, 10, 1),
+            finalized_at=timezone.now())
+        response = self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'availability_pct': '50'}}])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('finalized', response.json()['details']['changes'][str(self.day.pk)]['_row'])
+        added = self.save('uptime_daily', additions=[{'values': {'site_id': 'UVMP1', 'date': '2026-10-05', 'availability_pct': '50'}}])
+        self.assertIn('finalized', added.json()['details']['additions']['0']['_row'])
+        self.day.refresh_from_db()
+        self.assertEqual((self.day.outage_minutes, self.corrections().count()), (10, 0))
 
     def test_one_invalid_cell_rolls_everything_back(self):
         response = self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'outage_minutes': '20'}}],
-                             additions=[{'values': {'project': G4, 'circle': 'MP', 'site_id': 'UVMP1', 'date': '2026-10-03', 'outage_minutes': 'abc'}}])
+                             additions=[{'values': {'site_id': 'UVMP1', 'date': '2026-10-03', 'outage_minutes': 'abc'}}])
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()['details']['additions'], {'0': {'outage_minutes': 'Enter a number.'}})
         self.day.refresh_from_db()
-        self.assertEqual(self.day.outage_minutes, 10)  # the valid change was not saved either
-        self.assertFalse(DataImportBatch.objects.filter(kind=DataImportBatch.Kind.DATA_PANEL).exists())
+        self.assertEqual((self.day.outage_minutes, self.day.revision), (10, 1))  # the valid change was not saved either
+        self.assertFalse(self.corrections().exists())
+        self.assertFalse(DailyPerformanceEvent.objects.exists())
 
-    def test_rules_unique_identity_associations_and_ranges(self):
-        duplicate = self.save('uptime_sites', additions=[{'values': {'project': G4, 'circle': 'mp', 'site_id': ' uvmp1 '}}])
-        self.assertEqual(duplicate.json()['details']['additions']['0'], {'site_id': 'A record with the same identity already exists (each must be unique).'})
-        outside = self.save('uptime_sites', additions=[{'values': {'project': G4, 'circle': 'BH', 'site_id': 'UVBH1'}}])
-        self.assertIn('not a circle of', outside.json()['details']['additions']['0']['circle'])
-        unknown_site = self.save('uptime_daily', additions=[{'values': {'project': G4, 'circle': 'MP', 'site_id': 'NOPE', 'date': '2026-10-02'}}])
-        self.assertIn('not a Site Master site', unknown_site.json()['details']['additions']['0']['site_id'])
-        too_much = self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'outage_minutes': '2000'}}])
-        self.assertIn('1,440', too_much.json()['details']['changes'][str(self.day.pk)]['outage_minutes'])
-        missing = self.save('uptime_sites', additions=[{'values': {'project': G4, 'circle': 'MP'}}])
-        self.assertEqual(missing.json()['details']['additions']['0'], {'site_id': 'Required.'})
-        frozen = self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'date': '2026-10-09'}}])  # identity of a daily value
-        self.assertEqual(frozen.json()['details']['changes'][str(self.day.pk)], {'date': 'This column cannot be changed here.'})
-        self.assertEqual(UptimeSite.objects.count(), 2)
+    def test_values_sites_and_columns_are_validated(self):
+        def errors(response, kind='changes', key=None):
+            self.assertEqual(response.status_code, 400, response.content)
+            return response.json()['details'][kind][key or (str(self.day.pk) if kind == 'changes' else '0')]
+        change = lambda values: self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': values}])  # noqa: E731
+        add = lambda values: self.save('uptime_daily', additions=[{'values': values}])  # noqa: E731
+        self.assertIn('between 0 and 100', errors(change({'availability_pct': '101'}))['availability_pct'])
+        self.assertIn('1,440', errors(change({'outage_minutes': '2000'}))['outage_minutes'])
+        self.assertIn('cannot be removed', errors(change({'availability_pct': ''}))['availability_pct'])
+        self.assertIn('disagree', errors(change({'availability_pct': '50', 'outage_minutes': '0'}))['outage_minutes'])
+        self.assertEqual(errors(change({'date': '2026-10-09'})), {'date': 'This column cannot be changed here.'})  # identity of a value
+        self.assertIn('not a Site Master site', errors(add({'site_id': 'NOPE', 'date': '2026-10-02', 'availability_pct': '1'}), 'additions')['site_id'])
+        self.assertEqual(errors(add({'availability_pct': '1'}), 'additions'), {'site_id': 'Required.', 'date': 'Required.'})
+        self.assertIn('circle MP', errors(add({'site_id': 'UVMP1', 'circle': 'RJ', 'date': '2026-10-02', 'availability_pct': '1'}), 'additions')['circle'])
+        self.assertIn('4G Saturation site', errors(add({'site_id': 'UVMP1', 'project': 'LWE', 'date': '2026-10-02', 'availability_pct': '1'}), 'additions')['project'])
+        self.assertIn('future', errors(add({'site_id': 'UVMP1', 'date': '2999-01-01', 'availability_pct': '1'}), 'additions')['date'])
+        make_site('STMP1', circle='MP', outside_scope=True)
+        self.assertIn('outside the dashboard', errors(add({'site_id': 'STMP1', 'date': '2026-10-02', 'availability_pct': '1'}), 'additions')['site_id'])
+        self.assertFalse(self.corrections().exists())
 
-    def test_blank_numbers_are_not_reported_never_zero(self):
-        self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'outage_minutes': ''}}])
-        self.day.refresh_from_db()
-        self.assertIsNone(self.day.outage_minutes)
+    def test_a_correction_changes_what_the_dashboard_shows(self):
+        def outage():
+            portfolio.clear_cache()
+            ds = portfolio.portfolio_dataset()
+            return ds.outage[list(ds.sites['site_id']).index('UVMP1'), ds.position(date(2026, 10, 1))]
+        self.assertAlmostEqual(outage(), 10)
+        self.assertEqual(self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'outage_minutes': '720'}}]).status_code, 200)
+        self.assertAlmostEqual(outage(), 720)
+        monthly = MonthlySitePerformance.objects.get(site=self.mp, month=date(2026, 10, 1), is_current=True,
+                                                     calculation_category=MonthlySitePerformance.Category.DAILY_DERIVED)
+        self.assertAlmostEqual(monthly.total_outage_minutes, 720)  # the monthly results were recalculated after the save
 
     def test_rca_edits_follow_the_register_rules_and_are_recorded(self):
         rec = RcaRecord.objects.create(reporting_date=date(2026, 10, 1), project=G4, project_raw='4G Satu', circle='MP', circle_raw='Madhya Pradesh',
@@ -107,23 +183,13 @@ class AdminEditingTests(DataPanelCase):
         self.assertEqual(RcaEvent.objects.get(record=rec).changes['final_bucket'], {'from': 'TCS', 'to': 'bsnl ofc'})
         refused = self.save('rca', changes=[{'id': rec.pk, 'values': {'rca_text': ''}}])
         self.assertEqual(refused.status_code, 400)
-        # The approved taxonomy, as for an upload: an unapproved Final Bucket and a Sub Bucket of another Final Bucket are refused.
         for values in ({'final_bucket': 'BSNL  OFC'}, {'final_bucket': 'TCS', 'bucket_2': 'SSA OFC'}):
             self.assertEqual(self.save('rca', changes=[{'id': rec.pk, 'values': values}]).status_code, 400, values)
         base = {'reporting_date': '2026-10-02', 'project': G4, 'circle': 'MP', 'site_id': 'UVMP1', 'rca_text': 'Fiber cut'}
         self.assertEqual(self.save('rca', additions=[{'values': base}]).status_code, 400)  # no Final Bucket
-        added = self.save('rca', additions=[{'values': {**base, 'final_bucket': 'BSNL OFC'}}])
+        added = self.save('rca', additions=[{'values': {**base, 'final_bucket': 'BSNL OFC'}}], reason=None)  # RCA needs no reason
         self.assertEqual(added.status_code, 200, added.content)
         self.assertEqual(RcaRecord.objects.get(rca_text='Fiber cut').source, RcaRecord.Source.MANUAL)
-
-    def test_escalation_edits_keep_raw_dates_and_links_in_step(self):
-        batch = EscalationImportBatch.objects.create(original_filename='m.xlsx', checksum_sha256='x', sheet_name='Raw Data', stored_path='-')
-        row = EscalationSite.objects.create(project=G4, circle='MP', site_id='UVMPX', site_key='UVMPX', batch=batch, source_row=2)
-        response = self.save('escalation', changes=[{'id': row.pk, 'values': {'site_id': 'UVMP1', 'om_start_date': '2026-10-05'}}])
-        self.assertEqual(response.status_code, 200, response.content)
-        row.refresh_from_db()
-        self.assertEqual((row.site_key, row.om_start_raw, row.uptime_site_id, row.match_status), ('UVMP1', '2026-10-05', self.mp.pk, 'matched'))
-        self.assertEqual(row.batch.initiated_via, 'data_panel')
 
 
 class PermissionTests(DataPanelCase):
@@ -131,61 +197,76 @@ class PermissionTests(DataPanelCase):
         user = self.member('viewer', self.role('Viewer', 'view'))
         self.client.force_login(user)
         listed = {d['key']: d['permissions'] for d in self.client.get(reverse('master-datasets')).json()['datasets']}
-        self.assertEqual(list(listed), ['uptime_sites'])  # only the datasets granted
-        self.assertEqual((listed['uptime_sites']['edit'], listed['uptime_sites']['add'], listed['uptime_sites']['export']), (False, False, False))
-        self.assertEqual(self.save('uptime_sites', user, changes=[{'id': self.mp.pk, 'values': {'site_name': 'x'}}]).status_code, 403)
-        self.assertEqual(self.save('uptime_sites', user, additions=[{'values': {'project': G4, 'circle': 'MP', 'site_id': 'N1'}}]).status_code, 403)
-        self.assertEqual(self.client.get(reverse('master-export', args=['uptime_sites'])).status_code, 403)
-        self.assertEqual(self.client.get(reverse('master-records', args=['uptime_daily'])).status_code, 403)  # another dataset
+        self.assertEqual(list(listed), ['uptime_daily'])  # only the datasets granted
+        self.assertEqual((listed['uptime_daily']['edit'], listed['uptime_daily']['add'], listed['uptime_daily']['export']), (False, False, False))
+        self.assertEqual(self.save('uptime_daily', user, changes=[{'id': self.day.pk, 'values': {'outage_minutes': '1'}}]).status_code, 403)
+        self.assertEqual(self.save('uptime_daily', user, additions=[{'values': {'site_id': 'UVMP1', 'date': '2026-10-02', 'outage_minutes': '1'}}]).status_code, 403)
+        self.assertEqual(self.client.get(reverse('master-export', args=['uptime_daily'])).status_code, 403)
+        self.assertEqual(self.client.get(reverse('master-records', args=['uptime_sites'])).status_code, 403)  # another dataset
+
+    def test_edit_on_a_read_only_dataset_grants_nothing(self):
+        user = self.member('site-editor', self.role('Site editor', 'view', 'edit', 'create', dataset='uptime_sites'))
+        self.client.force_login(user)
+        caps = self.client.get(reverse('master-datasets')).json()['datasets'][0]['permissions']
+        self.assertEqual((caps['edit'], caps['add']), (False, False))
+        self.assertEqual(self.save('uptime_sites', user, changes=[{'id': self.mp.pk, 'values': {'site_name': 'x'}}]).status_code, 400)
 
     def test_edit_only_and_add_only_are_independent(self):
         editor = self.member('editor', self.role('Editor', 'view', 'edit'))
-        self.assertEqual(self.save('uptime_sites', editor, changes=[{'id': self.mp.pk, 'values': {'site_name': 'Edited'}}]).status_code, 200)
-        self.assertEqual(self.save('uptime_sites', editor, additions=[{'values': {'project': G4, 'circle': 'MP', 'site_id': 'N1'}}]).status_code, 403)
+        self.assertEqual(self.save('uptime_daily', editor, changes=[{'id': self.day.pk, 'values': {'outage_minutes': '1'}}]).status_code, 200)
+        self.assertEqual(self.save('uptime_daily', editor, additions=[{'values': {'site_id': 'UVMP1', 'date': '2026-10-02', 'outage_minutes': '1'}}]).status_code, 403)
         adder = self.member('adder', self.role('Adder', 'view', 'create'))
-        self.assertEqual(self.save('uptime_sites', adder, additions=[{'values': {'project': G4, 'circle': 'MP', 'site_id': 'N1'}}]).status_code, 200)
-        self.assertEqual(self.save('uptime_sites', adder, changes=[{'id': self.mp.pk, 'values': {'site_name': 'x'}}]).status_code, 403)
+        self.assertEqual(self.save('uptime_daily', adder, additions=[{'values': {'site_id': 'UVMP1', 'date': '2026-10-02', 'outage_minutes': '1'}}]).status_code, 200)
+        self.assertEqual(self.save('uptime_daily', adder, changes=[{'id': self.day.pk, 'values': {'outage_minutes': '2'}}]).status_code, 403)
         self.client.force_login(editor)
-        self.assertEqual(self.client.get(reverse('master-export', args=['uptime_sites'])).status_code, 403)  # Edit gives no Export
+        self.assertEqual(self.client.get(reverse('master-export', args=['uptime_daily'])).status_code, 403)  # Edit gives no Export
         exporter = self.member('exporter', self.role('Exporter', 'view', 'export'))
         self.client.force_login(exporter)
-        self.assertEqual(self.client.get(reverse('master-export', args=['uptime_sites'])).status_code, 200)
+        self.assertEqual(self.client.get(reverse('master-export', args=['uptime_daily'])).status_code, 200)
 
-    def test_project_circle_scope_applies_to_edits_and_additions(self):
+    def test_project_circle_scope_applies_to_corrections_and_additions(self):
         user = self.member('mp-editor', self.role('MP Editor', 'view', 'edit', 'create'))  # 4G MP only
-        other = self.save('uptime_sites', user, changes=[{'id': self.rj.pk, 'values': {'site_name': 'x'}}])
-        self.assertIn('outside the projects and circles', other.json()['details']['changes'][str(self.rj.pk)]['_row'])
-        moved = self.save('uptime_sites', user, changes=[{'id': self.mp.pk, 'values': {'circle': 'RJ'}}])
-        self.assertIn('Outside the projects and circles', moved.json()['details']['changes'][str(self.mp.pk)]['circle'])
-        added = self.save('uptime_sites', user, additions=[{'values': {'project': G4, 'circle': 'RJ', 'site_id': 'N2'}}])
-        self.assertEqual(added.status_code, 400)
-        self.rj.refresh_from_db()
-        self.assertEqual((self.rj.site_name, UptimeSite.objects.count()), ('Delta', 2))
+        self.client.force_login(user)
+        rows = self.client.get(reverse('master-records', args=['uptime_daily']), {'period': 'overall'}).json()['rows']
+        self.assertEqual([r['site_id'] for r in rows], ['UVMP1'])
+        other = self.save('uptime_daily', user, changes=[{'id': self.rj_day.pk, 'values': {'outage_minutes': '5'}}])
+        self.assertIn('outside the projects and circles', other.json()['details']['changes'][str(self.rj_day.pk)]['_row'])
+        added = self.save('uptime_daily', user, additions=[{'values': {'site_id': 'UVRJ1', 'date': '2026-10-02', 'outage_minutes': '5'}}])
+        self.assertIn('Outside the projects and circles', added.json()['details']['additions']['0']['circle'])
+        self.rj_day.refresh_from_db()
+        self.assertEqual((self.rj_day.outage_minutes, self.corrections().count()), (0, 0))
+        ok = self.save('uptime_daily', user, changes=[{'id': self.day.pk, 'values': {'outage_minutes': '5'}}])
+        self.assertEqual(ok.status_code, 200, ok.content)  # an authorized (non-Admin) correction inside the scope
+        self.assertEqual(DailyPerformanceEvent.objects.get().user, user)
 
     def test_granting_and_revoking_applies_at_once(self):
         from apps.accounts import services
         role = self.role('Granted', 'view', 'edit')
         user = self.member('dyn', role)
-        self.assertEqual(self.save('uptime_sites', user, changes=[{'id': self.mp.pk, 'values': {'site_name': 'A'}}]).status_code, 200)
-        services.update_role(self.admin, role, permissions=[{'module': 'data_uptime_sites', 'action': 'view'}])
-        self.assertEqual(self.save('uptime_sites', user, changes=[{'id': self.mp.pk, 'values': {'site_name': 'B'}}]).status_code, 403)
+        self.assertEqual(self.save('uptime_daily', user, changes=[{'id': self.day.pk, 'values': {'outage_minutes': '1'}}]).status_code, 200)
+        services.update_role(self.admin, role, permissions=[{'module': 'data_uptime_daily', 'action': 'view'}])
+        self.assertEqual(self.save('uptime_daily', user, changes=[{'id': self.day.pk, 'values': {'outage_minutes': '2'}}]).status_code, 403)
 
     def test_there_is_no_delete_anywhere(self):
         self.client.force_login(self.admin)
         for name in ('master-save', 'master-records', 'master-export', 'master-options'):
-            self.assertEqual(self.client.delete(reverse(name, args=['uptime_sites'])).status_code, 405, name)
+            self.assertEqual(self.client.delete(reverse(name, args=['uptime_daily'])).status_code, 405, name)
         self.assertNotIn('delete', {a for m in catalog.modules().values() for a in m['actions']})
-        self.save('uptime_sites', changes=[{'id': self.mp.pk, 'values': {'site_name': 'only this'}}])
-        self.assertEqual(UptimeSite.objects.count(), 2)  # rows not in the payload are untouched
+        self.save('uptime_daily', changes=[{'id': self.day.pk, 'values': {'outage_minutes': '3'}}])
+        self.assertEqual(DailySitePerformance.objects.count(), 2)  # rows not in the payload are untouched
 
 
 class FrameworkTests(TestCase):
     def test_a_new_dataset_gets_its_permissions_without_code_changes(self):
-        extra = datasets.Dataset('future_table', 'Future table', 'A dataset added later.', lambda: UptimeSite.objects.all(), (), 'project', 'circle')
+        extra = datasets.Dataset('future_table', 'Future table', 'A dataset added later.', lambda: Site.objects.all(), (), 'technology', 'circle')
         with mock.patch.dict(datasets.DATASETS, {'future_table': extra}):
             module = catalog.modules()['data_future_table']
             self.assertEqual(list(module['actions']), ['view', 'create', 'edit', 'export'])
             self.assertTrue(catalog.is_known('data_future_table', 'export'))
+
+    def test_dataset_keys_and_permission_modules_are_unchanged(self):
+        self.assertEqual(list(datasets.DATASETS), ['uptime_sites', 'uptime_daily', 'uptime_monthly', 'escalation', 'rca'])
+        self.assertTrue(all(catalog.is_known(f'data_{k}', 'view') for k in datasets.DATASETS))
 
     def test_existing_master_data_grants_convert_without_broadening(self):
         role = Role.objects.create(name='Old viewer')

@@ -10,6 +10,7 @@ import { formatNumber } from '../../lib/format';
 import { ALL, FILTER_KEYS, NOT_RECORDED, SITE_SCOPES, type FilterKey } from '../../lib/rca';
 import { approvedSubBuckets } from '../../lib/rcaTaxonomy';
 import type { RcaCycleCode, RcaOptions, RcaSiteScope, RcaStatus, RcaUnitCode } from '../../types/rca';
+import { PopulationSelect } from '../PopulationSelect';
 
 const CYCLE_TONE: Record<RcaCycleCode | RcaUnitCode, string> = {
   unconfigured: 'border-slate-300 bg-slate-50 text-slate-700',
@@ -59,9 +60,11 @@ const subBucketOptions = (options: RcaOptions, finalBucket: string) => {
 };
 
 /** The RCA filters, in the same compact filter card and label style as the dashboard pages. */
-export function RcaFilterBar({ options, params, onChange, onReset, search = false, statusFilter = false, actions, lead }: {
+export function RcaFilterBar({ options, params, onChange, onReset, search = false, statusFilter = false, population = false, actions, lead }: {
   options: RcaOptions; params: URLSearchParams; onChange: (key: FilterKey, value: string) => void; onReset: () => void;
   search?: boolean; statusFilter?: boolean; actions?: ReactNode;
+  /** The global population selector (RCA Summary: its site metrics), next to the Site Scope record filter. */
+  population?: boolean;
   /** Page-specific controls placed before the shared filters (e.g. a reporting-date selector). */
   lead?: ReactNode;
 }) {
@@ -97,6 +100,7 @@ export function RcaFilterBar({ options, params, onChange, onReset, search = fals
       {select('circle', 'Circle', 'All circles', [...new Map(circles.map((c) => [c.circle, c])).values()]
         .map((c) => ({ value: c.circle, label: `${c.circle} · ${c.circle_raw}` })), 'w-44')}
       <SiteScopeField value={get('site_scope')} onChange={(v) => onChange('site_scope', v)} />
+      {population && <PopulationSelect id="rca-population" />}
       {select('final_bucket', 'Final Bucket', 'All Final Buckets', options.final_buckets, 'w-44')}
       {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', subBucketOptions(options, get('final_bucket')), 'w-44')}
       {select('category', 'Cause category', 'All categories', [

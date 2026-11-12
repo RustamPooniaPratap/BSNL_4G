@@ -179,12 +179,24 @@ def blocking_message(check: dict) -> str:
 # --- Usage (what history refers to a project, circle or association) --------------------------------
 
 def usage_by_pair() -> dict[tuple[str, str], dict]:
-    """Sites, daily and monthly records, raw uploads, RCA records and expected RCA units, escalation-matrix sites and
-    user grants per (project, circle). Zero means none stored."""
-    from apps.rca.models import RcaRecord, RcaRequiredSubmission
-    from apps.uptimedb.models import DataImportBatch, EscalationSite, SiteDailyPerformance, SiteMonthlyPerformance, UptimeSite
+    """What the data layer (apps.sitedata) and other history hold per (project, circle); the project is the technology.
+    Zero means none stored.
+
+    - sites: dashboard-scope sites of the site master (Consolidation Matrix); on_air_sites: those with a Site On-Air Date
+      on or before today.
+    - daily: daily records; monthly: current monthly results.
+    - uploads: raw daily CSV uploads (4G and LWE).
+    - escalation: dashboard-scope sites whose matrix row names a CI, IE or O&M manager (the escalation contacts now
+      come from the Consolidation Matrix).
+    - rca, rca_expected: RCA records and expected RCA units; users: accounts granted the pair.
+    """
+    from django.db.models import Q
+    from django.utils import timezone
 
     from apps.accounts.models import AccessAssignment
+    from apps.rca.models import RcaRecord, RcaRequiredSubmission
+    from apps.sitedata.arrivals import RAW_KINDS
+    from apps.sitedata.models import DailySitePerformance, MonthlySitePerformance, Site, UploadBatch
 
     out: dict[tuple[str, str], dict] = {}
 
@@ -192,14 +204,19 @@ def usage_by_pair() -> dict[tuple[str, str], dict]:
         for r in rows:
             out.setdefault((r[p], r[c]), dict(EMPTY_USAGE))[name] = r['n']
 
-    add(UptimeSite.objects.order_by().values('project', 'circle').annotate(n=Count('id')), 'sites')
-    add(UptimeSite.objects.filter(on_air=True).order_by().values('project', 'circle').annotate(n=Count('id')), 'on_air_sites')
-    add(SiteDailyPerformance.objects.order_by().values('site__project', 'site__circle').annotate(n=Count('id')), 'daily', 'site__project', 'site__circle')
-    add(SiteMonthlyPerformance.objects.order_by().values('site__project', 'site__circle').annotate(n=Count('id')), 'monthly', 'site__project', 'site__circle')
-    add(DataImportBatch.objects.filter(kind=DataImportBatch.Kind.RAW_DAILY_CSV).order_by().values('project', 'circle').annotate(n=Count('id')), 'uploads')
+    sites = Site.objects.filter(reporting_scope=Site.Scope.DASHBOARD).order_by()
+    add(sites.values('technology', 'circle').annotate(n=Count('id')), 'sites', 'technology')
+    add(sites.filter(on_air_date__isnull=False, on_air_date__lte=timezone.localdate()).values('technology', 'circle')
+        .annotate(n=Count('id')), 'on_air_sites', 'technology')
+    add(DailySitePerformance.objects.order_by().values('technology', 'circle').annotate(n=Count('id')), 'daily', 'technology')
+    add(MonthlySitePerformance.objects.filter(is_current=True).order_by().values('technology', 'site__circle').annotate(n=Count('id')),
+        'monthly', 'technology', 'site__circle')
+    add(UploadBatch.objects.filter(kind__in=RAW_KINDS).exclude(technology='').exclude(circle='').order_by().values('technology', 'circle')
+        .annotate(n=Count('id')), 'uploads', 'technology')
     add(RcaRecord.objects.order_by().values('project', 'circle').annotate(n=Count('id')), 'rca')
     add(RcaRequiredSubmission.objects.order_by().values('project', 'circle').annotate(n=Count('id')), 'rca_expected')
-    add(EscalationSite.objects.order_by().values('project', 'circle').annotate(n=Count('id')), 'escalation')
+    add(sites.filter(~Q(ci_name='') | ~Q(ie_name='') | ~Q(om_manager_name='')).values('technology', 'circle').annotate(n=Count('id')),
+        'escalation', 'technology')
     add(AccessAssignment.objects.filter(project_circle__isnull=False).order_by().values('project__key', 'project_circle__circle__code')
         .annotate(n=Count('user', distinct=True)), 'users', 'project__key', 'project_circle__circle__code')
     return out

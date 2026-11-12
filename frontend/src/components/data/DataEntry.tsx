@@ -59,9 +59,9 @@ export function NoWorkbook() {
   return (
     <Card className="mx-auto mt-10 max-w-xl items-center gap-3 px-8 py-10 text-center">
       <FileUp className="size-8 text-muted-foreground" aria-hidden="true" />
-      <h1 className="text-lg font-semibold">No Master workbook loaded</h1>
-      <p className="text-sm text-muted-foreground">Site checks need the master data, so upload the consolidated workbook first.</p>
-      <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Upload workbook</Link>
+      <h1 className="text-lg font-semibold">No reporting data loaded</h1>
+      <p className="text-sm text-muted-foreground">Site checks need the master data, so import the reporting data first.</p>
+      <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Import data</Link>
     </Card>
   );
 }

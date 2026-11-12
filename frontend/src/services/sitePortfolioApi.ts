@@ -4,14 +4,11 @@
  * daily records. Used only by the Site Portfolio page.
  */
 import type { BreakdownResponse, ConversionActivity, FilterOptions, PeriodSummary, SummaryResponse } from '../types';
+import type { Continuity } from '../types/reporting';
 import { request } from './api';
 
-/** Continuity of the reporting month: MTD ends at the last continuous date with data. */
-export interface PortfolioContinuity {
-  dates_with_data: string[];
-  continuous_until: string | null;
-  excluded_after_gap: string[];
-}
+/** Continuity of the reporting month: dates with data and their Complete / Provisional status. */
+export type PortfolioContinuity = Continuity;
 
 export type PortfolioFilterOptions = FilterOptions & { source: FilterOptions['source'] & { data_layer?: string; continuity?: PortfolioContinuity } };
 

@@ -150,7 +150,7 @@ class CiRoleTests(AuthTestCase):
         self.assertEqual(self.post('email-send', {'to': 'a@example.com', 'subject': 's', 'body': 'b'}).status_code, 403)
         self.assertEqual(self.post('email-send-reminder', {}).status_code, 403)
         token = self.csrf()
-        self.assertEqual(self.client.post(reverse('dashboard-workbook'), {}, HTTP_X_CSRFTOKEN=token).status_code, 403)
+        self.assertIn(self.client.post(reverse('dashboard-workbook'), {}, HTTP_X_CSRFTOKEN=token).status_code, (403, 405))  # no Master workbook upload exists any more
         self.assertEqual(self.client.post(reverse('upload-file'), {}, HTTP_X_CSRFTOKEN=token).status_code, 403)
 
     def test_ci_cannot_create_accounts_or_change_any_role_including_their_own(self):
@@ -307,15 +307,15 @@ class NoLoginBypassTests(AuthTestCase):
 
     def test_protected_apis_need_a_session_and_roles_stay_enforced(self):
         anonymous = Client()
-        for name in ('dashboard-summary', 'allkpis-summary', 'site-portfolio-summary', 'sitedata-matrix-list', 'import-list', 'auth-users', 'rca-records'):
+        for name in ('dashboard-summary', 'allkpis-summary', 'site-portfolio-summary', 'sitedata-matrix-list', 'sitedata-uptime-list', 'auth-users', 'rca-records'):
             self.assertIn(anonymous.get(reverse(name)).status_code, (401, 403), name)
         ci = Client()
         self.sign_in('ravi.ci', client=ci)
-        for name in ('auth-users', 'sitedata-matrix-list', 'import-list', 'dashboard-teams'):  # Admin only
+        for name in ('auth-users', 'sitedata-matrix-list', 'sitedata-uptime-list', 'dashboard-teams'):  # Admin only
             self.assertEqual(ci.get(reverse(name)).status_code, 403, name)
         admin = Client()
         self.sign_in('asha.admin', client=admin)
-        for name in ('auth-users', 'sitedata-matrix-list', 'import-list'):
+        for name in ('auth-users', 'sitedata-matrix-list', 'sitedata-uptime-list'):
             self.assertEqual(admin.get(reverse(name)).status_code, 200, name)
 
 

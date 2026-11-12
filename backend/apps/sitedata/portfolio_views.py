@@ -1,6 +1,12 @@
 """Site Portfolio API on the new data layer (/api/site-portfolio/). The same requests, permissions, validation,
 calculations (dashboard.metrics) and responses as the dashboard endpoints the page used before, with the dataset of
-the new layer instead of the old tables. Only the Site Portfolio page calls these endpoints."""
+the new layer instead of the old tables. Only the Site Portfolio page calls these endpoints.
+
+Population (``scope``: on_air | om_start, default on_air; anything else, including the former "all", is HTTP 400): summary,
+breakdowns and period count exactly the selected population, as every dashboard endpoint, and return the ``population``
+block. The summary's ``status_counts`` (total / On-Air / O&M Start sites of the selection) are status counts, not a
+population figure. Conversion activity is a status flow (sites that went On-Air / started O&M in a month, from the matrix
+dates) and ignores ``scope``."""
 from datetime import date
 
 from rest_framework.decorators import api_view, permission_classes
@@ -11,8 +17,8 @@ from apps.accounts.permissions import Can
 from apps.common.exceptions import ServiceUnavailable
 from apps.dashboard import metrics
 from apps.dashboard.scope import restrict
-from apps.dashboard.serializers import PeriodSerializer, SnapshotSerializer
-from apps.dashboard.views import _applied, _source, _validated
+from apps.dashboard.serializers import PeriodSerializer, SnapshotSerializer, period_status
+from apps.dashboard.views import _applied, _population, _source, _validated
 from apps.dashboard.workbook import WorkbookError
 
 from . import portfolio
@@ -46,7 +52,8 @@ def _source_info(ds) -> dict:
 def filters_view(request):
     from apps.organization.services import merge_filter_options
     ds = _dataset(request)
-    return Response({**merge_filter_options(metrics.filter_options(ds), pairs_for(request.user, 'dashboard', 'view')), 'source': _source_info(ds)})
+    return Response({**merge_filter_options(metrics.filter_options(ds), pairs_for(request.user, 'dashboard', 'view')),
+                     'population': metrics.population(metrics.DEFAULT_SCOPE), 'source': _source_info(ds)})
 
 
 @api_view(['GET'])
@@ -54,7 +61,8 @@ def filters_view(request):
 def summary_view(request):
     params = _validated(SnapshotSerializer, request, _dataset(request))
     ds = _for_scope(request, params)
-    return Response({**metrics.summary(ds, params['selection'], params['reporting_date']), 'filters': _applied(params), 'source': _source_info(ds)})
+    return Response({**metrics.summary(ds, params['selection'], params['reporting_date']), 'filters': _applied(params),
+                     'population': _population(params), 'source': _source_info(ds)})
 
 
 @api_view(['GET'])
@@ -62,7 +70,8 @@ def summary_view(request):
 def breakdowns_view(request):
     params = _validated(SnapshotSerializer, request, _dataset(request))
     ds = _for_scope(request, params)
-    return Response({**metrics.breakdown(ds, params['selection'], params['reporting_date']), 'filters': _applied(params), 'source': _source_info(ds)})
+    return Response({**metrics.breakdown(ds, params['selection'], params['reporting_date']), 'filters': _applied(params),
+                     'population': _population(params), 'source': _source_info(ds)})
 
 
 @api_view(['GET'])
@@ -76,12 +85,17 @@ def period_view(request):
         result.update(kind='months', months=len(params['month_keys']))
     else:
         result = metrics.period_summary(ds, params['selection'], dates=params['dates'], month_keys=None, label=params['label'])
-    return Response({**result, 'filters': _applied(params), 'source': _source_info(ds)})
+    # Complete / Provisional for the requested dates over the selection's reporting units (reporting.period_status, up
+    # to the data layer's latest date in the month); None without coverage information.
+    status = period_status(ds, params)
+    result.update(status=status['status'] if status else None, missing=status['missing'] if status else [])
+    return Response({**result, 'filters': _applied(params), 'population': _population(params), 'source': _source_info(ds)})
 
 
 @api_view(['GET'])
 @permission_classes([Can('dashboard', 'view')])
 def conversion_activity_view(request):
+    """A status flow (On-Air / O&M Start conversions per month from the matrix dates): ``scope`` is not used."""
     raw = request.query_params.get('month')
     try:
         month = date.fromisoformat(f'{raw}-01') if raw else None

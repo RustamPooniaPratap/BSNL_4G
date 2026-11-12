@@ -1,4 +1,4 @@
-import type { MatrixImportBatch, NewLayerUpload, UnmatchedReport, UptimeImportBatch } from '../types/matrixImport';
+import type { LweMappingBatch, MatrixImportBatch, MonthlyResultsResponse, NewLayerUpload, UnmatchedReport, UptimeImportBatch } from '../types/matrixImport';
 import type {
   AlertsResponse,
   BreakdownResponse,
@@ -9,6 +9,7 @@ import type {
   RecordsResponse,
   SiteDetailResponse,
   SourceStatusResponse,
+  Scope,
   SummaryResponse,
   TeamMonthlyResponse,
   TopPerformersResponse,
@@ -16,18 +17,13 @@ import type {
   ThresholdResponse,
   PeriodSummary,
   TrendResponse,
-  UploadResponse,
   WorkbookStatus,
-  WorkbookUploadResult,
   EmailStatus,
   EmailResult,
   ReminderRequest,
   ReminderTemplate,
   AuthUser,
   OmHeadsResponse,
-  ConversionActivity,
-  DataSourceKind,
-  DataSourceState,
   PortalUser,
   Role,
   AccessAssignment,
@@ -42,6 +38,10 @@ import type {
   RcaCauses, RcaCycleDetail, RcaCycleList, RcaImportBatch, RcaOptions, RcaPage, RcaRecordDetail, RcaRecordInput, RcaReportVersion,
   RcaSummary, RcaOverviewResponse, RcaUploadDetails, RcaUploadRights, RcaUploadType, RcaWorkflowInput,
 } from '../types/rca';
+import type {
+  CoverageThresholdInput, CoverageThresholdResponse, CoverageThresholdResult, FinalizeMonthResult, ReopenMonthResult, ReportingUnit, ReportingUnitInput,
+  ReportingUnitPatch,
+} from '../types/reporting';
 import type { ArrivalTracker, RawRowsPage, RawUpload, RawUploadDetails, RawUploadOptions } from '../types/rawUpload';
 import type { MasterDatasets, MasterOptions, MasterPage, MasterSaveRequest, MasterSaveResult } from '../types/masterData';
 import type { AlertAccount, AlertAutomation, AlertAutomationInput, AlertHistory, AlertMessage, AlertOptions, AlertPreview, AlertWorker } from '../types/alerts';
@@ -134,19 +134,20 @@ export const fetchHealthStatus = () => request<HealthStatus>('/health/');
 
 export const fetchRawFiles = () => request<RawFilesResponse>('/raw-files/');
 
-export async function uploadDataFile(file: File): Promise<UploadResponse> {
-  const formData = new FormData();
-  formData.append('file', file);
-  return request<UploadResponse>('/upload/', undefined, { method: 'POST', body: formData });
-}
-
 type Fetcher<T> = (params: URLSearchParams, signal?: AbortSignal) => Promise<T>;
 
 const dashboard = <T,>(path: string): Fetcher<T> =>
   (params, signal) => request<T>(`/dashboard/${path}`, params, { signal });
 
-export const fetchFilterOptions = (signal?: AbortSignal) =>
-  request<FilterOptions>('/dashboard/filters/', undefined, { signal });
+/** Site population of a request (lib/population); site-metric endpoints default to On-Air without it. */
+const scoped = (scope?: Scope, params?: URLSearchParams) => {
+  const query = new URLSearchParams(params);
+  if (scope) query.set('scope', scope);
+  return query;
+};
+
+export const fetchFilterOptions = (signal?: AbortSignal, scope?: Scope) =>
+  request<FilterOptions>('/dashboard/filters/', scoped(scope), { signal });
 export const fetchSummary = dashboard<SummaryResponse>('summary/');
 export const fetchTrends = dashboard<TrendResponse>('trends/');
 export const fetchBreakdowns = dashboard<BreakdownResponse>('breakdowns/');
@@ -157,47 +158,20 @@ export const fetchTeamMonthly = dashboard<TeamMonthlyResponse>('teams/monthly/')
 export const fetchTeamTop = dashboard<TopPerformersResponse>('teams/top/');
 export const fetchThresholds = dashboard<ThresholdResponse>('thresholds/');
 export const fetchPeriod = dashboard<PeriodSummary>('period/');
-export const fetchSiteDetail = (siteId: string, reportType: string, signal?: AbortSignal) =>
+export const fetchSiteDetail = (siteId: string, reportType: string, signal?: AbortSignal, scope?: Scope) =>
   request<SiteDetailResponse>(
     `/dashboard/records/${encodeURIComponent(siteId)}/`,
-    new URLSearchParams({ report_type: reportType }),
+    scoped(scope, new URLSearchParams({ report_type: reportType })),
     { signal },
   );
 export const fetchSourceStatus = (signal?: AbortSignal) =>
   request<SourceStatusResponse>('/dashboard/source/', undefined, { signal });
 
-export const fetchAlerts = (signal?: AbortSignal) =>
-  request<AlertsResponse>('/dashboard/alerts/', undefined, { signal });
+export const fetchAlerts = (signal?: AbortSignal, scope?: Scope) =>
+  request<AlertsResponse>('/dashboard/alerts/', scoped(scope), { signal });
 
 export const fetchWorkbookStatus = (signal?: AbortSignal) =>
   request<WorkbookStatus>('/dashboard/workbook/', undefined, { signal });
-
-/**
- * Upload the Master workbook. Uses XMLHttpRequest because fetch cannot report upload
- * progress. `onProgress` receives 0-1 while bytes are sent; the server then validates.
- */
-export async function uploadWorkbook(file: File, onProgress?: (fraction: number) => void): Promise<WorkbookUploadResult> {
-  const token = await ensureCsrf();
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_BASE_URL}/dashboard/workbook/`);
-    xhr.withCredentials = true;
-    xhr.setRequestHeader('X-CSRFToken', token);
-    xhr.responseType = 'json';
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress?.(event.loaded / event.total);
-    };
-    xhr.onload = () => {
-      const body = xhr.response ?? {};
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body as WorkbookUploadResult);
-      else reject(new ApiError(body.error || `Upload failed with status ${xhr.status}`, xhr.status, body.details ?? {}));
-    };
-    xhr.onerror = () => reject(new ApiError('The reporting API could not be reached. Check that the backend server is running.', 0));
-    const form = new FormData();
-    form.append('file', file);
-    xhr.send(form);
-  });
-}
 
 // --- Email (CSV arrival reminders and personal emails) ---------------------------------------
 
@@ -270,13 +244,9 @@ export const fetchAccessHistory = (params: URLSearchParams, signal?: AbortSignal
 export const resetUserPassword = (id: number) => send<{ user: PortalUser; temporary_password: string }>(`/auth/users/${id}/reset-password/`);
 export const revokeUserSessions = (id: number) => send<{ sessions_revoked: number }>(`/auth/users/${id}/revoke-sessions/`);
 
-// --- PostgreSQL import and dashboard data source ---------------------------------------------
+// --- Data layer imports (Data Source page, Admins) -----------------------------------------------
 
-export const fetchDataSource = (signal?: AbortSignal) => request<DataSourceState>('/data-source/', undefined, { signal });
-export const setDataSource = (source: DataSourceKind, acknowledgeWarnings: boolean) =>
-  send<DataSourceState>('/data-source/', { source, confirm: true, acknowledge_warnings: acknowledgeWarnings }, 'PUT');
-
-// Consolidation Matrix (site master of the new data layer): a separate pipeline from the Up-Time Report import above.
+// Consolidation Matrix (site master of the new data layer): a separate pipeline from the Up-Time Report import below.
 export async function previewMatrixImport(file: File) {
   const form = new FormData();
   form.append('file', file);
@@ -286,7 +256,7 @@ export const commitMatrixImport = (id: number) => send<MatrixImportBatch>(`/site
 export const discardMatrixImport = (id: number) => send<MatrixImportBatch>(`/sitedata/matrix/${id}/discard/`);
 export const matrixIssuesUrl = (id: number) => `${API_BASE_URL}/sitedata/matrix/${id}/issues.csv`;
 
-// Up-Time Report into the new data layer (the daily table every dashboard page reads); /imports/ above is the legacy destination.
+// Up-Time Report into the new data layer (the daily table every dashboard page reads).
 export async function previewSitedataUptime(file: File, project: string) {
   const form = new FormData();
   form.append('file', file);
@@ -303,17 +273,49 @@ export const mapAlternateIdentifier = (identifier: string, siteId: string, reaso
   send<UnmatchedReport>('/sitedata/uptime/unmatched/map/', { identifier, site_id: siteId, reason });
 export const processPendingRecords = () =>
   send<UnmatchedReport & { counts: Record<string, number> }>('/sitedata/uptime/unmatched/process/', { confirm: true });
-/** Recent uploads into the new data layer, both workbook types, newest first. */
-export async function fetchNewLayerUploads(signal?: AbortSignal) {
-  const [uptime, matrix] = await Promise.all([
-    request<{ imports: NewLayerUpload[] }>('/sitedata/uptime/', undefined, { signal }),
-    request<{ imports: NewLayerUpload[] }>('/sitedata/matrix/', undefined, { signal }),
-  ]);
-  return [...uptime.imports, ...matrix.imports].sort((a, b) => (b.uploaded_at ?? '').localeCompare(a.uploaded_at ?? ''));
+// LWE Band ID mapping (raw LWE band IDs -> master sites): the same preview / commit lifecycle as the matrix import.
+export async function previewLweMapping(file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  return request<LweMappingBatch>('/sitedata/lwe-mapping/preview/', undefined, { method: 'POST', body: form });
 }
+export const fetchLweMapping = (id: number, signal?: AbortSignal) => request<LweMappingBatch>(`/sitedata/lwe-mapping/${id}/`, undefined, { signal });
+export const commitLweMapping = (id: number) => send<LweMappingBatch>(`/sitedata/lwe-mapping/${id}/commit/`, { confirm: true });
+export const discardLweMapping = (id: number) => send<LweMappingBatch>(`/sitedata/lwe-mapping/${id}/discard/`);
+export const lweMappingIssuesUrl = (id: number) => `${API_BASE_URL}/sitedata/lwe-mapping/${id}/issues.csv`;
+/** Recent uploads into the new data layer, every workbook type, newest first. */
+export async function fetchNewLayerUploads(signal?: AbortSignal) {
+  const lists = await Promise.all(['/sitedata/uptime/', '/sitedata/matrix/', '/sitedata/lwe-mapping/'].map((path) =>
+    request<{ imports: NewLayerUpload[] }>(path, undefined, { signal })));
+  return lists.flatMap((l) => l.imports).sort((a, b) => (b.uploaded_at ?? '').localeCompare(a.uploaded_at ?? ''));
+}
+// --- Reporting configuration (Data Source page, Admins) ----------------------------------------------
+// Reporting units, the coverage threshold and the monthly results with their finalization. Validation errors arrive as
+// ApiError with the field messages in ``details`` (see fieldError).
 
-export const fetchConversionActivity = (params: URLSearchParams, signal?: AbortSignal) =>
-  request<ConversionActivity>('/dashboard/conversion-activity/', params, { signal });
+/** Monthly results of the data layer with each month's finalization status. */
+export const fetchMonthlyResults = (signal?: AbortSignal) => request<MonthlyResultsResponse>('/sitedata/months/', undefined, { signal });
+/** Finalize a month, also with missing data (it is then marked "Incomplete — Missing Data"). */
+export const finalizeMonth = (month: string, notes = '') =>
+  send<FinalizeMonthResult>('/sitedata/months/finalize/', { month, confirm: true, ...(notes ? { notes } : {}) });
+/** Reopen a finalized month so late data can be imported; a reason is required. */
+export const reopenMonth = (month: string, reason: string) => send<ReopenMonthResult>('/sitedata/months/reopen/', { month, reason });
+export const fetchReportingUnits = (signal?: AbortSignal) => request<{ units: ReportingUnit[] }>('/sitedata/reporting-units/', undefined, { signal });
+export const createReportingUnit = (unit: ReportingUnitInput) => send<{ unit: ReportingUnit }>('/sitedata/reporting-units/', { ...unit });
+/** Correct, deactivate (active_until set) or reactivate (active_until null) a unit, always with a reason. */
+export const updateReportingUnit = (id: number, patch: ReportingUnitPatch) => send<{ unit: ReportingUnit }>(`/sitedata/reporting-units/${id}/`, { ...patch }, 'PATCH');
+export const fetchCoverageThreshold = (signal?: AbortSignal) => request<CoverageThresholdResponse>('/sitedata/coverage-threshold/', undefined, { signal });
+/** A past effective date is refused (details.confirm_retroactive) until resent with confirm_retroactive: true. */
+export const changeCoverageThreshold = (change: CoverageThresholdInput) => send<CoverageThresholdResult>('/sitedata/coverage-threshold/', { ...change });
+
+/** The message of one field of a validation error (``details`` values are a message or a list of messages). */
+export function fieldError(error: unknown, field: string): string | null {
+  if (!(error instanceof ApiError)) return null;
+  const value = error.details[field];
+  if (value == null) return null;
+  if (Array.isArray(value)) return value.map(String).join(' ') || null;
+  return String(value);
+}
 export const fetchOmHeads = (signal?: AbortSignal) => request<OmHeadsResponse>('/dashboard/om-heads/', undefined, { signal });
 
 // --- RCA register ------------------------------------------------------------------------------
@@ -326,8 +328,9 @@ export const fetchRcaRecord = (id: number, signal?: AbortSignal) => request<RcaR
 export const createRcaRecord = (record: RcaRecordInput) => send<RcaRecordDetail>('/rca/records/', { ...record });
 export const updateRcaWorkflow = (id: number, workflow: RcaWorkflowInput) => send<RcaRecordDetail>(`/rca/records/${id}/workflow/`, { ...workflow }, 'PUT');
 export const addRcaComment = (id: number, text: string, evidence: string) => send<RcaRecordDetail>(`/rca/records/${id}/comments/`, { text, evidence });
-export const fetchRcaSummary = (params: URLSearchParams, signal?: AbortSignal) => request<RcaSummary>('/rca/summary/', params, { signal });
-export const fetchRcaOverview = (params: URLSearchParams, signal?: AbortSignal) => request<RcaOverviewResponse>('/rca/overview/', params, { signal });
+/** ``scope``: the site population of the site metrics (the RCA record filter ``site_scope`` is separate and unchanged). */
+export const fetchRcaSummary = (params: URLSearchParams, scope: Scope, signal?: AbortSignal) => request<RcaSummary>('/rca/summary/', scoped(scope, params), { signal });
+export const fetchRcaOverview = (params: URLSearchParams, scope: Scope, signal?: AbortSignal) => request<RcaOverviewResponse>('/rca/overview/', scoped(scope, params), { signal });
 /** The signed-in user's uploads; an Admin may ask for every upload. */
 export const fetchRcaImports = (signal?: AbortSignal, all = false, uploadType?: RcaUploadType) => {
   const params = new URLSearchParams();
@@ -367,8 +370,9 @@ export const unmapRcaCauses = (keys: string[]) => send<RcaCauses>('/rca/causes/m
 export const fetchRawUploadOptions = (signal?: AbortSignal) => request<RawUploadOptions>('/raw-uploads/options/', undefined, { signal });
 export const fetchRawUploads = (signal?: AbortSignal) => request<{ uploads: RawUpload[] }>('/raw-uploads/', undefined, { signal });
 export const fetchRawUpload = (id: number, signal?: AbortSignal) => request<RawUpload>(`/raw-uploads/${id}/`, undefined, { signal });
-export const fetchRawUploadRows = (id: number, status: string, page: number, signal?: AbortSignal) =>
-  request<RawRowsPage>(`/raw-uploads/${id}/rows/`, new URLSearchParams({ ...(status ? { status } : {}), page: String(page) }), { signal });
+/** ``category``: the programme category filter (matched, unmatched_programme, outside_programme, invalid). */
+export const fetchRawUploadRows = (id: number, status: string, page: number, signal?: AbortSignal, category = '') =>
+  request<RawRowsPage>(`/raw-uploads/${id}/rows/`, new URLSearchParams({ ...(status ? { status } : {}), ...(category ? { category } : {}), page: String(page) }), { signal });
 export async function previewRawUpload(file: File, details: RawUploadDetails) {
   const form = new FormData();
   form.append('file', file);
@@ -389,12 +393,15 @@ export const fetchArrivalTracker = (params: { date: string; start: string; end: 
 
 export type ReportKind = 'daily' | 'consolidated';
 
+/** The export URL of a report for the given filters and site population (every export carries the population). */
+export const reportUrl = (kind: ReportKind, params: Record<string, string>, scope: Scope) =>
+  `${API_BASE_URL}/dashboard/export/${kind}/?${scoped(scope, new URLSearchParams(Object.entries(params).filter(([, value]) => value)))}`;
+
 /** Fetch a report from the active data source; the server's message is thrown as an ApiError, never a broken file. */
-export async function downloadReport(kind: ReportKind, params: Record<string, string>, signal?: AbortSignal) {
-  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
+export async function downloadReport(kind: ReportKind, params: Record<string, string>, scope: Scope, signal?: AbortSignal) {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/dashboard/export/${kind}/?${query}`, { credentials: 'include', signal });
+    response = await fetch(reportUrl(kind, params, scope), { credentials: 'include', signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw unreachable();
@@ -438,6 +445,11 @@ export const fetchOrgHistory = (signal?: AbortSignal) => request<{ changes: OrgC
 
 // --- Master Data (database explorer) ----------------------------------------------------------
 export const fetchMasterDatasets = (signal?: AbortSignal) => request<MasterDatasets>('/master-data/datasets/', undefined, { signal });
+/** Site datasets whose rows follow the global population (``scope`` sent with records, options and exports). */
+export const POPULATION_DATASETS = new Set(['uptime_sites', 'uptime_daily', 'uptime_monthly', 'escalation']);
+/** ``params`` with the population added for a site dataset (other datasets are not population based). */
+export const masterParams = (key: string, params: URLSearchParams, scope: Scope) =>
+  (POPULATION_DATASETS.has(key) ? scoped(scope, params) : new URLSearchParams(params));
 export const fetchMasterOptions = (key: string, params: URLSearchParams, signal?: AbortSignal) =>
   request<MasterOptions>(`/master-data/${key}/options/`, params, { signal });
 export const fetchMasterRecords = (key: string, params: URLSearchParams, signal?: AbortSignal) =>

@@ -52,31 +52,46 @@ def scope_pairs(project: str, circles: list[str], recipient: set | None) -> set 
     return recipient if base is None else base & recipient
 
 
-def build(report: str, day_choice: str, pairs: set | None) -> tuple[str, bytes, str, str]:
-    """(file name, content, mimetype, period label) of one report. Raises ReportError with a reason to show."""
+def build(report: str, day_choice: str, pairs: set | None, population: str | None = None) -> tuple[str, bytes, str, str]:
+    """(file name, content, mimetype, period label) of one report. Raises ReportError with a reason to show.
+
+    ``population`` (on_air / om_start; the automation's Automation.population, default the portal's DEFAULT_SCOPE): the
+    site population of the uptime reports, exactly as the portal download with that ``scope``. The CSV Arrival report
+    measures who must submit data (On-Air eligibility of the reporting units) and the RCA Master workbook covers RCA
+    records: neither uses the population."""
     if report not in CATALOG:
         raise ReportError(f'Unknown report {report!r}.')
     if pairs is not None and not pairs:
         raise ReportError('No project or circle in this recipient\'s scope.')
     if report in ('daily_uptime', 'consolidated'):
         from apps.dashboard import report_export
-        from apps.uptimedb.datasource import SOURCES, active_source, current_dataset
-        ds = current_dataset()
+        from apps.dashboard.workbook import WorkbookError
+        from apps.sitedata import dashboard_source
+        from apps.dashboard.metrics import DEFAULT_SCOPE, SCOPES
+        population = population or DEFAULT_SCOPE
+        if population not in SCOPES:
+            raise ReportError(f'Unknown site population {population!r}.')
+        # The same dataset, population variant and export functions as the portal download (apps.dashboard.views),
+        # limited to the pairs: the email equals the portal file for the same pairs and population.
+        try:
+            ds = dashboard_source.dataset(pairs, population)
+        except WorkbookError as exc:
+            raise ReportError(f'Dashboard data is unavailable: {exc}') from exc
         day = reporting_day(day_choice, ds.latest_date)
         if day not in ds.reported_dates and report == 'daily_uptime':
             day = max((d for d in ds.reported_dates if d <= day), default=ds.latest_date)
-        label = f'{SOURCES[active_source()]} ({ds.workbook_name})'
+        label = dashboard_source.SOURCE_LABEL
         try:
             scope = report_export.resolve_scope(ds, None, None, pairs)
             if report == 'daily_uptime':
-                name, data = report_export.daily_report(ds, scope, day, label)
+                name, data = report_export.daily_report(ds, scope, day, label, population)
             else:
-                name, data = report_export.consolidated_report(ds, scope, min(day, ds.latest_date), label)
+                name, data = report_export.consolidated_report(ds, scope, min(day, ds.latest_date), label, population)
         except report_export.ExportError as exc:
             raise ReportError(str(exc)) from exc
         return name, data, XLSX, f'{day:%d %b %Y}' if report == 'daily_uptime' else f'Month to {min(day, ds.latest_date):%d %b %Y}'
     if report == 'csv_arrival':
-        from apps.uptimedb import arrivals
+        from apps.sitedata import arrivals
         day = reporting_day(day_choice, None)
         items = arrivals.tracker(day, pairs)['items']
         out = io.StringIO()

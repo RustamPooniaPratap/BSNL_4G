@@ -23,7 +23,7 @@ from apps.organization.models import (
     PersonnelSourceMapping,
     SitePersonnelAssignment,
 )
-from apps.uptimedb.models import UptimeSite
+from apps.sitedata.models import Site
 
 
 def assert_no_half_open_overlap(
@@ -204,13 +204,20 @@ def save_site_personnel_assignment(
     if site_id is None or personnel_id is None:
         raise ValidationError("site and personnel are required.")
     """
-    Saves a site-personnel assignment with pessimistic row-level locking on UptimeSite,
-    enforcing role consistency, parent CI validation, and half-open overlap checks.
+    Saves a site-personnel assignment with pessimistic row-level locking on the data layer's site (sitedata.Site),
+    enforcing dashboard reporting scope, role consistency, parent CI validation, and half-open overlap checks.
     """
     if effective_to and effective_to <= effective_from:
         raise ValidationError({"effective_to": "effective_to (exclusive) must be strictly greater than effective_from (inclusive)."})
 
-    site = UptimeSite.objects.select_for_update().get(pk=site_id)
+    site = Site.objects.select_for_update().filter(pk=site_id).first()
+    if site is None:
+        raise ValidationError({"site": f"Site {site_id} is not in the site master (Consolidation Matrix)."})
+    if site.reporting_scope != Site.Scope.DASHBOARD:
+        raise ValidationError({"site": (
+            f"Site '{site.bsnl_site_id}' is outside the dashboard reporting scope ({site.entity or 'no entity'}); "
+            "only 4G Saturation and LWE dashboard sites take personnel assignments."
+        )})
     personnel = Personnel.objects.get(pk=personnel_id)
 
     if personnel.role_type != role_type:
@@ -238,7 +245,7 @@ def save_site_personnel_assignment(
             raise ValidationError({
                 "parent_ci": (
                     f"Parent CI '{parent_ci.display_name}' has no overlapping CI assignment on site "
-                    f"'{site.site_id}' for interval [{effective_from}, {effective_to or 'ongoing'})."
+                    f"'{site.bsnl_site_id}' for interval [{effective_from}, {effective_to or 'ongoing'})."
                 )
             })
     elif role_type == Personnel.RoleType.CI and parent_ci_id is not None:
@@ -331,10 +338,10 @@ def preview_personnel_merge(source_id: int, target_id: int) -> Dict[str, Any]:
 
     # 2. Site assignments
     source_assignments = list(source.site_assignments.filter(is_active=True).values(
-        "id", "site_id", "site__site_id", "site__circle", "role_type", "effective_from", "effective_to"
+        "id", "site_id", "site__bsnl_site_id", "site__circle", "role_type", "effective_from", "effective_to"
     ))
     target_assignments = list(target.site_assignments.filter(is_active=True).values(
-        "id", "site_id", "site__site_id", "site__circle", "role_type", "effective_from", "effective_to"
+        "id", "site_id", "site__bsnl_site_id", "site__circle", "role_type", "effective_from", "effective_to"
     ))
 
     target_site_map = {a["site_id"]: a for a in target_assignments}
@@ -347,7 +354,7 @@ def preview_personnel_merge(source_id: int, target_id: int) -> Dict[str, Any]:
             t_to = ta["effective_to"] or date(9999, 12, 31)
             if sa["effective_from"] < t_to and ta["effective_from"] < s_to:
                 assignment_overlaps.append({
-                    "site_id": sa["site__site_id"],
+                    "site_id": sa["site__bsnl_site_id"],
                     "source_assignment_id": sa["id"],
                     "target_assignment_id": ta["id"],
                     "source_dates": f"[{sa['effective_from']}, {sa['effective_to'] or 'ongoing'})",
@@ -362,7 +369,7 @@ def preview_personnel_merge(source_id: int, target_id: int) -> Dict[str, Any]:
 
     # 5. Supervised IE assignments (if source is CI)
     supervised_assignments = list(SitePersonnelAssignment.objects.filter(parent_ci=source, is_active=True).values(
-        "id", "site__site_id", "personnel__display_name"
+        "id", "site__bsnl_site_id", "personnel__display_name"
     ))
 
     return {

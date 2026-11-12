@@ -14,7 +14,7 @@ from apps.rca import taxonomy
 from apps.rca.management.commands import rca_bucketization
 from apps.rca.models import RcaEvent, RcaRecord
 from apps.rca.parser import parse, text_key
-from apps.uptimedb.models import AppSetting
+from tests.sitedata_factory import make_site
 from tests.test_rca import RcaTestCase, workbook
 
 
@@ -210,8 +210,8 @@ class DatabaseSummaryTests(RcaTestCase):
         # The dropdowns still offer the approved taxonomy (it never comes from the records).
         self.assertEqual((self.options()['dates'], [o['label'] for o in self.options()['final_buckets']]), ([], list(EXPECTED)))
 
-    def test_in_postgresql_mode_no_workbook_is_read(self):
-        AppSetting.objects.update_or_create(key='dashboard_data_source', defaults={'value': 'database'})
+    def test_no_workbook_is_read(self):
+        make_site('OD0001', technology='4G Saturation', circle='OD')  # the data layer has sites: it is the only source
         record('BSNL OFC', 'SSA OFC')
         with mock.patch('apps.dashboard.workbook.get_dataset', side_effect=AssertionError('a workbook was read')), \
                 mock.patch('openpyxl.load_workbook', side_effect=AssertionError('a workbook was opened')):

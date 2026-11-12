@@ -3,6 +3,7 @@ import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { vi } from 'vitest';
 import { AuthContext, type AuthContextValue } from '../context/auth';
+import { PopulationProvider } from '../context/population';
 import { WorkbookContext, type WorkbookContextValue } from '../context/workbook';
 import type { AuthUser } from '../types';
 import { activeWorkbook } from './fixtures';
@@ -33,12 +34,17 @@ export function authValue(overrides: Partial<AuthContextValue> = {}): AuthContex
   };
 }
 
-/** Render inside a router, a signed-in user (Admin by default) and a workbook context (active workbook by default). */
-export function renderWithWorkbook(ui: ReactElement, { url = '/', workbook = workbookValue(), auth = authValue() } = {}) {
+/**
+ * Render inside a router, a signed-in user (Admin by default) and a workbook context (active workbook by default).
+ * ``population``: wrap in the PopulationProvider as the portal does (URL mirroring and localStorage); without it the
+ * population is read from the URL ``scope`` only (On-Air by default).
+ */
+export function renderWithWorkbook(ui: ReactElement, { url = '/', workbook = workbookValue(), auth = authValue(), population = false } = {}) {
+  const content = <WorkbookContext.Provider value={workbook}>{ui}</WorkbookContext.Provider>;
   return render(
     <MemoryRouter initialEntries={[url]}>
       <AuthContext.Provider value={auth}>
-        <WorkbookContext.Provider value={workbook}>{ui}</WorkbookContext.Provider>
+        {population ? <PopulationProvider>{content}</PopulationProvider> : content}
       </AuthContext.Provider>
     </MemoryRouter>,
   );

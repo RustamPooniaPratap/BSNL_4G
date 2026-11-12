@@ -4,6 +4,7 @@ import { AlertOctagon, AlertTriangle, Bell, ChevronRight, Info } from 'lucide-re
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import { usePopulation } from '../context/population';
 import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { fetchAlerts } from '../services/api';
@@ -22,7 +23,8 @@ const SEVERITY_STYLE: Record<AlertSeverity, { icon: typeof Info; className: stri
 export function AlertsMenu() {
   const { active, version } = useWorkbook();
   const [open, setOpen] = useState(false);
-  const { data, error, loading } = useApiQuery(active ? `${version}|alerts` : null, fetchAlerts);
+  const { scope } = usePopulation();
+  const { data, error, loading } = useApiQuery(active ? `${version}|alerts|${scope}` : null, (signal) => fetchAlerts(signal, scope));
 
   const alerts = data?.alerts ?? [];
   const groups = SEVERITY_ORDER
@@ -62,7 +64,7 @@ export function AlertsMenu() {
           )}
         </div>
         {!active ? (
-          <Empty text="Upload the Master workbook to see alerts." link="/workbook" linkText="Upload workbook" onNavigate={() => setOpen(false)} />
+          <Empty text="Import the reporting data to see alerts." link="/workbook" linkText="Import data" onNavigate={() => setOpen(false)} />
         ) : error ? (
           <Empty text={error.message} />
         ) : loading && !data ? (

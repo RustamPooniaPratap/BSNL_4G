@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { DashboardFilterState, ResolvedFilters } from '../../hooks/useDashboardFilters';
 import { formatDate } from '../../lib/format';
-import type { FilterOptions, Scope } from '../../types';
+import type { FilterOptions } from '../../types';
+import { PopulationSelect } from '../PopulationSelect';
 import { TrendPeriodPicker } from './TrendPeriodPicker';
 
 const ALL = '__all__';
@@ -20,7 +21,7 @@ interface FilterBarProps {
   canReset: boolean;
   /** Pages without a trend chart hide the trend range. */
   showTrendRange?: boolean;
-  /** Pages that show every scope side by side hide the scope selector. */
+  /** The global population selector; hide it only where the page shows another one. */
   showScope?: boolean;
   /** Pages that pick a month instead of a day hide the reporting date. */
   showDate?: boolean;
@@ -74,16 +75,8 @@ export function FilterBar({ options, filters, onChange, onReset, canReset, showT
           </Select>
         </Field>
 
-        {showScope && <Field id="filter-scope" label="Site scope" className="w-36">
-          <Select value={filters.scope} onValueChange={(v) => onChange({ scope: v as Scope })}>
-            <SelectTrigger id="filter-scope" className="h-9 w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {options.scopes.map((s) => (
-                <SelectItem key={s.value} value={s.value} disabled={!s.available}>{s.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>}
+        {/* The global population (On-Air / O&M Start): the same selection on every page. */}
+        {showScope && <PopulationSelect id="filter-scope" unavailable={options.scopes.filter((s) => !s.available).map((s) => s.value)} />}
 
         {showDate && <Field id="filter-date" label="Reporting date" className="w-44">
           <DateSelect id="filter-date" value={filters.date} dates={dates}

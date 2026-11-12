@@ -15,11 +15,13 @@ import { SiteDetailSheet } from '../components/dashboard/SiteDetailSheet';
 import { SiteTable } from '../components/dashboard/SiteTable';
 import { useWorkbook } from '../context/workbook';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { useFilterOptions } from '../hooks/useFilterOptions';
 import { useDashboardFilters } from '../hooks/useDashboardFilters';
 import { formatDate, formatMinutes, formatNumber, formatPct } from '../lib/format';
 import { UNASSIGNED } from '../lib/teams';
-import { fetchFilterOptions, fetchTeams } from '../services/api';
+import { fetchTeams } from '../services/api';
 import type { BucketId, SiteRecord, TeamGroup, TeamRow, TeamsResponse } from '../types';
+import { populationSites } from '../lib/population';
 
 const GROUP_LABELS: Record<TeamGroup, { one: string; many: string; linked: string }> = {
   ci: { one: 'CI', many: 'CIs', linked: 'IEs' },
@@ -33,7 +35,7 @@ const ALL_BUCKETS = 'all';
 export function TeamsPage() {
   const workbook = useWorkbook();
   const { version } = workbook;
-  const options = useApiQuery(workbook.active ? `${version}|filters` : null, fetchFilterOptions);
+  const options = useFilterOptions();
   const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -69,9 +71,9 @@ export function TeamsPage() {
     return (
       <Card className="mx-auto mt-10 max-w-xl items-center gap-3 px-8 py-10 text-center">
         <FileUp className="size-8 text-muted-foreground" aria-hidden="true" />
-        <h1 className="text-lg font-semibold">No Master workbook loaded</h1>
-        <p className="text-sm text-muted-foreground">Upload the consolidated workbook to see team performance.</p>
-        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Upload workbook</Link>
+        <h1 className="text-lg font-semibold">No reporting data loaded</h1>
+        <p className="text-sm text-muted-foreground">Import the reporting data (Data Source page) to see team performance.</p>
+        <Link to="/workbook" className={buttonVariants({ size: 'sm' })}><FileUp /> Import data</Link>
       </Card>
     );
   }
@@ -90,7 +92,7 @@ export function TeamsPage() {
   }
 
   const labels = GROUP_LABELS[group];
-  const scopeLabel = options.data.scopes.find((s) => s.value === filters.scope)?.label ?? filters.scope;
+  const scopeLabel = populationSites(filters.scope);
   const siteTitle = team
     ? `Sites of ${labels.one} ${team}`
     : bucket === 'lt_60' ? 'Sites below 60% MTD and who is responsible' : 'Sites and who is responsible';
@@ -102,7 +104,7 @@ export function TeamsPage() {
         onReset={reset} showTrendRange={false}
         title="Team performance"
         description={<>
-          {options.data.month.label} · {[filters.reportType || 'All projects', filters.circle ? `Circle ${filters.circle}` : 'All circles', scopeLabel].join(' · ')}
+          {options.data.month.label} · {[filters.reportType || 'All projects', filters.circle ? `Circle ${filters.circle}` : 'All circles', `Population: ${scopeLabel}`].join(' · ')}
           {' '}· each site is the responsibility of the CI and IE named on its row in the workbook
         </>}
         actions={(

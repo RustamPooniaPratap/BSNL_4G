@@ -1,6 +1,7 @@
 import { AlertTriangle, Info } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { usePopulation } from '../../context/population';
 import { formatDate, formatNumber } from '../../lib/format';
 import type { RcaBreakdown, RcaSiteMetrics } from '../../types/rca';
 
@@ -16,11 +17,12 @@ const cell = (value: number | null | undefined) => (value === null || value === 
  * Circle-wise Root Cause Breakdown (the RCA workbook's "RCA Analysis - Updated" table), computed on the server from
  * the filtered RCA records. Empty cells mean "no data", never zero: circles without records.
  */
-const SITE_COLUMNS = [
-  { key: 'total_sites', label: 'Total Sites', title: 'Active sites (On-Air = Yes) in the Site Master' },
-  { key: 'om_start_sites', label: 'O&M Start Sites', title: 'Sites with O&M Start in the Site Master' },
-  { key: 'usd_sites', label: 'USD Sites', title: 'Unique Sites Down: O&M Start sites with outage > 0 minutes at least once in the period' },
-  { key: 'nsla_sites', label: 'NSLA Sites (<98.5%)', title: 'Sites whose uptime over the period is below 98.5%' },
+/** Total Sites and O&M Start Sites are site status counts; USD and NSLA follow the global population. */
+const siteColumns = (sites: string) => [
+  { key: 'total_sites', label: 'Total Sites', title: 'Site status: active sites (On-Air = Yes) in the Site Master' },
+  { key: 'om_start_sites', label: 'O&M Start Sites', title: 'Site status: sites with O&M Start in the Site Master' },
+  { key: 'usd_sites', label: 'USD Sites', title: `Unique Sites Down: ${sites} with outage > 0 minutes at least once in the period` },
+  { key: 'nsla_sites', label: 'NSLA Sites (<98.5%)', title: `${sites} whose uptime over the period is below 98.5%` },
 ] as const;
 
 export function RootCauseBreakdown({
@@ -33,6 +35,8 @@ export function RootCauseBreakdown({
   onRcaScopeChange?: (scope: 'all' | 'nsla') => void;
 }) {
   const { columns } = data;
+  const { sitesLabel } = usePopulation();
+  const SITE_COLUMNS = siteColumns(sitesLabel);
   const sticky = 'sticky left-0 z-10';
   const sites = data.sites ?? null;
   const activeScope = data.rca_scope || rcaScope || 'all';
@@ -129,8 +133,8 @@ export function RootCauseBreakdown({
           </div>
           <p className="text-[11px] text-muted-foreground">
             {activeScope === 'all'
-              ? 'Showing all RCA records matching current filters. Site metrics (Total, O&M Start, USD, NSLA) are independent of this toggle.'
-              : 'Showing RCA incident breakdown for eligible NSLA sites (<98.5%) only. Site metrics (Total, O&M Start, USD, NSLA) are independent of this toggle.'}
+              ? `Showing all RCA records matching current filters. Site metrics (Total, O&M Start, USD, NSLA) are independent of this toggle; USD and NSLA count ${sitesLabel} (Population).`
+              : `Showing RCA incident breakdown for eligible NSLA sites (<98.5%) only. Site metrics (Total, O&M Start, USD, NSLA) are independent of this toggle; USD and NSLA count ${sitesLabel} (Population).`}
           </p>
         </div>
 

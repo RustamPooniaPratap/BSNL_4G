@@ -82,7 +82,7 @@ describe('TopPerformersPage', () => {
     expect(bh).toHaveTextContent('Tie · 2');
     expect(within(bh).getByRole('link', { name: 'Md. Mazhar Imam' })).toBeInTheDocument();
     expect(within(bh).getByRole('link', { name: 'Yugesh Kumar Singh' })).toBeInTheDocument();
-    expect(lastQuery().get('scope')).toBe('om_start');
+    expect(lastQuery().get('scope')).toBe('on_air');  // the global population (On-Air by default), no page default
     expect(lastQuery().has('month')).toBe(false);
   });
 

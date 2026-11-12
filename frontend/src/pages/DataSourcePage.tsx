@@ -17,7 +17,7 @@ const DEFINITIONS: { name: string; definition: string }[] = [
   { name: 'Uptime %', definition: '1 − Σ outage minutes ÷ (1,440 × site-days reported). Outage-weighted, not an average of site percentages.' },
   { name: 'Daily uptime', definition: 'Uptime for sites in scope on the selected reporting date (workbook: Day wise Trend).' },
   { name: 'MTD uptime', definition: 'Uptime from the 1st of the month to the selected date (workbook: Summ, "Oct-26 MTD").' },
-  { name: 'On-Air sites', definition: 'Sites with On-Air = "Yes". Default scope, matching the workbook\'s "Overall Up-Time".' },
+  { name: 'On-Air sites', definition: 'Sites with On-Air = "Yes". The default population (Population selector), matching the workbook\'s "Overall Up-Time".' },
   { name: 'O&M Start sites', definition: 'Sites with "O&M Start - <month>" = "Yes", matching the workbook\'s "O&M Start - Up-Time".' },
   { name: 'Uptime buckets', definition: 'Each site\'s MTD uptime grouped as <60, 60–90, 90–97, 97–98.5 and ≥98.5% (workbook Bucket formula).' },
   { name: 'Monthly uptime', definition: 'Uptime per month from each site\'s "<month> Outage Min." column ÷ (1,440 × days in month × sites with a value), using today\'s scope flags. Sites with a blank month are excluded; the workbook counts them as 100% up, and both figures are shown.' },
@@ -39,10 +39,10 @@ export function DataSourcePage() {
     return (
       <Alert className="max-w-2xl">
         <Info />
-        <AlertTitle>No Master workbook loaded</AlertTitle>
+        <AlertTitle>No reporting data loaded</AlertTitle>
         <AlertDescription>
           {workbook.error?.message ?? workbook.message}{' '}
-          <Link to="/workbook" className="font-medium text-foreground underline underline-offset-4">Upload the workbook</Link>
+          <Link to="/workbook" className="font-medium text-foreground underline underline-offset-4">Open the Data Source page</Link>
         </AlertDescription>
       </Alert>
     );
@@ -69,8 +69,8 @@ export function DataSourcePage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-sm font-semibold">Master workbook</CardTitle>
-            <CardDescription className="text-xs">The workbook uploaded on the <Link to="/workbook" className="underline underline-offset-4">Master workbook</Link> page. Read-only; never modified.</CardDescription>
+            <CardTitle className="text-sm font-semibold">Reporting data</CardTitle>
+            <CardDescription className="text-xs">The data layer every page reads, filled by the imports on the <Link to="/workbook" className="underline underline-offset-4">Data Source</Link> page and by raw daily CSV uploads.</CardDescription>
           </CardHeader>
           <CardContent>
             <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">

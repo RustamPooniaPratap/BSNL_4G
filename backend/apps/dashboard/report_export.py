@@ -1,4 +1,4 @@
-"""Excel downloads built from the dataset of the active source (Excel workbook or PostgreSQL, ``current_dataset()``).
+"""Excel downloads built from the dashboard dataset of the data layer (apps.sitedata.dashboard_source).
 
 - Daily Uptime Report: one sheet, one reporting date, one row per site of the selected project/circle: site ID, name,
   project, circle, date, outage minutes, availability and uptime bucket. A site without a value on the date is listed
@@ -8,8 +8,15 @@
   styles and headers only). "Up-Time Report" gets one row per site in scope; its daily, weekly and month-to-date
   uptime and buckets are formulas over that row's daily cells, counting only reported days. The summary sheets are
   calculated here for the same sites with the dashboard's rules (``metrics``): pooled uptime over reported site-days,
-  the workbook's bucket thresholds, On-Air or O&M Start populations as each sheet's title says. Sheets the application
-  has no data for (maintained by hand in the workbook) keep their headers and say so; nothing is filled in.
+  the workbook's bucket thresholds. Sheets the application has no data for (maintained by hand in the workbook) keep
+  their headers and say so; nothing is filled in.
+
+Population (``population``: on_air | om_start, the request's ``scope`` or the automation's population for emailed
+reports): both reports contain exactly the sites of that population (the Daily Uptime Report: the sites effective on the
+reporting date; the consolidated report: the population of the reporting month, each history month with the sites
+effective in it) and compute every figure, USD and NSLA included, over it from each site's effective date (the dataset
+variant of the population). The population label is written in every heading / footnote and as the file name suffix
+(_OnAir / _OMStart); two populations are never mixed in one file.
 
 Every figure respects the selected project and circles (already limited to the user's circles by the view).
 """
@@ -31,6 +38,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.styles.differential import DifferentialStyle
 from openpyxl.utils import get_column_letter
 
+from . import metrics
 from .metrics import BUCKETS, WEEKS, bucket_ids, site_uptime, uptime_pct
 from .workbook import MINUTES_PER_DAY, REPORT_TYPES, Dataset
 
@@ -119,13 +127,27 @@ def _to_bytes(wb) -> bytes:
 DAILY_HEADER = ('Site ID', 'Site Name', 'Project', 'Circle', 'Reporting Date', 'Outage Minutes', 'Availability (%)', 'Uptime Bucket')
 
 
-def daily_report(ds: Dataset, scope: Scope, day: date, source_label: str) -> tuple[str, bytes]:
+def population_label(population: str) -> str:
+    return metrics.population(population)['label']
+
+
+def _suffix(population: str) -> str:
+    return metrics.POPULATION_SUFFIX.get(population, _slug(population_label(population)))
+
+
+def daily_report(ds: Dataset, scope: Scope, day: date, source_label: str,
+                 population: str = metrics.DEFAULT_SCOPE) -> tuple[str, bytes]:
+    """One row per site of ``population`` effective on ``day`` (metrics.effective_on) within the scope."""
     values = day_outage(ds, day)
-    if values is None or np.isnan(values[scope.rows]).all():
+    rows = scope.rows[metrics.effective_on(ds, population, day)[scope.rows]]
+    label = population_label(population)
+    if not len(rows):
+        raise ExportError(f'No {label} of {scope.project_label} in {scope.circle_label} on {day:%d %b %Y}.', 404)
+    if values is None or np.isnan(values[rows]).all():
         raise ExportError(f'The selected data source has no daily values for {day:%d %b %Y} '
-                          f'({scope.project_label}, {scope.circle_label}).', 404)
-    sites = ds.sites.iloc[scope.rows]
-    outage = values[scope.rows]
+                          f'({scope.project_label}, {scope.circle_label}, {label}).', 404)
+    sites = ds.sites.iloc[rows]
+    outage = values[rows]
     uptime = site_uptime(outage[:, None])  # % per site, NaN when not reported
     buckets = bucket_ids(uptime)
     order = np.lexsort((sites['site_id'].to_numpy(), sites['circle'].to_numpy(), sites['report_type'].to_numpy()))
@@ -133,10 +155,10 @@ def daily_report(ds: Dataset, scope: Scope, day: date, source_label: str) -> tup
     wb = Workbook()
     ws = wb.active
     ws.title = 'Daily Uptime Report'
-    ws['A1'] = f'Daily Uptime Report · {day:%d %b %Y} · {scope.project_label} · {scope.circle_label}'
+    ws['A1'] = f'Daily Uptime Report · {day:%d %b %Y} · {scope.project_label} · {scope.circle_label} · Population: {label}'
     ws['A1'].font = Font(bold=True, size=13)
-    ws['A2'] = (f'Source: {source_label}. Availability = 1 − outage minutes ÷ 1,440; buckets use the workbook thresholds. '
-                f'"{NOT_REPORTED}" = no value for the date (never counted as zero).')
+    ws['A2'] = (f'Population: {label} (sites effective on the date). Source: {source_label}. Availability = 1 − outage '
+                f'minutes ÷ 1,440; buckets use the workbook thresholds. "{NOT_REPORTED}" = no value for the date (never counted as zero).')
     ws['A2'].font = Font(italic=True, size=9, color='666666')
     ws.append([])
     ws.append(list(DAILY_HEADER))
@@ -160,7 +182,8 @@ def daily_report(ds: Dataset, scope: Scope, day: date, source_label: str) -> tup
         ws.column_dimensions[col].width = width
     ws.freeze_panes = 'A5'
     ws.auto_filter.ref = f'A4:H{last}'
-    name = f'Daily_Uptime_{_slug(scope.project_label)}_{_slug(scope.circle_label)}_{day.isoformat()}.xlsx'
+    wb.properties.subject = f'Population: {label}'
+    name = f'Daily_Uptime_{_slug(scope.project_label)}_{_slug(scope.circle_label)}_{day.isoformat()}_{_suffix(population)}.xlsx'
     return name, _to_bytes(wb)
 
 
@@ -181,7 +204,7 @@ def source_details(ds: Dataset) -> dict:
     """
     if 'om_start_date' in ds.sites:
         return _new_layer_details(ds)
-    from apps.uptimedb.parser import parse_workbook
+    from apps.sitedata.sources.uptime_report import parse_workbook
     from .workbook import resolve_workbook
     path = resolve_workbook()[0]
     key = (str(path), Path(path).stat().st_mtime)
@@ -264,67 +287,116 @@ def _period(ds: Dataset, day: date) -> Period:
 class ConsolidatedReport:
     """Fills the template for ``scope``; values for summaries, row formulas in "Up-Time Report"."""
 
-    def __init__(self, ds: Dataset, scope: Scope, day: date, source_label: str, details: dict):
+    def __init__(self, ds: Dataset, scope: Scope, day: date, source_label: str, details: dict, population: str = metrics.DEFAULT_SCOPE):
         if not TEMPLATE_PATH.is_file():
             raise ExportError('The consolidated report template is missing from the application.', 500)
         if day not in ds.reported_dates:
             raise ExportError(f'{day:%d %b %Y} is not a reported date of {ds.month_label} in the selected data source.', 404)
+        self.population, self.pop_label = population, population_label(population)
+        # Only the population's sites of the reporting month (history months: those effective then, rows_for).
+        rows = scope.rows[metrics.population_flags(ds, population)[scope.rows]]
+        if not len(rows):
+            raise ExportError(f'No {self.pop_label} of {scope.project_label} in {scope.circle_label} in the selected data source.', 404)
+        scope = Scope(scope.report_type, scope.circles, scope.circle, rows)
         self.ds, self.scope, self.source_label, self.details = ds, scope, source_label, details
         self.p = _period(ds, day)
         self.wb = load_workbook(TEMPLATE_PATH)
         self.sites = ds.sites.iloc[scope.rows]
-        self.on_air = self.sites['on_air'].to_numpy(dtype=bool)
-        self.om = self.sites['om_start'].to_numpy(dtype=bool)
         self.groups = [(p, c) for p, c in sorted(set(zip(self.sites['report_type'], self.sites['circle'])),
                                                  key=lambda pc: (pc[0] != '4G Saturation', pc[0], pc[1]))]
 
     # -- helpers over the scoped rows ------------------------------------------------------------------------------
-    def rows_for(self, project=None, circle=None, population='all') -> np.ndarray:
+    def rows_for(self, project=None, circle=None, month_index: int | None = None) -> np.ndarray:
+        """The report's population rows of the project / circle (the scope rows are the population of the reporting
+        month). For a history month (``month_index``), the sites of the population effective in that month by their own
+        effective dates (approved rule B-5; metrics.month_scope_rows)."""
         mask = np.ones(len(self.scope.rows), dtype=bool)
         if project:
             mask &= (self.sites['report_type'] == project).to_numpy()
         if circle:
             mask &= (self.sites['circle'] == circle).to_numpy()
-        if population == 'on_air':
-            mask &= self.on_air
-        elif population == 'om_start':
-            mask &= self.om
+        if month_index is not None:
+            return metrics.month_scope_rows(self.ds, self.scope.rows[mask], self.population, self.ds.months[month_index]['start'])
         return self.scope.rows[mask]
 
-    def month_block(self, rows: np.ndarray, month_index: int | None) -> tuple[np.ndarray, int]:
-        """(outage block, days per site-month) for a history month index, or the current month to date (None)."""
-        if month_index is None:
-            return self.ds.outage[np.ix_(rows, self.p.mtd_cols)], 1
-        return self.ds.monthly_outage[rows, month_index][:, None], self.ds.months[month_index]['days']
+    def _history(self, rows: np.ndarray, month_index: int) -> tuple[np.ndarray, np.ndarray]:
+        """(outage, reported days) per site of a history month from its daily records over the reporting days
+        (metrics.month_values, as the dashboard's monthly figures); a missing day is never zero outage."""
+        outage, days, _down = metrics.month_values(self.ds, month_index, rows)
+        return outage, days
 
     def uptime(self, rows: np.ndarray, month_index: int | None) -> float | None:
-        block, days = self.month_block(rows, month_index)
-        reported = int((~np.isnan(block)).sum())
-        value = uptime_pct(float(np.nansum(block)), reported * days)
+        if month_index is None:
+            block = self.ds.outage[np.ix_(rows, self.p.mtd_cols)]
+            value = uptime_pct(float(np.nansum(block)), int((~np.isnan(block)).sum()))
+        else:
+            outage, days = self._history(rows, month_index)
+            value = uptime_pct(float(outage.sum()), int(days.sum()))
         return None if value is None else value / 100
 
     def site_uptimes(self, rows: np.ndarray, month_index: int | None) -> np.ndarray:
-        block, days = self.month_block(rows, month_index)
         if month_index is None:
-            return site_uptime(block)
-        with np.errstate(invalid='ignore'):
-            return 100.0 * (1.0 - block[:, 0] / (MINUTES_PER_DAY * days))
+            return site_uptime(self.ds.outage[np.ix_(rows, self.p.mtd_cols)])
+        outage, days = self._history(rows, month_index)
+        return metrics._per_site_uptime(outage, days)
 
     def outage(self, rows: np.ndarray, month_index: int | None) -> float | None:
-        block, _ = self.month_block(rows, month_index)
-        return None if np.isnan(block).all() else round(float(np.nansum(block)), 2)
+        if month_index is None:
+            block = self.ds.outage[np.ix_(rows, self.p.mtd_cols)]
+            return None if np.isnan(block).all() else round(float(np.nansum(block)), 2)
+        outage, days = self._history(rows, month_index)
+        return round(float(outage.sum()), 2) if (days > 0).any() else None
+
+    def usd_nsla(self, rows: np.ndarray, month_index: int | None) -> tuple[int, int | None, int | None]:
+        """(population sites, USD, NSLA) of a period with the shared rules (metrics.usd_dates / nsla_dates) over the
+        report's population from each site's effective date; USD and NSLA are None (blank) when no site has a value."""
+        if month_index is None:
+            dates = [self.ds.dates[c] for c in self.p.mtd_cols]
+            eligible, uptime, nsla = metrics.nsla_dates(self.ds, rows, dates, scope=self.population)
+            down = metrics.usd_dates(self.ds, rows, dates, scope=self.population)[2]
+        else:
+            eligible, uptime, nsla = metrics.nsla_month(self.ds, rows, month_index, scope=self.population)
+            down = metrics.usd_month(self.ds, rows, month_index, scope=self.population)[2]
+        if not (eligible & ~np.isnan(uptime)).any():
+            return int(eligible.sum()), None, None
+        return int(eligible.sum()), int(down.sum()), int(nsla.sum())
 
     @property
     def months(self) -> list[tuple[str, int | None]]:
         """(label, index) of every history month, then the current month to date."""
         return [(m['label'], i) for i, m in enumerate(self.ds.months)] + [(f'{self.p.label} MTD', None)]
 
+    def week_status(self) -> list[dict]:
+        """Status of Week 1-4 up to the reporting date over the scope's reporting units (metrics.week_status)."""
+        if '_weeks' not in self.__dict__:
+            units = metrics.units_of_rows(self.ds, self.scope.rows)
+            self._weeks = [metrics.week_status(self.ds, first, last, units, until=self.p.day) for _, first, last in WEEKS]
+        return self._weeks
+
+    def week_label(self, number: int) -> str:
+        """"Wk-N", plus " (Provisional)" when the week is not Complete (approved rule B-4): its available figures are
+        shown and labelled."""
+        info = self.week_status()[number - 1]
+        complete = info['status'] == 'Complete' if info['status'] is not None else info['complete']
+        return f'Wk-{number}' + ('' if complete else ' (Provisional)')
+
     def windows(self) -> list[tuple[str, list[int]]]:
-        """Week 1-4 of the current month (the workbook's day ranges), then each date, as reported positions."""
-        out = []
-        for name, first, last in WEEKS:
-            out.append((f'Wk-{name.split()[-1]}', [c for c in self.p.mtd_cols if first <= self.ds.dates[c].day <= last]))
-        return out
+        """Week 1-4 of the current month (the workbook's day ranges), as reported positions up to the reporting date;
+        a Provisional week keeps its values and its header says so."""
+        return [(self.week_label(number), [c for c in self.p.mtd_cols if first <= self.ds.dates[c].day <= last])
+                for number, (_name, first, last) in enumerate(WEEKS, start=1)]
+
+    def _site_history(self, month_index: int) -> tuple[np.ndarray, np.ndarray]:
+        cache = self.__dict__.setdefault('_history_cache', {})
+        if month_index not in cache:
+            cache[month_index] = self._history(self.scope.rows, month_index)
+        return cache[month_index]
+
+    @property
+    def _row_pos(self) -> dict[int, int]:
+        if '_row_pos_cache' not in self.__dict__:
+            self._row_pos_cache = {int(r): k for k, r in enumerate(self.scope.rows)}
+        return self._row_pos_cache
 
     # -- build -------------------------------------------------------------------------------------------------------
     def build(self) -> tuple[str, bytes]:
@@ -342,8 +414,9 @@ class ConsolidatedReport:
             ws.cell(row=ws.max_row + 2, column=2, value=MANUAL_NOTE).font = Font(italic=True, color='9C0006')
         self.wb.active = self.wb.sheetnames.index('Summ')
         month = datetime(self.p.month.year, self.p.month.month, 1)
+        self.wb.properties.subject = f'Population: {self.pop_label}'
         name = (f'4G_LWE_Consolidated_Report_{_slug(self.scope.project_label)}_{_slug(self.scope.circle_label)}_'
-                f'{month:%b-%Y}_to_{self.p.day.isoformat()}.xlsx')
+                f'{month:%b-%Y}_to_{self.p.day.isoformat()}_{_suffix(self.population)}.xlsx')
         return name, _to_bytes(self.wb)
 
     # -- Up-Time Report ------------------------------------------------------------------------------------------------
@@ -375,9 +448,9 @@ class ConsolidatedReport:
                     (f'{label} UpTime', 'uptime', ('f_uptime',)), ('Bucket', 'bucket', ('f_bucket',))]
         columns += [(d, 'daily', ('day', i)) for i, d in enumerate(self.p.dates)]
         week_ranges = []
-        for name, first, last in WEEKS:
+        for number, (name, first, last) in enumerate(WEEKS, start=1):
             idx = [i for i, d in enumerate(self.p.dates) if first <= d.day <= last]
-            week_ranges.append((f'Wk-{name.split()[-1]}', get_column_letter(first_daily + idx[0]), get_column_letter(first_daily + idx[-1])))
+            week_ranges.append((self.week_label(number), get_column_letter(first_daily + idx[0]), get_column_letter(first_daily + idx[-1])))
         columns += [(w, 'week_sum', ('w_sum', a, b)) for w, a, b in week_ranges]
         columns += [(w, 'week_up', ('w_up', a, b)) for w, a, b in week_ranges]
         columns += [(d, 'daily_up', ('d_up', get_column_letter(first_daily + i))) for i, d in enumerate(self.p.dates)]
@@ -428,12 +501,14 @@ class ConsolidatedReport:
         if kind == 'ff':
             return (monthly.get(how[1]) or {}).get('ff_count')
         if kind in ('m_outage', 'm_uptime', 'm_bucket'):
-            value = self.ds.monthly_outage[i, how[1]]
-            if np.isnan(value):
+            # History month of the site over its reported days (metrics.month_values), never calendar days (C-4).
+            outage, days = self._site_history(how[1])
+            k = self._row_pos[int(i)]
+            if not days[k]:
                 return None
             if kind == 'm_outage':
-                return float(value)
-            up = 1 - value / (MINUTES_PER_DAY * self.ds.months[how[1]]['days'])
+                return float(outage[k])
+            up = 1 - outage[k] / (MINUTES_PER_DAY * days[k])
             return up if kind == 'm_uptime' else BUCKET_LABEL[bucket_ids(np.array([up * 100]))[0]]
         rng = f'{d0}{r}:{d1}{r}'
         if kind == 'f_ff':
@@ -502,24 +577,28 @@ class ConsolidatedReport:
         for project in [p for p in ('4G Saturation', 'LWE') if any(g[0] == p for g in self.groups)]:
             circles = [c for p, c in self.groups if p == project]
             name = PROJECT_LABEL.get(project, project)
-            for title, population, count_label in ((f'{name} - Overall Up-Time (On-Air sites)', 'on_air', 'On-Air Done'),
-                                                  (f'{name} - O&M Start - Up-Time', 'om_start', 'O&M Start Site count')):
+            pop = self.pop_label
+            rows = []
+            for c in circles + [None]:
+                rows.append([c or 'Grand Total', len(self.rows_for(project, c))]
+                            + [self.uptime(self.rows_for(project, c, i), i) for _, i in months])
+            r = self._table(ws, r, 2, f'{name} - Overall Up-Time ({pop})', ['Circle', f'Site count ({pop})'] + heads, rows[:-1],
+                            ['text', 'number'] + ['pct'] * len(months), styles, rows[-1])
+            for title, metric in ((f'{name} - Less than 60% Trend ({pop})', 'lt60'), (f'{name} - Outage Min. ({pop})', 'outage')):
                 rows = []
                 for c in circles + [None]:
-                    sel = self.rows_for(project, c, population)
-                    rows.append([c or 'Grand Total', len(self.rows_for(project, c)), len(sel)] + [self.uptime(sel, i) for _, i in months])
-                r = self._table(ws, r, 2, title, ['Circle', 'Total Site count', count_label] + heads, rows[:-1],
-                                ['text', 'number', 'number'] + ['pct'] * len(months), styles, rows[-1])
-            for title, population, metric in ((f'{name} - Less than 60% Trend (On-Air sites)', 'on_air', 'lt60'),
-                                              (f'{name} - Overall Outage Min. (On-Air sites)', 'on_air', 'outage'),
-                                              (f'{name} - O&M Start Outage Min.', 'om_start', 'outage')):
-                rows = []
-                for c in circles + [None]:
-                    sel = self.rows_for(project, c, population)
                     if metric == 'lt60':
-                        rows.append([c or 'Grand Total'] + [_count(self.site_uptimes(sel, i), 'lt_60') for _, i in months])
+                        rows.append([c or 'Grand Total'] + [_count(self.site_uptimes(self.rows_for(project, c, i), i), 'lt_60')
+                                                            for _, i in months])
                     else:
-                        rows.append([c or 'Grand Total'] + [self.outage(sel, i) for _, i in months])
+                        rows.append([c or 'Grand Total'] + [self.outage(self.rows_for(project, c, i), i) for _, i in months])
+                r = self._table(ws, r, 2, title, ['Circle'] + heads, rows[:-1], ['text'] + ['number'] * len(months), styles, rows[-1])
+            # Unique Site Down and NSLA (approved rule B-3, metrics.usd_dates / nsla_dates): the report's population.
+            for title, which in ((f'{name} - Unique Site Down ({pop}, outage > 0 on a reported day)', 1),
+                                 (f'{name} - NSLA Sites ({pop}, period uptime < 98.5%)', 2)):
+                rows = []
+                for c in circles + [None]:
+                    rows.append([c or 'Grand Total'] + [self.usd_nsla(self.rows_for(project, c, i), i)[which] for _, i in months])
                 r = self._table(ws, r, 2, title, ['Circle'] + heads, rows[:-1], ['text'] + ['number'] * len(months), styles, rows[-1])
         self._footnote(ws, r)
 
@@ -530,19 +609,19 @@ class ConsolidatedReport:
         header = ['Month'] + [BUCKET_LABEL[b] for b in BUCKET_ORDER] + ['Grand Total']
         kinds = ['text'] + ['number'] * (len(BUCKET_ORDER) + 1)
 
-        def table(rows_sel):
+        def table(project, circle):
             out = []
             for label, i in self.months:
-                ups = self.site_uptimes(rows_sel, i)
+                ups = self.site_uptimes(self.rows_for(project, circle, i), i)
                 counts = [_count(ups, b) for b in BUCKET_ORDER]
                 out.append([label] + counts + [None if counts[0] is None else sum(counts)])  # blank month: no values
             return out
-        r = self._table(ws, 2, 2, 'Uptime Bucketization Monthly Summary - O&M Start sites (selected scope)', header,
-                        table(self.rows_for(population='om_start')), kinds, styles)
+        r = self._table(ws, 2, 2, f'Uptime Bucketization Monthly Summary - {self.pop_label} (selected scope)', header,
+                        table(None, None), kinds, styles)
         for project, circle in self.groups:
             name = PROJECT_LABEL.get(project, project)
-            r = self._table(ws, r, 2, f'Up-Time Bucketization - O&M Start sites - {name} {circle} Circle', header,
-                            table(self.rows_for(project, circle, 'om_start')), kinds, styles)
+            r = self._table(ws, r, 2, f'Up-Time Bucketization - {self.pop_label} - {name} {circle} Circle', header,
+                            table(project, circle), kinds, styles)
         self._footnote(ws, r)
 
     def day_wise(self):
@@ -551,12 +630,13 @@ class ConsolidatedReport:
         _clear_sheet(ws, keep_rows=1)
         windows = self.windows()
         dates = [self.ds.dates[c] for c in self.p.mtd_cols]
-        header_tail = [f'{w} ({self.p.label})' for w, _ in windows] + list(dates)
+        suffix = ' (Provisional)'
+        header_tail = [w.removesuffix(suffix) + f' ({self.p.label})' + (suffix if w.endswith(suffix) else '') for w, _ in windows] + list(dates)
         r = 2
-        for title, population in (('Day wise Uptime Trend - Over On-Air Sites', 'on_air'), ('Day wise Uptime Trend - O&M Start Sites', 'om_start')):
+        for title in (f'Day wise Uptime Trend - {self.pop_label}',):
             rows = []
             for project, circle in self.groups + [(None, None)]:
-                sel = self.rows_for(project, circle, population)
+                sel = self.rows_for(project, circle)
                 values = []
                 for _, cols in windows:
                     block = self.ds.outage[np.ix_(sel, cols)]
@@ -582,18 +662,20 @@ class ConsolidatedReport:
         heads = [h if isinstance(h, (date, str)) else h for h, _ in periods]
         counts, shares = [], []
         for project, circle in self.groups + [(None, None)]:
-            sel = self.rows_for(project, circle, 'om_start')
+            sel = self.rows_for(project, circle)
             values = []
             for _, (kind, what) in periods:
-                ups = self.site_uptimes(sel, what) if kind == 'month' else site_uptime(self.ds.outage[np.ix_(sel, what)])
+                ups = (self.site_uptimes(self.rows_for(project, circle, what), what) if kind == 'month'
+                       else site_uptime(self.ds.outage[np.ix_(sel, what)]))
                 values.append(_count(ups, bucket))
             entity = PROJECT_LABEL.get(project, project) if project else 'Grand Total'
             counts.append([entity, circle or '', len(sel)] + values)
             shares.append([entity, circle or '', len(sel)] + [v / len(sel) if len(sel) and v is not None else None for v in values])
         kinds = ['text', 'text', 'number']
-        r = self._table(ws, 2, 2, f'{title} - O&M Start sites (site count)', ['Entity', 'Circle', 'O&M Start'] + heads,
+        pop = self.pop_label
+        r = self._table(ws, 2, 2, f'{title} - {pop} (site count)', ['Entity', 'Circle', pop] + heads,
                         counts[:-1], kinds + ['number'] * len(periods), styles, counts[-1])
-        r = self._table(ws, r, 2, f'{title} - O&M Start sites (% of O&M Start sites)', ['Entity', 'Circle', 'O&M Start'] + heads,
+        r = self._table(ws, r, 2, f'{title} - {pop} (% of {pop})', ['Entity', 'Circle', pop] + heads,
                         shares[:-1], kinds + ['pct'] * len(periods), styles, shares[-1])
         self._footnote(ws, r)
 
@@ -604,22 +686,23 @@ class ConsolidatedReport:
         if ('4G Saturation', 'OD') not in self.groups:
             ws.cell(row=2, column=2, value='OD 4G Saturation sites are not in the selected scope.').font = Font(italic=True)
             return
-        base = self.rows_for('4G Saturation', 'OD', 'on_air')
+        base = self.rows_for('4G Saturation', 'OD')
         eb = self.ds.sites['eb'].astype(str).str.strip().str.upper().to_numpy()
         rows = []
         for label, flag in (('EB Site Uptime', 'EB'), ('Non EB Site Uptime', 'N-EB')):
             sel = base[eb[base] == flag]
-            values = [self.uptime(sel, i) for _, i in self.months[-3:]]
+            values = [self.uptime(sel if i is None else np.intersect1d(sel, self.rows_for('4G Saturation', 'OD', i)), i)
+                      for _, i in self.months[-3:]]
             for c in self.p.mtd_cols:
                 block = self.ds.outage[sel, c]
                 value = uptime_pct(float(np.nansum(block)), int((~np.isnan(block)).sum()))
                 values.append(None if value is None else value / 100)
             rows.append([label, len(sel)] + values)
         heads = [lbl for lbl, _ in self.months[-3:]] + [self.ds.dates[c] for c in self.p.mtd_cols]
-        r = self._table(ws, 2, 2, f'OD - 4G Satu. - EB / Non EB Uptime (On-Air sites, EB column)', ['', 'Site count'] + heads,
+        r = self._table(ws, 2, 2, f'OD - 4G Satu. - EB / Non EB Uptime ({self.pop_label}, EB column)', ['', 'Site count'] + heads,
                         rows, ['text', 'number'] + ['pct'] * len(heads), styles)
-        ws.cell(row=r, column=2, value='"Unique site down" counts are not calculated: their definition is not part of the '
-                                       'application data.').font = Font(italic=True, color='666666')
+        ws.cell(row=r, column=2, value=f'Unique Site Down and NSLA counts ({self.pop_label}) are on the Summ sheet.'
+                ).font = Font(italic=True, color='666666')
         self._footnote(ws, r + 1)
 
     def people(self, name: str, column: str, label: str):
@@ -637,17 +720,16 @@ class ConsolidatedReport:
             rows = []
             for person in sorted(set(names[sel])):
                 mine = sel[names[sel] == person]
-                om = mine[self.om[np.searchsorted(self.scope.rows, mine)]]
-                rows.append([circle, person, len(mine), len(om), self.uptime(om, None), self.outage(om, None)])
-            sel_om = sel[self.om[np.searchsorted(self.scope.rows, sel)]]
-            total = ['Total', '', len(sel), len(sel_om), self.uptime(sel_om, None), self.outage(sel_om, None)]
+                rows.append([circle, person, len(mine), self.uptime(mine, None), self.outage(mine, None)])
+            total = ['Total', '', len(sel), self.uptime(sel, None), self.outage(sel, None)]
             r = self._table(ws, r, 2, f'{PROJECT_LABEL.get(project, project)} {circle} - {label.replace(" name", "")} performance '
-                            f'({self.p.label} MTD, O&M Start sites)', ['Circle', label, 'Site Count', 'O&M Start ', 'Up-Time', 'Outage Min.'],
-                            rows, ['text', 'text', 'number', 'number', 'pct', 'number'], styles, total)
+                            f'({self.p.label} MTD, {self.pop_label})', ['Circle', label, f'Site Count ({self.pop_label})', 'Up-Time', 'Outage Min.'],
+                            rows, ['text', 'text', 'number', 'pct', 'number'], styles, total)
         self._footnote(ws, r)
 
     def _footnote(self, ws, row: int):
-        ws.cell(row=row, column=2, value=(f'Source: {self.source_label}. Scope: {self.scope.project_label}, {self.scope.circle_label}. '
+        ws.cell(row=row, column=2, value=(f'Population: {self.pop_label}. Source: {self.source_label}. '
+                                         f'Scope: {self.scope.project_label}, {self.scope.circle_label}. '
                                          f'Month to date: {self.p.month:%d %b} to {self.p.day:%d %b %Y}. Uptime pools outage over '
                                          f'reported site-days; unreported days are excluded, never counted as zero.')
                 ).font = Font(italic=True, size=9, color='666666')
@@ -667,11 +749,16 @@ def _col_index(letter: str) -> int:
 
 def _bucket_formula(ref: str) -> str:
     """The workbook's bucket formula (thresholds from metrics.BUCKETS), blank when the uptime is blank."""
+    # Compared as ROUND(x*100, 6) against the bounds in percent (metrics.comparable), so floating-point noise never moves
+    # a site across a threshold: an uptime of exactly 98.5% is ">98.5" in Excel as in the application.
+    value = f'ROUND({ref}*100,{metrics.THRESHOLD_DECIMALS})'
     expr = f'"{BUCKET_LABEL[BUCKET_ORDER[0]]}"'
     for bucket_id, _, label, bound in BUCKETS[1:]:
-        expr = f'IF({ref}>={bound}%,"{label}",{expr})'
+        expr = f'IF({value}>={bound:g},"{label}",{expr})'
     return f'=IF({ref}="","",{expr})'
 
 
-def consolidated_report(ds: Dataset, scope: Scope, day: date, source_label: str) -> tuple[str, bytes]:
-    return ConsolidatedReport(ds, scope, day, source_label, source_details(ds)).build()
+def consolidated_report(ds: Dataset, scope: Scope, day: date, source_label: str,
+                        population: str = metrics.DEFAULT_SCOPE) -> tuple[str, bytes]:
+    """The consolidated workbook for ``population`` (``ds``: that population's dataset variant)."""
+    return ConsolidatedReport(ds, scope, day, source_label, source_details(ds), population).build()

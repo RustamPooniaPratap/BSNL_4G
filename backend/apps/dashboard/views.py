@@ -5,19 +5,17 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.exceptions import NotFound, ValidationError
-from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.accounts.access import pairs_for
-from apps.accounts.permissions import AdminForWrites, Can, IsAdminRole
+from apps.accounts.permissions import Can, IsAdminRole
 from apps.common.exceptions import ServiceUnavailable
 
-from . import metrics, report_export, store
+from . import metrics, report_export
 from .crosscheck import calculation_check
 from .serializers import (DailyExportSerializer, MonthlySerializer, PeriodSerializer, RecordsSerializer, SnapshotSerializer,
-                          TeamMonthlySerializer, TeamSerializer, TrendSerializer)
-from .upload import UploadRejected, accept_upload
-from .workbook import SHEET_NAME, SHEET_ROLES, WorkbookError, get_dataset
+                          TeamMonthlySerializer, TeamSerializer, TrendSerializer, parse_scope, period_status)
+from .workbook import SHEET_NAME, SHEET_ROLES, WorkbookError
 
 
 def _dataset(request, action: str = 'view', scope: str | None = None):
@@ -25,7 +23,7 @@ def _dataset(request, action: str = 'view', scope: str | None = None):
     project/circle pairs on which the user has the Dashboard permission (accounts.access): KPIs, charts, tables,
     searches, filter options and exports never include other circles. ``scope`` (on_air / om_start) picks the variant
     that counts each site from its effective date; parameters are validated on the "all" variant (same sites and dates).
-    The old uptimedb tables are never read, and nothing falls back to them."""
+    There is no other data source and nothing falls back to one."""
     from apps.sitedata import dashboard_source
     try:
         dataset = dashboard_source.dataset(pairs_for(request.user, 'dashboard', action), scope)
@@ -78,13 +76,18 @@ def _applied(params: dict) -> dict:
     return {'report_type': selection.report_type, 'circle': selection.circle, 'scope': selection.scope}
 
 
+def _population(params: dict) -> dict:
+    """The top-level ``population`` block ({scope, label}) of every response with population-based figures."""
+    return metrics.population(params['selection'].scope)
+
+
 @api_view(['GET'])
 @permission_classes([Can('dashboard', 'view')])
 def filters_view(request):
     from apps.organization.services import merge_filter_options
     dataset = _dataset(request)
     return Response({**merge_filter_options(metrics.filter_options(dataset), pairs_for(request.user, 'dashboard', 'view')),
-                     'source': _source(dataset)})
+                     'population': metrics.population(metrics.DEFAULT_SCOPE), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -94,7 +97,7 @@ def summary_view(request):
     params = _validated(SnapshotSerializer, request, dataset)
     dataset = _scoped(request, params)
     result = metrics.summary(dataset, params['selection'], params['reporting_date'])
-    return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
+    return Response({**result, 'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -108,6 +111,7 @@ def trends_view(request):
         **result,
         'filters': {**_applied(params), 'start_date': params['start_date'].isoformat(),
                     'end_date': params['end_date'].isoformat()},
+        'population': _population(params),
         'source': _source(dataset),
     })
 
@@ -119,7 +123,7 @@ def breakdowns_view(request):
     params = _validated(SnapshotSerializer, request, dataset)
     dataset = _scoped(request, params)
     result = metrics.breakdown(dataset, params['selection'], params['reporting_date'])
-    return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
+    return Response({**result, 'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -131,8 +135,8 @@ def records_view(request):
     table = metrics.site_table(dataset, params['selection'], params['reporting_date'])
     table = metrics.search_sites(table, params['search'], params['bucket'] or None, params['bucket_basis'])
     table = metrics.filter_team(table, params['ci_name'], params['ie_name'])
-    if params['below_sla']:  # NSLA: MTD uptime below 98.5% (the penalty buckets, as on CI & IE Performance)
-        table = table[table['bucket'].isin(metrics.PENALTY_BUCKETS)]
+    if params['below_sla']:  # NSLA (metrics.nsla_mask): sites of the population whose MTD uptime is below 98.5%
+        table = table[table['nsla']]
     table = metrics.sort_sites(table, params['sort'], params['direction'] == 'desc')
 
     page, page_size, count = params['page'], params['page_size'], len(table)
@@ -150,6 +154,7 @@ def records_view(request):
                     'ci_name': params['ci_name'] or None, 'ie_name': params['ie_name'] or None,
                     'bucket_basis': params['bucket_basis'], 'below_sla': params['below_sla'],
                     'sort': params['sort'], 'direction': params['direction']},
+        'population': _population(params),
         'source': _source(dataset),
     })
 
@@ -157,7 +162,11 @@ def records_view(request):
 @api_view(['GET'])
 @permission_classes([Can('dashboard', 'view')])
 def record_detail_view(request, site_id):
-    dataset = _dataset(request)
+    # The request's population variant (default On-Air), so the site's values match the pages it is opened from: values
+    # before the site's effective date of that population are left out; ``in_population`` says whether the site belongs
+    # to the population in the reporting month.
+    scope = parse_scope(request.query_params.get('scope'))
+    dataset = _dataset(request, scope=scope)
     report_type = request.query_params.get('report_type') or None
     matches = (dataset.sites['site_id'] == site_id).to_numpy()
     if report_type:
@@ -170,7 +179,9 @@ def record_detail_view(request, site_id):
     day = dataset.latest_date
     if day is None:
         raise ServiceUnavailable('The workbook has no reported dates yet.')
-    return Response({**metrics.site_detail(dataset, int(indexes[0]), day), 'source': _source(dataset)})
+    index = int(indexes[0])
+    return Response({**metrics.site_detail(dataset, index, day), 'in_population': bool(metrics.population_flags(dataset, scope)[index]),
+                     'filters': {'scope': scope}, 'population': metrics.population(scope), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -202,10 +213,14 @@ def source_view(request):
 @api_view(['GET'])
 @permission_classes([Can('dashboard', 'view')])
 def alerts_view(request):
-    dataset = _dataset(request)
-    items = metrics.alerts(dataset, timezone.localdate())
+    # The request's population variant (``scope``, default On-Air), plus missing-submission alerts for the user's
+    # reporting units (those follow the reporting-unit On-Air eligibility, not the population).
+    scope = parse_scope(request.query_params.get('scope'))
+    dataset = _dataset(request, scope=scope)
+    items = metrics.alerts(dataset, timezone.localdate(), pairs_for(request.user, 'dashboard', 'view'), scope)
     counts = {level: sum(1 for a in items if a['severity'] == level) for level in metrics.SEVERITY_RANK}
-    return Response({'alerts': items, 'counts': counts, 'source': _source(dataset)})
+    return Response({'alerts': items, 'counts': counts, 'filters': {'scope': scope}, 'population': metrics.population(scope),
+                     'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -217,7 +232,9 @@ def period_view(request):
     dataset = _scoped(request, params)
     result = metrics.period_summary(dataset, params['selection'], dates=params['dates'],
                                     month_keys=params['month_keys'], label=params['label'])
-    return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
+    status = period_status(dataset, params)
+    return Response({**result, 'status': status['status'] if status else None, 'missing': status['missing'] if status else [],
+                     'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -229,7 +246,7 @@ def thresholds_view(request):
     result = metrics.threshold_analysis(dataset, params['selection'], params['reporting_date'],
                                         period=request.query_params.get('period') or None,
                                         compare=request.query_params.get('vs') or None)
-    return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
+    return Response({**result, 'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -239,7 +256,7 @@ def monthly_view(request):
     params = _validated(MonthlySerializer, request, dataset)
     dataset = _scoped(request, params)
     result = metrics.monthly(dataset, params['selection'], params['reporting_date'], params['months'])
-    return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
+    return Response({**result, 'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -249,7 +266,7 @@ def teams_view(request):
     params = _validated(TeamSerializer, request, dataset)
     dataset = _scoped(request, params)
     result = metrics.team_performance(dataset, params['selection'], params['reporting_date'], params['group'])
-    return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
+    return Response({**result, 'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
 
 
 
@@ -264,7 +281,7 @@ def team_monthly_view(request):
                                            month=params['month'] or None)
     except ValueError as exc:
         raise ValidationError({'month': str(exc)})
-    return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
+    return Response({**result, 'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
 
 
 @api_view(['GET'])
@@ -278,39 +295,22 @@ def team_top_view(request):
                                                month=params['month'] or None)
     except ValueError as exc:
         raise ValidationError({'month': str(exc)})
-    return Response({**result, 'filters': _applied(params), 'source': _source(dataset)})
+    return Response({**result, 'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
 
-@api_view(['GET', 'POST'])
-@parser_classes([MultiPartParser, FormParser])
-@permission_classes([AdminForWrites])  # everyone may see the active workbook; only Admins replace it
+DATA_SOURCE = 'sitedata'  # the only data source of every page: the data layer (apps.sitedata)
+
+
+@api_view(['GET'])
 def workbook_view(request):
-    """GET: the active Master workbook. POST: upload a new one (form field "file")."""
-    if request.method == 'GET':
-        return Response(_workbook_status(request=request))
-
-    uploaded = request.FILES.get('file')
-    if not uploaded:
-        raise ValidationError({'file': 'Choose the consolidated Master workbook (.xlsx) to upload.'})
-    previous = store.active_record()
-    try:
-        dataset, _ = accept_upload(uploaded)
-    except UploadRejected as exc:
-        kept = (f" The previously loaded workbook '{previous['original_name']}' is still in use."
-                if previous else ' No workbook is loaded yet.')
-        return Response(
-            {'error': f'{exc}{kept}', 'details': {'problems': exc.problems, 'previous_workbook_kept': bool(previous)}},
-            status=exc.status,
-        )
-    # The workbook is replaced either way; the status describes whichever source the dashboard uses.
-    from apps.uptimedb.datasource import EXCEL, active_source
-    return Response({'status': 'accepted', **_workbook_status(dataset if active_source() == EXCEL else None, request=request)},
-                    status=status.HTTP_201_CREATED)
+    """The data behind the dashboard: status of the data layer for the signed-in user's circles (sites, reporting dates,
+    warnings). The frontend uses it as the data version of every page. Read only; data enters through the data-layer
+    imports (Data Source page, raw CSV upload)."""
+    return Response(_workbook_status(request=request))
 
 
 def _workbook_status(dataset=None, request=None) -> dict:
-    """The data behind the dashboard: the active source's dataset (Excel workbook or PostgreSQL)."""
-    from apps.uptimedb.datasource import active_source
-    source = active_source()
+    """Status of the data layer's dataset (restricted to the user's circles)."""
+    source = DATA_SOURCE
     if dataset is None:
         try:
             dataset = _dataset(request)  # a restricted user's counts cover their circles only
@@ -356,36 +356,10 @@ def _record(row: dict) -> dict:
         'daily_uptime_pct': number(row['daily_uptime_pct'], 4),
         'mtd_uptime_pct': number(row['mtd_uptime_pct'], 4),
         'bucket': row['bucket'],
+        'nsla': bool(row.get('nsla', False)),
         'ie_name': row['ie_name'],
         'ci_name': row['ci_name'],
     }
-
-
-@api_view(['GET'])
-@permission_classes([Can('dashboard', 'view')])
-def conversion_activity_view(request):
-    """Sites that went On-Air / started O&M this month and last month, from the escalation matrix's dates.
-
-    ``month`` (YYYY-MM, default: the current reporting month), ``report_type`` and ``circle`` filter it.
-    """
-    from datetime import date as _date
-
-    from .activity import ActivityUnavailable, monthly_activity
-    raw = request.query_params.get('month')
-    try:
-        month = _date.fromisoformat(f'{raw}-01') if raw else None
-    except ValueError:
-        return Response({'error': f'"{raw}" is not a month (YYYY-MM).', 'details': {}}, status=400)
-    if month is None:
-        try:
-            month = _dataset(request).dates[0]
-        except Exception:  # no Master data: fall back to today's month
-            month = _date.today()
-    try:
-        return Response(monthly_activity(month, request.query_params.get('report_type') or None, request.query_params.get('circle') or None,
-                                         pairs=pairs_for(request.user, 'dashboard', 'view')))
-    except ActivityUnavailable as exc:
-        return Response({'error': str(exc), 'details': {}}, status=404)
 
 
 @api_view(['GET'])
@@ -432,10 +406,11 @@ def export_daily_view(request):
     dataset = _scoped(request, params, 'export')
     try:
         scope = _export_scope(request, dataset, params['selection'])
-        name, data = report_export.daily_report(dataset, scope, params['date'], _source_label(dataset))
+        name, data = report_export.daily_report(dataset, scope, params['date'], _source_label(dataset), params['selection'].scope)
     except report_export.ExportError as exc:
         return _export_error(exc)
-    audit('report_exported', request, report='daily', project=scope.project_label, circle=scope.circle_label, date=params['date'].isoformat())
+    audit('report_exported', request, report='daily', project=scope.project_label, circle=scope.circle_label, date=params['date'].isoformat(),
+          population=params['selection'].scope)
     return _xlsx(name, data)
 
 
@@ -449,9 +424,10 @@ def export_consolidated_view(request):
     dataset = _scoped(request, params, 'export')
     try:
         scope = _export_scope(request, dataset, params['selection'])
-        name, data = report_export.consolidated_report(dataset, scope, params['reporting_date'], _source_label(dataset))
+        name, data = report_export.consolidated_report(dataset, scope, params['reporting_date'], _source_label(dataset),
+                                                       params['selection'].scope)
     except report_export.ExportError as exc:
         return _export_error(exc)
     audit('report_exported', request, report='consolidated', project=scope.project_label, circle=scope.circle_label,
-          date=params['reporting_date'].isoformat())
+          date=params['reporting_date'].isoformat(), population=params['selection'].scope)
     return _xlsx(name, data)

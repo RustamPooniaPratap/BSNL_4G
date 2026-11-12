@@ -3,6 +3,7 @@ import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis
 import { Separator } from '@/components/ui/separator';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
+import { usePopulation } from '../../context/population';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDate, formatMinutes, formatPct, formatShortDate } from '../../lib/format';
 import { teamLink, UNASSIGNED } from '../../lib/teams';
@@ -21,8 +22,9 @@ const barColor = (uptime: number) =>
   uptime >= 98.5 ? BUCKET_COLORS.gte_98_5 : uptime >= 90 ? BUCKET_COLORS['90_97'] : BUCKET_COLORS.lt_60;
 
 export function SiteDetailSheet({ site, onClose }: SiteDetailSheetProps) {
-  const key = site ? `${site.report_type}|${site.site_id}` : null;
-  const { data, error, loading } = useApiQuery(key, (signal) => fetchSiteDetail(site!.site_id, site!.report_type, signal));
+  const { scope } = usePopulation();
+  const key = site ? `${site.report_type}|${site.site_id}|${scope}` : null;
+  const { data, error, loading } = useApiQuery(key, (signal) => fetchSiteDetail(site!.site_id, site!.report_type, signal, scope));
   const detail = data && site && data.site.site_id === site.site_id ? data : null;
   const reported = detail?.daily.filter((d) => d.reported) ?? [];
 

@@ -7,11 +7,10 @@ import { cn } from '@/lib/utils';
 import { Field, FilterBar } from '../../components/dashboard/FilterBar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageHeading } from '../../context/pageHeader';
-import { useWorkbook } from '../../context/workbook';
-import { useApiQuery } from '../../hooks/useApiQuery';
+import { useFilterOptions } from '../../hooks/useFilterOptions';
+import { usePopulation } from '../../context/population';
 import { useDashboardFilters, type DashboardFilterState } from '../../hooks/useDashboardFilters';
 import { formatNumber, formatPct } from '../../lib/format';
-import { fetchFilterOptions } from '../../services/api';
 import {
   getCircle,
   getOa,
@@ -36,10 +35,9 @@ export function IePerformancePage() {
     ieId: string;
   }>();
 
-  const workbook = useWorkbook();
-  const { version } = workbook;
-  const options = useApiQuery(workbook.active ? `${version}|filters` : null, fetchFilterOptions);
-  const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data, { defaultScope: 'om_start' });
+  const options = useFilterOptions();
+  const { sitesLabel } = usePopulation();
+  const { filters, setFilters, reset, isDefault } = useDashboardFilters(options.data);
   const [searchParams, setSearchParams] = useSearchParams();
   const month = searchParams.get('month') ?? '';
 
@@ -79,12 +77,12 @@ export function IePerformancePage() {
   const latest = months[months.length - 1]?.key;
   const selectedMonth = month || latest || '2026-10';
   const monthLabel = months.find((m) => m.key === selectedMonth)?.label ?? 'Oct-26 MTD';
-  const scopeLabel = options.data?.scopes.find((s) => s.value === filters?.scope)?.label ?? 'O&M Start';
+  const scopeLabel = sitesLabel;
   const circleName = circle?.circle_name ?? circleCode ?? '';
   const oaName = oa?.oa_name ?? oaId ?? '';
   const ciName = ci?.ci_name ?? ciId ?? '';
   const ieName = ie?.ie_name ?? ieId ?? '';
-  const subtitle = `${ieName} · ${ciName} · ${oaName} · ${circleName} (${circleCode}) · ${filters?.reportType || 'All Projects'}`;
+  const subtitle = `${ieName} · ${ciName} · ${oaName} · ${circleName} (${circleCode}) · ${filters?.reportType || 'All Projects'} · Population: ${scopeLabel}`;
 
   if (!options.data || !filters || !ie) {
     return <Skeleton className="h-96 w-full" aria-label="Loading IE detail" />;

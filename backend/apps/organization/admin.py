@@ -104,7 +104,7 @@ class PersonnelSourceMappingAdmin(admin.ModelAdmin):
 class SitePersonnelAssignmentAdmin(admin.ModelAdmin):
     list_display = ['id', 'site', 'personnel', 'role_type', 'parent_ci', 'effective_from', 'effective_to', 'is_active']
     list_filter = ['role_type', 'is_active']
-    search_fields = ['site__site_id', 'personnel__canonical_name']
+    search_fields = ['site__bsnl_site_id', 'personnel__canonical_name']
 
 
 @admin.register(PersonnelConflict)

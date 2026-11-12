@@ -1,3 +1,4 @@
+import type { PeriodStatusFields } from '../../types/reporting';
 /** All KPI's: responses of /api/all-kpis/ (backend: apps/allkpis/services.py). */
 export interface KpiOmStatus { months: string[]; missing_months: string[]; available: boolean; complete: boolean }
 
@@ -23,7 +24,7 @@ export interface KpiSummary {
 }
 
 export type Granularity = 'day' | 'week' | 'month';
-export interface KpiTrendPoint {
+export interface KpiTrendPoint extends PeriodStatusFields {
   key: string; label: string; start: string; end: string; days: number;
   availability_pct: number | null; outage_minutes: number | null; outage_hours: number | null; usd_sites: number | null; nsla_sites: number | null;
   below_98_5_sites: number; below_60_sites: number; coverage_pct: number | null; missing_site_days: number;

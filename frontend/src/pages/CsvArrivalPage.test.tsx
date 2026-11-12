@@ -12,7 +12,6 @@ vi.mock('../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/api')>()),
   fetchArrivalTracker: vi.fn(),
   fetchRawFiles: vi.fn(),
-  uploadDataFile: vi.fn(),
   fetchEmailStatus: vi.fn(),
   fetchReminderTemplate: vi.fn(),
   sendReminder: vi.fn(),
@@ -32,11 +31,11 @@ const DAYS: Record<string, TrackerItem[]> = {
   '2026-10-17': [
     trackerItem('4G Saturation', 'MP', {
       data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, records_observed: 11,
-      data_source: { master_workbook: 10, raw_daily_csv: 0 }, latest_data_date: '2026-10-17', latest_complete_date: '2026-10-17',
+      data_source: { master_workbook: 10, raw_daily_csv: 0, correction: 0 }, latest_data_date: '2026-10-17', latest_complete_date: '2026-10-17',
       range: [{ date: '2026-10-15', sites_with_data: 10, state: 'complete' }, { date: '2026-10-16', sites_with_data: 0, state: 'none' }, { date: '2026-10-17', sites_with_data: 10, state: 'complete' }],
     }),
     trackerItem('4G Saturation', 'OD', {
-      data_state: 'partial', sites_with_data: 6, sites_missing: 4, coverage_pct: 60, data_source: { master_workbook: 0, raw_daily_csv: 6 },
+      data_state: 'partial', sites_with_data: 6, sites_missing: 4, coverage_pct: 60, data_source: { master_workbook: 0, raw_daily_csv: 6, correction: 0 },
       latest_data_date: '2026-10-17', latest_complete_date: '2026-10-12', latest_upload_date: '2026-10-17', latest_import_date: '2026-10-17',
       upload_state: 'imported', uploads: [trackerUpload({ file: 'od_day.csv', imported: 6 })],
     }),
@@ -48,11 +47,11 @@ const DAYS: Record<string, TrackerItem[]> = {
     trackerItem('LWE', 'MP'),
   ],
   '2026-10-12': [
-    trackerItem('4G Saturation', 'MP', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
-    trackerItem('4G Saturation', 'OD', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
-    trackerItem('4G Saturation', 'RJ', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
-    trackerItem('LWE', 'BH', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
-    trackerItem('LWE', 'MP', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0 } }),
+    trackerItem('4G Saturation', 'MP', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0, correction: 0 } }),
+    trackerItem('4G Saturation', 'OD', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0, correction: 0 } }),
+    trackerItem('4G Saturation', 'RJ', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0, correction: 0 } }),
+    trackerItem('LWE', 'BH', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0, correction: 0 } }),
+    trackerItem('LWE', 'MP', { data_state: 'complete', sites_with_data: 10, sites_missing: 0, coverage_pct: 100, data_source: { master_workbook: 10, raw_daily_csv: 0, correction: 0 } }),
   ],
 };
 const respond = (params: { date: string }) => arrivalTracker(params.date, DAYS[params.date] ?? DAYS['2026-10-17'].map((i) => trackerItem(i.project, i.circle)));
@@ -69,7 +68,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   expect(fetchSpy).not.toHaveBeenCalled();  // reads go through the mocked API; nothing is written anywhere
-  expect(api.uploadDataFile).not.toHaveBeenCalled();
   fetchSpy.mockRestore();
 });
 
@@ -91,9 +89,9 @@ describe('CSV Arrival & Follow-up', () => {
     await loaded();
     expect(api.fetchArrivalTracker).toHaveBeenCalledWith({ date: '2026-10-17', start: '2026-10-04', end: '2026-10-17' }, expect.anything());
     expect(screen.queryByText('Pending')).not.toBeInTheDocument();
-    // Complete data from the Master workbook with no CSV upload is complete, not pending.
+    // Complete data from the Uptime Master with no CSV upload is complete, not pending.
     expect(cell('MP 4G', 2)).toHaveTextContent('Data complete');
-    expect(cell('MP 4G', 2)).toHaveTextContent('From Master workbook');
+    expect(cell('MP 4G', 2)).toHaveTextContent('From Uptime Master');
     expect(cell('MP 4G', 3)).toHaveTextContent('10 / 10 sites');
     expect(cell('MP 4G', 4)).toHaveTextContent('No CSV upload recorded');
     // Partial data from an imported CSV.
@@ -116,7 +114,7 @@ describe('CSV Arrival & Follow-up', () => {
     expect(within(card('CSV uploads recorded')).getByText('2')).toBeInTheDocument();
     expect(within(card('Past deadline')).getByText('0')).toBeInTheDocument();
     expect(screen.getAllByText('Not configured')).toHaveLength(5);
-    expect(screen.getByText(/Data status is read from PostgreSQL for the selected date/)).toBeInTheDocument();
+    expect(screen.getByText(/Data status is read from the reporting data for the selected date/)).toBeInTheDocument();
   });
 
   it('loads each selected date from the server and never shows another date while it loads', async () => {
@@ -183,7 +181,7 @@ describe('CSV Arrival & Follow-up', () => {
     await user.keyboard('{Escape}');
     await user.click(row('MP 4G'));
     const mp = await screen.findByRole('region', { name: 'Stored daily data' });
-    expect(mp).toHaveTextContent('Master workbook');
+    expect(mp).toHaveTextContent('Uptime Master');
     expect(mp).toHaveTextContent('11 usable records, including sites not On-Air');
     expect(screen.getByRole('region', { name: 'CSV uploads' })).toHaveTextContent('No CSV upload recorded for this date.');
   });
@@ -446,5 +444,15 @@ describe('Email actions', () => {
     vi.mocked(api.fetchEmailStatus).mockRejectedValue(new api.ApiError('The reporting API could not be reached.', 0));
     renderPage();
     expect(await screen.findByText('Email unavailable')).toBeInTheDocument();
+  });
+
+  it('shows the coverage threshold used and labels an inactive unit (not expected on the date)', async () => {
+    vi.mocked(api.fetchArrivalTracker).mockImplementation(async (params) => arrivalTracker(params.date, DAYS['2026-10-17'].map((i) =>
+      i.circle === 'OD' ? { ...i, coverage_threshold_pct: 90, active: true }
+        : i.project === 'LWE' && i.circle === 'MP' ? { ...i, data_state: 'no_scope' as const, active: false, coverage_pct: null, coverage_threshold_pct: null } : i)));
+    renderPage();
+    await loaded();
+    expect(cell('OD 4G', 3)).toHaveTextContent('6 / 10 sites60% (threshold 90%) · 4 missing');
+    expect(cell('MP LWE', 3)).toHaveTextContent('InactiveUnit not expected on this date');
   });
 });

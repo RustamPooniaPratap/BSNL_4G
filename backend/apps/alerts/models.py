@@ -67,6 +67,10 @@ class Automation(models.Model):
         SAME = 'same', 'Same report for all recipients'
         PER_RECIPIENT = 'per_recipient', 'Relevant report per recipient'
 
+    class Population(models.TextChoices):  # the values of apps.dashboard.metrics.SCOPES
+        ON_AIR = 'on_air', 'On-Air sites'
+        OM_START = 'om_start', 'O&M Start sites'
+
     name = models.CharField(max_length=150)
     kind = models.CharField(max_length=20, choices=Kind.choices)
     enabled = models.BooleanField(default=False)
@@ -84,6 +88,10 @@ class Automation(models.Model):
     project = models.CharField(max_length=20, blank=True)
     circles = models.JSONField(default=list, blank=True)
     report_day = models.CharField(max_length=10, default='yesterday', help_text='"today", "yesterday" or "latest" (latest date with data).')
+    # Site population of the attached uptime reports (the portal's ``scope``): emailed reports use the same population as
+    # the portal download. Existing automations default to On-Air, the portal's default population.
+    population = models.CharField(max_length=10, choices=Population.choices, default=Population.ON_AIR,
+                                  help_text='Site population of the attached uptime reports: On-Air or O&M Start sites.')
     # Recipients: portal users, external addresses, and for reminders / failures the responsible users of the circle.
     to_users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name='+')
     to_emails = models.JSONField(default=list, blank=True)

@@ -60,11 +60,12 @@ beforeEach(() => {
 });
 
 describe('Threshold analysis: one unified table', () => {
-  it('defaults to the O&M Start population used by the workbook and passes filters through', async () => {
+  it('uses the global population (On-Air by default, no page default of its own) and passes filters through', async () => {
     renderPage('/thresholds?circle=MP&date=2026-10-02');
     await findUnified();
     const current = fetchThresholds.mock.calls.map((c) => Object.fromEntries(c[0] as URLSearchParams));
-    expect(current).toContainEqual(expect.objectContaining({ scope: 'om_start', circle: 'MP', reporting_date: '2026-10-02' }));
+    expect(current).toContainEqual(expect.objectContaining({ scope: 'on_air', circle: 'MP', reporting_date: '2026-10-02' }));
+    expect(current.every((q) => q.scope === 'on_air')).toBe(true);  // never the O&M Start default the page used to have
     expect(screen.queryByRole('region', { name: 'Bucket comparison' })).not.toBeInTheDocument();  // the two tables are now one
     expect(screen.queryByRole('region', { name: 'Monthly comparison' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('table')).toHaveLength(1);
@@ -147,6 +148,13 @@ describe('Threshold analysis: one unified table', () => {
 });
 
 describe('Threshold analysis: uptime threshold summary', () => {
+  it('follows an O&M Start selection of the global population in every request', async () => {
+    renderPage('/thresholds?scope=om_start&circle=MP&date=2026-10-02');
+    await findUnified();
+    const scopes = fetchThresholds.mock.calls.map((c) => (c[0] as URLSearchParams).get('scope'));
+    expect(new Set(scopes)).toEqual(new Set(['om_start']));
+  });
+
   it('shows meeting and below-threshold counts that reconcile with the site scope and bucket totals', async () => {
     renderPage();
     await findUnified();
@@ -156,7 +164,7 @@ describe('Threshold analysis: uptime threshold summary', () => {
     expect(within(kpi()).getByText('2')).toHaveClass('text-red-700');
     expect(within(kpi()).getByText('40.0%')).toBeInTheDocument();
     expect(within(kpi()).getByText('MTD to 02 Oct')).toBeInTheDocument();
-    expect(within(kpi()).getByText('5 O&M Start sites')).toBeInTheDocument();
+    expect(within(kpi()).getByText('5 On-Air sites')).toBeInTheDocument();
     expect(within(kpi()).getByRole('img')).toHaveAttribute('aria-label',
       'Threshold distribution: 3 meeting and 2 below out of 5 sites in scope');
     expect(within(kpi()).getByText('All sites classified')).toBeInTheDocument();
@@ -232,10 +240,10 @@ describe('Threshold analysis: bucket detail', () => {
   it('keeps the critical analysis for below 60% and the high-availability analysis for 98.5%+', async () => {
     const view = renderPage('/thresholds?date=2026-10-02&view=lt_60');
     expect(await screen.findByRole('heading', { name: /Critical low uptime: below 60%/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open in Site Explorer/ })).toHaveAttribute('href', '/?scope=om_start&date=2026-10-02&bucket=lt_60');
+    expect(screen.getByRole('link', { name: /Open in Site Explorer/ })).toHaveAttribute('href', '/?scope=on_air&date=2026-10-02&bucket=lt_60');
     const mp = within(periodTable()).getByRole('rowheader', { name: 'MP · 4G' }).closest('tr')!;
     const day = within(mp).getAllByRole('link').find((a) => a.getAttribute('href')?.includes('date=2026-10-01'))!;
-    expect(day).toHaveAttribute('href', '/?scope=om_start&date=2026-10-01&bucket=lt_60&report_type=4G+Saturation&circle=MP&bucket_basis=daily');
+    expect(day).toHaveAttribute('href', '/?scope=on_air&date=2026-10-01&bucket=lt_60&report_type=4G+Saturation&circle=MP&bucket_basis=daily');
     expect(day.className).toContain('text-destructive');
     view.unmount();
     renderPage('/thresholds?date=2026-10-02&view=gte_98_5');
@@ -247,7 +255,7 @@ describe('Threshold analysis: bucket detail', () => {
     renderPage('/thresholds?date=2026-10-02&view=60_90');
     await screen.findByRole('heading', { name: /Uptime 60% to below 90%/ });
     await waitFor(() => expect(fetchRecords).toHaveBeenCalled());
-    expect(Object.fromEntries(lastRecords())).toMatchObject({ bucket: '60_90', scope: 'om_start', reporting_date: '2026-10-02' });
+    expect(Object.fromEntries(lastRecords())).toMatchObject({ bucket: '60_90', scope: 'on_air', reporting_date: '2026-10-02' });
     expect(lastRecords().has('bucket_basis')).toBe(false);  // MTD
     const byCircle = screen.getByRole('region', { name: 'Circle comparison for the bucket' });
     await user.click(within(byCircle).getByRole('row', { name: /OD · LWE: list its sites/ }));
@@ -260,7 +268,7 @@ describe('Threshold analysis: bucket detail', () => {
     await screen.findByRole('heading', { name: /Critical low uptime/ });
     await waitFor(() => expect(fetchRecords).toHaveBeenCalled());
     expect(Object.fromEntries(lastRecords())).toMatchObject({ bucket: 'lt_60', bucket_basis: 'daily', reporting_date: '2026-10-01' });
-    expect(screen.getByRole('link', { name: /Open in Site Explorer/ })).toHaveAttribute('href', '/?scope=om_start&date=2026-10-01&bucket=lt_60&bucket_basis=daily');
+    expect(screen.getByRole('link', { name: /Open in Site Explorer/ })).toHaveAttribute('href', '/?scope=on_air&date=2026-10-01&bucket=lt_60&bucket_basis=daily');
     expect(screen.getByRole('region', { name: 'Bucket summary' })).toHaveTextContent('Sites · 01 Oct');
   });
 

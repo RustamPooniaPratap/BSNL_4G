@@ -3,14 +3,23 @@ import { useNavigate } from 'react-router-dom';
 import { Dialog } from 'radix-ui';
 import { Loader2, Plus, Save, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { formatNumber } from '../../lib/format';
 import type { DataEdits } from './useDataEdits';
 
-/** The unsaved-changes bar above an editable grid: counts, Add row, Discard and one Save Changes for everything. */
-export function EditBar({ edits, canAdd, busy, message, onSave, onDone }: {
+/** The reason a correction save needs (Daily Performance): kept with every changed value on the server. */
+export interface ReasonField { value: string; onChange: (value: string) => void; error?: string }
+
+/**
+ * The unsaved-changes bar above an editable grid: counts, Add row, Discard and one Save Changes for everything. With
+ * ``reason`` (corrections), Save Changes needs a reason, sent with the save.
+ */
+export function EditBar({ edits, canAdd, busy, message, onSave, onDone, reason }: {
   edits: DataEdits; canAdd: boolean; busy: boolean; message: { ok: boolean; text: string } | null; onSave: () => void; onDone: () => void;
+  reason?: ReasonField | null;
 }) {
+  const reasonMissing = !!reason && !reason.value.trim();
   const parts = [
     edits.cells ? `${formatNumber(edits.cells)} changed cell${edits.cells === 1 ? '' : 's'} in ${formatNumber(edits.rows)} row${edits.rows === 1 ? '' : 's'}` : '',
     edits.additions.length ? `${formatNumber(edits.additions.length)} new row${edits.additions.length === 1 ? '' : 's'}` : '',
@@ -24,10 +33,22 @@ export function EditBar({ edits, canAdd, busy, message, onSave, onDone }: {
         <div className="ml-auto flex flex-wrap gap-1.5">
           {canAdd && <Button size="sm" variant="outline" className="h-7" onClick={edits.addRow} disabled={busy}><Plus /> Add row</Button>}
           <Button size="sm" variant="outline" className="h-7" onClick={edits.discard} disabled={busy || !edits.dirty}><Undo2 /> Discard</Button>
-          <Button size="sm" className="h-7" onClick={onSave} disabled={busy || !edits.dirty}>{busy ? <Loader2 className="animate-spin" /> : <Save />} Save Changes</Button>
+          <Button size="sm" className="h-7" onClick={onSave} disabled={busy || !edits.dirty || reasonMissing}
+            title={reasonMissing && edits.dirty ? 'Give the reason for the correction first' : undefined}>{busy ? <Loader2 className="animate-spin" /> : <Save />} Save Changes</Button>
           <Button size="sm" variant="ghost" className="h-7" onClick={onDone} disabled={busy || edits.dirty} title={edits.dirty ? 'Save or discard the changes first' : undefined}>Done</Button>
         </div>
       </div>
+      {reason && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <label htmlFor="md-reason" className="font-medium">Reason for the correction <span className="text-destructive" aria-hidden="true">*</span></label>
+          <Input id="md-reason" className="h-7 max-w-xl flex-1 text-xs" value={reason.value} required aria-required="true"
+            aria-invalid={reason.error ? true : undefined} aria-describedby="md-reason-help" disabled={busy}
+            placeholder="e.g. CNMC ticket number and what was confirmed" onChange={(e) => reason.onChange(e.target.value)} />
+          <span id="md-reason-help" className={cn(reason.error ? 'text-destructive' : 'text-muted-foreground')}>
+            {reason.error ?? 'Required: every changed value is saved as an authorized correction with this reason.'}
+          </span>
+        </div>
+      )}
       {message && <p role={message.ok ? 'status' : 'alert'} className={cn('text-xs', message.ok ? 'text-emerald-800' : 'text-destructive')}>{message.text}</p>}
     </div>
   );

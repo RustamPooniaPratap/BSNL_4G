@@ -14,7 +14,6 @@ from apps.organization.models import (
     Project,
     SitePersonnelAssignment,
 )
-from apps.uptimedb.models import UptimeSite
 
 
 class OperationalAreaSerializer(serializers.ModelSerializer):
@@ -123,10 +122,11 @@ class PersonnelSourceMappingSerializer(serializers.ModelSerializer):
 
 
 class SitePersonnelAssignmentSerializer(serializers.ModelSerializer):
-    site_id_str = serializers.CharField(source='site.site_id', read_only=True)
+    # Field names kept for the frontend: the site is the data layer's sitedata.Site (BSNL Site ID, technology).
+    site_id_str = serializers.CharField(source='site.bsnl_site_id', read_only=True)
     site_name = serializers.CharField(source='site.site_name', read_only=True)
     circle_code = serializers.CharField(source='site.circle', read_only=True)
-    project_key = serializers.CharField(source='site.project', read_only=True)
+    project_key = serializers.CharField(source='site.technology', read_only=True)
     personnel_name = serializers.CharField(source='personnel.display_name', read_only=True)
     personnel_code = serializers.CharField(source='personnel.employee_code', read_only=True)
     parent_ci_name = serializers.CharField(source='parent_ci.display_name', read_only=True, default=None)

@@ -54,11 +54,15 @@ export function detailLink(path: string, f: PortfolioFilters, extra: Record<stri
   return text ? `${path}?${text}` : path;
 }
 
+/**
+ * Site Portfolio figures. ``selected`` and ``previous`` are summaries of the selected population (the global On-Air /
+ * O&M Start selection); ``status`` holds the site status counts (total scope, On-Air, O&M Start), which are shown
+ * side by side as status information only and never feed a performance figure.
+ */
 export interface PortfolioData {
-  onAir: SummaryResponse;
-  omStart: SummaryResponse | null;
-  all: SummaryResponse;
+  selected: SummaryResponse;
   previous: SummaryResponse | null;
+  status: { total: number; onAir: number | null; omStart: number | null };
 }
 
 export interface Kpi {
@@ -77,70 +81,61 @@ export interface Kpi {
   tone?: 'critical' | 'warning';
 }
 
-/** Portfolio KPI cards from the summary snapshots (current and previous reporting date). */
-export function buildKpis(d: PortfolioData, f: PortfolioFilters, labels: { day: string; mtd: string }): Kpi[] {
-  const { onAir, omStart, all, previous } = d;
-  const m = onAir.metrics;
+/**
+ * Portfolio KPI cards. Status counts (total, On-Air, O&M Start) are labelled as such; every performance KPI is for the
+ * selected population only (``sites``: "On-Air sites" / "O&M Start sites"), compared with the same population on the
+ * previous reporting date. Links never set a population: the global selection applies on the target page too.
+ */
+export function buildKpis(d: PortfolioData, f: PortfolioFilters, labels: { day: string; mtd: string }, sites: string): Kpi[] {
+  const { selected, previous, status } = d;
+  const m = selected.metrics;
   const p = previous?.metrics;
-  const total = all.metrics.sites_total;
-  const onAirSites = m.sites_in_scope;
   const kpis: Kpi[] = [
     {
-      id: 'total', group: 'Site portfolio', label: 'Total sites', value: total, unit: 'sites', period: 'In the Master workbook',
-      definition: 'Every site row in Up-Time Report for the selected report type and circle (duplicates removed).',
-      delta: null, higherIsBetter: null, link: detailLink('/', f, { scope: 'all' }),
+      id: 'total', group: 'Site portfolio', label: 'Total sites (status)', value: status.total, unit: 'sites', period: 'In the Consolidation Matrix',
+      definition: 'Site status: every dashboard site for the selected report type and circle (duplicates removed), whatever the population.',
+      delta: null, higherIsBetter: null, link: detailLink('/', f),
     },
     {
-      id: 'on_air', group: 'Site portfolio', label: 'On-Air sites', value: onAirSites, unit: 'sites', period: 'Current On-Air flag',
-      definition: 'Sites with On-Air = "Yes". The flag has no history, so no previous-period comparison is possible.',
-      delta: null, higherIsBetter: null, link: detailLink('/', f, { scope: 'on_air' }),
+      id: 'on_air', group: 'Site portfolio', label: 'On-Air sites (status)', value: status.onAir, unit: 'sites', period: 'Site On-Air Date',
+      definition: 'Site status: sites with a Site On-Air Date on or before the end of the month. No previous-period comparison.',
+      delta: null, higherIsBetter: null, link: detailLink('/', f),
     },
     {
-      id: 'not_on_air', group: 'Site portfolio', label: 'Sites not yet On-Air', value: total - onAirSites, unit: 'sites', period: 'Current On-Air flag',
-      definition: 'Total sites minus On-Air sites (On-Air blank, "No" or any value other than "Yes").',
-      delta: null, higherIsBetter: null, link: detailLink('/', f, { scope: 'all' }),
+      id: 'om_start', group: 'Site portfolio', label: 'O&M Start sites (status)', value: status.omStart, unit: 'sites', period: 'O&M Start Date',
+      definition: 'Site status: sites with an O&M Start Date on or before the end of the month. Not available without O&M Start dates.',
+      delta: null, higherIsBetter: null, link: detailLink('/', f),
     },
     {
-      id: 'om_start', group: 'Site portfolio', label: 'Sites in O&M Start', value: omStart ? omStart.metrics.sites_in_scope : null, unit: 'sites',
-      period: 'Current month flag',
-      definition: 'Sites with "O&M Start - <month>" = "Yes" for the reporting month. Not available when the workbook has no such column.',
-      delta: null, higherIsBetter: null, link: detailLink('/', f, { scope: 'om_start' }),
-    },
-    {
-      id: 'mtd_uptime', group: 'Uptime and performance', label: 'On-Air MTD uptime', value: m.mtd_uptime_pct, unit: 'pct', period: labels.mtd,
-      definition: 'Outage-weighted uptime of On-Air sites from the 1st to the reporting date: 1 − Σ outage ÷ (1,440 × site-days reported). Compared with the MTD to the previous reporting date.',
+      id: 'mtd_uptime', group: 'Uptime and performance', label: `MTD uptime (${sites})`, value: m.mtd_uptime_pct, unit: 'pct', period: labels.mtd,
+      definition: `Outage-weighted uptime of ${sites} from the 1st to the reporting date: 1 − Σ outage ÷ (1,440 × site-days reported). Compared with the MTD to the previous reporting date.`,
       delta: delta(m.mtd_uptime_pct, p?.mtd_uptime_pct, 'pct'), higherIsBetter: true, link: detailLink('/', f),
     },
     {
-      id: 'om_mtd_uptime', group: 'Uptime and performance', label: 'O&M Start MTD uptime', value: omStart?.metrics.mtd_uptime_pct ?? null, unit: 'pct',
-      period: labels.mtd, definition: 'The same MTD uptime for O&M Start sites (the population of the workbook\'s threshold sheets).',
-      delta: null, higherIsBetter: true, link: detailLink('/', f, { scope: 'om_start' }),
-    },
-    {
-      id: 'daily_uptime', group: 'Uptime and performance', label: 'On-Air daily uptime', value: m.daily_uptime_pct, unit: 'pct', period: labels.day,
-      definition: 'Outage-weighted uptime of On-Air sites that reported on the reporting date. Compared with the previous reporting date.',
+      id: 'daily_uptime', group: 'Uptime and performance', label: `Daily uptime (${sites})`, value: m.daily_uptime_pct, unit: 'pct', period: labels.day,
+      definition: `Outage-weighted uptime of ${sites} that reported on the reporting date. Compared with the previous reporting date.`,
       delta: delta(m.daily_uptime_pct, p?.daily_uptime_pct, 'pct'), higherIsBetter: true, link: detailLink('/', f),
     },
     {
       id: 'gte_98_5', group: 'Uptime and performance', label: 'Sites at 98.5% or above', value: m.sites_at_or_above_98_5_mtd, unit: 'sites', period: labels.mtd,
-      definition: 'On-Air sites whose own MTD uptime is at least 98.5% (workbook bucket ">98.5").',
+      definition: `${sites} whose own MTD uptime is at least 98.5% (workbook bucket ">98.5").`,
       delta: delta(m.sites_at_or_above_98_5_mtd, p?.sites_at_or_above_98_5_mtd, 'sites'), higherIsBetter: true, link: detailLink('/thresholds', f),
     },
     {
       id: 'lt_60', group: 'Uptime and performance', label: 'Sites below 60%', value: m.sites_below_60_mtd, unit: 'sites', period: labels.mtd,
-      definition: 'On-Air sites whose own MTD uptime is below 60% (workbook bucket "<60"). These need attention first.',
+      definition: `${sites} whose own MTD uptime is below 60% (workbook bucket "<60"). These need attention first.`,
       delta: delta(m.sites_below_60_mtd, p?.sites_below_60_mtd, 'sites'), higherIsBetter: false,
       link: detailLink('/', f, { bucket: 'lt_60' }), tone: m.sites_below_60_mtd ? 'critical' : undefined,
     },
     {
       id: 'down_all_day', group: 'Uptime and performance', label: 'Sites down all day', value: m.sites_down_full_day, unit: 'sites', period: labels.day,
-      definition: 'On-Air sites with 1,440 or more outage minutes on the reporting date.',
+      definition: `${sites} with 1,440 or more outage minutes on the reporting date.`,
       delta: delta(m.sites_down_full_day, p?.sites_down_full_day, 'sites'), higherIsBetter: false,
       link: detailLink('/', f, { bucket: 'lt_60', bucket_basis: 'daily' }), tone: m.sites_down_full_day ? 'critical' : undefined,
     },
     {
       id: 'coverage', group: 'Reporting and operations', label: 'Reporting completeness', value: m.coverage_pct, unit: 'pct', period: labels.day,
-      definition: 'On-Air sites with an outage value on the reporting date ÷ On-Air sites. Missing values are not counted as 100%.',
+      definition: `${sites} with an outage value on the reporting date ÷ ${sites}. Missing values are not counted as 100%.`,
       delta: delta(m.coverage_pct, p?.coverage_pct, 'pct'), higherIsBetter: true, link: '/data-source',
       tone: m.sites_missing ? 'warning' : undefined,
     },
@@ -193,7 +188,7 @@ export function buildExceptions(b: BreakdownResponse | null, alerts: DashboardAl
     const missing = c.sites_in_scope - c.sites_reported;
     if (missing > 0) {
       out.push({
-        id: `missing-${c.report_type}-${c.circle}`, circle: label(c.circle, c.report_type), type: 'On-Air sites not reported on the date', count: missing,
+        id: `missing-${c.report_type}-${c.circle}`, circle: label(c.circle, c.report_type), type: 'Sites not reported on the date', count: missing,
         reportingDate: f.date, severity: 'warning', link: detailLink('/', { ...f, reportType: c.report_type, circle: c.circle }),
       });
     }
@@ -212,7 +207,8 @@ export function buildExceptions(b: BreakdownResponse | null, alerts: DashboardAl
 }
 
 export interface PortfolioCounts {
-  siteScope: number;
+  /** Total sites of the circle (site status); null when the API does not give it. */
+  siteScope: number | null;
   onAir: number;
   omStart: number | null;
   /** Site Scope − O&M Start */
@@ -240,36 +236,45 @@ export interface CircleBreakdownGroup {
   subtotal: PortfolioCounts & TeamFigures;
 }
 
-const counts = (siteScope: number, onAir: number, omStart: number | null): PortfolioCounts => ({
+const counts = (siteScope: number | null, onAir: number, omStart: number | null): PortfolioCounts => ({
   siteScope, onAir, omStart,
-  gapTotal: omStart == null ? null : siteScope - omStart,
+  gapTotal: omStart == null || siteScope == null ? null : siteScope - omStart,
   gapOnAir: omStart == null ? null : onAir - omStart,
 });
 
-const perPerson = (sites: number, people: number | null | undefined) => (people ? Math.round((10 * sites) / people) / 10 : null);
-const teamFigures = (t: { ci_count?: number; ie_count?: number } | undefined, siteScope: number): TeamFigures => ({
+const perPerson = (sites: number | null, people: number | null | undefined) => (people && sites != null ? Math.round((10 * sites) / people) / 10 : null);
+const teamFigures = (t: { ci_count?: number; ie_count?: number } | undefined, siteScope: number | null): TeamFigures => ({
   ciCount: t?.ci_count ?? null, ieCount: t?.ie_count ?? null,
   sitesPerCi: perPerson(siteScope, t?.ci_count), sitesPerIe: perPerson(siteScope, t?.ie_count),
 });
 
 /**
- * Circle-wise Site Scope / On Air / O&M Start from the per-circle site counts of the three scopes
- * (breakdowns with scope all, on_air and om_start). Subtotals and the total add the detail rows once
- * and derive their gaps from the summed counts. ``omStart`` is null when the workbook has no
- * O&M Start column. CI / IE counts come from the all-sites breakdown; averages are Site Scope per person.
+ * Circle-wise site STATUS counts: Site Scope / On Air / O&M Start per circle, from the On-Air and O&M Start breakdowns
+ * (the two populations' site counts; never a performance figure). Site Scope is the circle's ``sites_total`` when the
+ * API gives it (there is no "all sites" population to ask for), else "—". Subtotals and the total add the detail rows
+ * once and derive their gaps from the summed counts. ``omStart`` is null without O&M Start dates. CI / IE counts come
+ * from the On-Air breakdown; averages are Site Scope per person.
  */
-export function circleBreakdown(all: BreakdownResponse, onAir: BreakdownResponse, omStart: BreakdownResponse | null) {
+export function circleBreakdown(onAir: BreakdownResponse, omStart: BreakdownResponse | null) {
   const key = (c: { report_type: string; circle: string }) => `${c.report_type}|${c.circle}`;
   const inScope = (b: BreakdownResponse | null) => new Map((b?.circles ?? []).map((c) => [key(c), c.sites_in_scope]));
   const onAirBy = inScope(onAir);
   const omBy = omStart ? inScope(omStart) : null;
-  const rows: CircleBreakdownRow[] = all.circles.map((c) => ({
-    circle: c.circle, reportType: c.report_type,
-    ...counts(c.sites_in_scope, onAirBy.get(key(c)) ?? 0, omBy ? omBy.get(key(c)) ?? 0 : null),
-    ...teamFigures(c, c.sites_in_scope),
-  }));
+  const circles = new Map<string, BreakdownResponse['circles'][number]>();
+  for (const c of [...onAir.circles, ...(omStart?.circles ?? [])]) {
+    const existing = circles.get(key(c));
+    if (!existing || (existing.sites_total == null && c.sites_total != null)) circles.set(key(c), c);
+  }
+  const rows: CircleBreakdownRow[] = [...circles.values()].map((c) => {
+    const siteScope = c.sites_total ?? null;
+    return {
+      circle: c.circle, reportType: c.report_type,
+      ...counts(siteScope, onAirBy.get(key(c)) ?? 0, omBy ? omBy.get(key(c)) ?? 0 : null),
+      ...teamFigures(onAir.circles.find((x) => key(x) === key(c)), siteScope),
+    };
+  });
   const sum = (items: PortfolioCounts[]) => counts(
-    items.reduce((n, r) => n + r.siteScope, 0),
+    items.every((r) => r.siteScope != null) ? items.reduce((n, r) => n + (r.siteScope ?? 0), 0) : null,
     items.reduce((n, r) => n + r.onAir, 0),
     omBy ? items.reduce((n, r) => n + (r.omStart ?? 0), 0) : null,
   );
@@ -280,58 +285,45 @@ export function circleBreakdown(all: BreakdownResponse, onAir: BreakdownResponse
       const groupRows = rows.filter((r) => r.reportType === reportType).sort((a, b) => a.circle.localeCompare(b.circle));
       const subtotal = sum(groupRows);
       // People are counted once per network (a CI on two circles is one CI), so these are not sums of the rows.
-      return { reportType, rows: groupRows, subtotal: { ...subtotal, ...teamFigures(all.team_totals?.[reportType], subtotal.siteScope) } };
+      return { reportType, rows: groupRows, subtotal: { ...subtotal, ...teamFigures(onAir.team_totals?.[reportType], subtotal.siteScope) } };
     });
   const total = sum(rows);
-  return { groups, total: { ...total, ...teamFigures(all.team_totals?.all, total.siteScope) } };
-}
-
-/** Figures for one week or month from `period/`, for On-Air and O&M Start sites. */
-export interface PeriodFigures {
-  onAir: PeriodSummary;
-  omStart: PeriodSummary | null;
+  return { groups, total: { ...total, ...teamFigures(onAir.team_totals?.all, total.siteScope) } };
 }
 
 /**
- * Uptime and bucket KPI cards for a week or a month (Site Portfolio, Weekly and Monthly views).
- * Every value comes from `period/`; changes are against the comparison period of the same kind.
- * Totals (outage minutes) are compared only when both periods have the same number of days with data.
+ * Uptime and bucket KPI cards for a week or a month (Site Portfolio, Weekly and Monthly views), for the selected
+ * population only (``sites``). Every value comes from `period/`; changes are against the comparison period of the same
+ * kind. Totals (outage minutes) are compared only when both periods have the same number of days with data.
  */
-export function buildPeriodKpis(sel: PeriodFigures, cmp: PeriodFigures | null, f: PortfolioFilters, label: string, thresholdsPeriod: string | null,
+export function buildPeriodKpis(a: PeriodSummary, b: PeriodSummary | null, f: PortfolioFilters, label: string, thresholdsPeriod: string | null,
   /** Both periods cover the same number of days (calendar days for months, days with data otherwise). */
-  sameLength: boolean): Kpi[] {
-  const a = sel.onAir;
-  const b = cmp?.onAir;
+  sameLength: boolean, sites: string): Kpi[] {
   const thresholds = detailLink('/thresholds', f, thresholdsPeriod ? { period: thresholdsPeriod } : {});
   return [
     {
-      id: 'period_uptime', group: 'Uptime and performance', label: 'On-Air uptime', value: a.uptime_pct, unit: 'pct', period: label,
-      definition: 'Outage-weighted uptime of On-Air sites over the period: 1 − Σ outage ÷ (1,440 × site-days reported). A full month uses the workbook monthly total.',
+      id: 'period_uptime', group: 'Uptime and performance', label: `Uptime (${sites})`, value: a.uptime_pct, unit: 'pct', period: label,
+      definition: `Outage-weighted uptime of ${sites} over the period: 1 − Σ outage ÷ (1,440 × site-days reported). A full month uses the workbook monthly total.`,
       delta: delta(a.uptime_pct, b?.uptime_pct, 'pct'), higherIsBetter: true, link: detailLink('/', f),
     },
     {
-      id: 'period_om_uptime', group: 'Uptime and performance', label: 'O&M Start uptime', value: sel.omStart?.uptime_pct ?? null, unit: 'pct', period: label,
-      definition: 'The same uptime for O&M Start sites (the population of the workbook threshold sheets).',
-      delta: delta(sel.omStart?.uptime_pct, cmp?.omStart?.uptime_pct, 'pct'), higherIsBetter: true, link: detailLink('/', f, { scope: 'om_start' }),
-    },
-    {
       id: 'period_outage', group: 'Uptime and performance', label: 'Outage minutes', value: a.days_reported || a.kind === 'months' ? a.outage_minutes : null, unit: 'minutes', period: label,
-      definition: 'Total outage minutes of On-Air sites in the period. Compared only when both periods have the same number of days with data.',
+      definition: `Total outage minutes of ${sites} in the period. Compared only when both periods have the same number of days with data.`,
       delta: sameLength && b ? delta(a.outage_minutes, b.outage_minutes, 'minutes') : null, higherIsBetter: false, link: detailLink('/', f),
     },
     {
       id: 'period_reported', group: 'Uptime and performance', label: 'Sites with data', value: a.sites_reported, unit: 'sites', period: label,
-      definition: 'On-Air sites with at least one outage value in the period. Sites without a value are not counted as 100%.',
+      definition: `${sites} with at least one outage value in the period. Sites without a value are not counted as 100%.`,
       delta: delta(a.sites_reported, b?.sites_reported, 'sites'), higherIsBetter: true, link: '/data-source',
     },
     {
       id: 'gte_98_5', group: 'Uptime and performance', label: 'Sites at 98.5% or above', value: a.sites_at_or_above_98_5, unit: 'sites', period: label,
-      definition: 'On-Air sites whose own uptime over the period is at least 98.5% (workbook bucket ">98.5").',
+      definition: `${sites} whose own uptime over the period is at least 98.5% (workbook bucket ">98.5").`,
       delta: delta(a.sites_at_or_above_98_5, b?.sites_at_or_above_98_5, 'sites'), higherIsBetter: true, link: thresholds,
     },
     {
       id: 'lt_60', group: 'Uptime and performance', label: 'Sites below 60%', value: a.sites_below_60, unit: 'sites', period: label,
-      definition: 'On-Air sites whose own uptime over the period is below 60% (workbook bucket "<60").',
+      definition: `${sites} whose own uptime over the period is below 60% (workbook bucket "<60").`,
       delta: delta(a.sites_below_60, b?.sites_below_60, 'sites'), higherIsBetter: false, link: thresholds, tone: a.sites_below_60 ? 'critical' : undefined,
     },
   ];

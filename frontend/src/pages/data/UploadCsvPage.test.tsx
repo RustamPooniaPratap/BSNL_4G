@@ -9,7 +9,7 @@ import { UploadCsvPage } from './UploadCsvPage';
 vi.mock('../../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/api')>()),
   fetchRawUploadOptions: vi.fn(), fetchRawUploads: vi.fn(), fetchRawUpload: vi.fn(), fetchRawUploadRows: vi.fn(),
-  previewRawUpload: vi.fn(), commitRawUpload: vi.fn(), discardRawUpload: vi.fn(), uploadDataFile: vi.fn(),
+  previewRawUpload: vi.fn(), commitRawUpload: vi.fn(), discardRawUpload: vi.fn(),
 }));
 const m = vi.mocked(api);
 vi.setConfig({ testTimeout: 20000 });
@@ -26,10 +26,10 @@ const ROWS: RawRowsPage = {
     { line: 2, raw_id: 'UVOR001', site_id: 'UVOR001', site_name: 'Karla', circle: 'OR', report_date: '13-10-2026', raw_availability: '95.5',
       availability: 95.5, outage_minutes: 64.8, status: 'ready', code: 'ready', label: 'Ready to import', message: '', note: '' },
     { line: 3, raw_id: 'ZZOR999', site_id: null, site_name: '', circle: 'OR', report_date: '13-10-2026', raw_availability: '99',
-      availability: null, outage_minutes: null, status: 'out_of_scope', code: 'unknown_site', label: 'Not in the approved site master (outside the project scope)',
+      availability: null, outage_minutes: null, status: 'out_of_scope', code: 'outside_scope', label: 'Outside the dashboard reporting scope',
       message: 'ZZOR999 is not in the approved 4G Saturation site master (outside the project scope).', note: '' },
     { line: 4, raw_id: 'UVOR003', site_id: 'UVOR003', site_name: 'Pardi', circle: 'OR', report_date: '13-10-2026', raw_availability: '',
-      availability: null, outage_minutes: null, status: 'availability', code: 'missing_availability', label: 'Availability missing',
+      availability: null, outage_minutes: null, status: 'availability', code: 'not_reported', label: 'Availability blank: not reported (never 0)',
       message: 'Nw Avail (4G TCS) is blank: not read as 0% or as 0 outage minutes.', note: '' },
   ],
 };
@@ -38,7 +38,7 @@ const PREVIEW: RawUpload = {
   reporting_date: '2026-10-13', remarks: null, uploaded_by: 'ravi.ci', uploaded_at: '2026-10-29T10:00:00Z', committed_at: null, error: null,
   summary: { total_rows: 3, valid_in_scope: 1, ready_to_import: 1, identical_skipped: 0, out_of_scope: 1, unresolved_or_ambiguous: 0,
     availability_problems: 1, duplicates_or_conflicts: 0, date_mismatches: 0, project_or_circle_mismatches: 0, other_invalid: 0,
-    by_code: { ready: 1, unknown_site: 1, missing_availability: 1 } },
+    by_code: { ready: 1, outside_scope: 1, not_reported: 1 }, by_status: { ready: 1, out_of_scope: 1, availability: 1 } },
   daily: null, rejected_count: 2, skipped_count: 0, file_issues: [], blocked: false,
   file_info: { encoding: 'utf-8-sig', header_line: 2, preamble: ['Network availability report'], blank_lines: 0, columns: {}, unused_columns: 50,
     report_dates: ['2026-10-13'], circles_in_file: { OD: 3 } },
@@ -65,7 +65,7 @@ describe('Upload CSV', () => {
     const refresh = vi.fn();
     m.previewRawUpload.mockResolvedValue(PREVIEW);
     m.commitRawUpload.mockResolvedValue({ ...PREVIEW, status: 'committed', status_label: 'Committed', committed_at: '2026-10-29T10:01:00Z',
-      daily: { inserted: 1, filled: 0, skipped_identical: 0, skipped_repeats: 0, rejected: 2 } });
+      daily: { inserted: 1, filled: 0, skipped_identical: 3, skipped_repeats: 0, rejected: 2, conflicts: 4, pending: 5 } });
     renderWithWorkbook(<UploadCsvPage />, { url: '/data/upload-csv', auth: authValue({ user: CI_OD }), workbook: workbookValue({ refresh }) });
     const circle = await screen.findByLabelText('Circle (assigned)');
     expect(circle).toHaveValue('OD');
@@ -83,7 +83,12 @@ describe('Upload CSV', () => {
     const preview = await screen.findByLabelText('Validation preview');
     expect(steps()).toEqual(['Upload: done', 'Validate & Preview: done', 'Confirm Import: current', 'Results: todo']);
     expect(within(screen.getByLabelText('Selected file')).getByText('Validation passed')).toBeInTheDocument();
-    expect(within(preview).getByText(/nothing saved yet/)).toBeInTheDocument();
+    expect(within(preview).getByText(/Validation preview — nothing saved yet/)).toBeInTheDocument();
+    expect(within(preview).queryByText(/Saved to the reporting data/)).not.toBeInTheDocument();  // no success banner before the commit
+    // Row filter counts come from the server's by_status.
+    const filters = within(preview).getByRole('group', { name: 'Show rows' });
+    expect(within(filters).getByRole('button', { name: 'Out of scope (1)' })).toBeInTheDocument();
+    expect(within(filters).getByRole('button', { name: 'Availability problem (1)' })).toBeInTheDocument();
     expect(within(preview).getByText(/header on line 2 \(above it: “Network availability report”\)/)).toBeInTheDocument();
     const tile = (label: string) => within(preview).getByText(label, { selector: 'dt' }).nextSibling?.textContent;
     expect([tile('Rows in file'), tile('Ready to import'), tile('Out of scope'), tile('Missing / invalid availability')]).toEqual(['3', '1', '1', '1']);
@@ -100,11 +105,11 @@ describe('Upload CSV', () => {
     await user.click(within(preview).getByRole('button', { name: 'Yes, import' }));
     expect(m.commitRawUpload).toHaveBeenCalledWith(7);
     const result = await screen.findByLabelText('Import result');
-    expect(within(result).getByText(/1 daily records inserted/)).toBeInTheDocument();
-    expect(within(result).getByText(/the dashboard data source setting is unchanged/)).toBeInTheDocument();
-    expect(refresh).toHaveBeenCalled();  // database-backed pages reload
+    expect(within(result).getByRole('status')).toHaveTextContent(
+      'Saved to the reporting data: 1 new daily records, 3 already stored, 4 conflicting values kept (higher-precedence values stay), 5 rows pending (unmatched programme sites, not yet in the site master), 2 rejected.');
+    expect(within(result).queryByText(/data source setting/)).not.toBeInTheDocument();
+    expect(refresh).toHaveBeenCalled();  // every page reloads from the reporting data
     expect(steps()).toEqual(['Upload: done', 'Validate & Preview: done', 'Confirm Import: done', 'Results: done']);
-    expect(m.uploadDataFile).not.toHaveBeenCalled();
   });
 
   it('shows file-level problems and offers no import for a blocked file', async () => {
@@ -119,6 +124,7 @@ describe('Upload CSV', () => {
     expect(await screen.findByText(/not the entered reporting date 14-10-2026/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Import/ })).not.toBeInTheDocument();
     expect(steps()).toEqual(['Upload: done', 'Validate & Preview: failed', 'Confirm Import: todo', 'Results: todo']);  // never shown as passed
+    expect(screen.queryByText(/Saved to the reporting data/)).not.toBeInTheDocument();
     expect(within(screen.getByLabelText('Selected file')).getByText('Blocked — see the preview')).toBeInTheDocument();
   });
 
@@ -169,5 +175,61 @@ describe('Upload CSV', () => {
     expect(screen.getByText(/monthly summary dump/)).toBeInTheDocument();
     expect(within(screen.getByLabelText('Selected file')).getByText('Validation failed')).toBeInTheDocument();
     expect(steps()).toEqual(['Upload: current', 'Validate & Preview: failed', 'Confirm Import: todo', 'Results: todo']);
+  });
+
+  it('shows no success banner for a discarded or failed upload, and lists pending sites', async () => {
+    const user = userEvent.setup();
+    m.fetchRawUploads.mockResolvedValue({ uploads: [{ ...PREVIEW, id: 8, status: 'failed', status_label: 'Failed', error: 'Database error' }] });
+    m.fetchRawUpload.mockResolvedValue({ ...PREVIEW, id: 8, status: 'failed', status_label: 'Failed', error: 'Database error', pending_sites: ['XXOR1', 'XXOR2'],
+      daily: null });
+    renderWithWorkbook(<UploadCsvPage />, { url: '/data/upload-csv', auth: authValue({ user: CI_OD }) });
+    await user.click(await screen.findByRole('button', { name: 'View' }));
+    expect(await screen.findByText('Database error', { selector: '[data-slot="alert-description"]' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Pending sites')).toHaveTextContent('XXOR1, XXOR2');
+    expect(screen.queryByText(/Saved to the reporting data/)).not.toBeInTheDocument();
+  });
+
+  it('notes that LWE rows cannot be imported only while the LWE mapping is missing', async () => {
+    const lwe = (configured: boolean) => ({ ...OPTIONS, projects: [{ ...OPTIONS.projects[1], configured }] });
+    m.fetchRawUploadOptions.mockResolvedValue(lwe(false));
+    const first = renderWithWorkbook(<UploadCsvPage />, { url: '/data/upload-csv', auth: authValue({ user: CI_OD }) });
+    expect(await screen.findByText(/LWE rows cannot be imported yet/)).toBeInTheDocument();
+    first.unmount();
+    m.fetchRawUploadOptions.mockResolvedValue(lwe(true));  // the LWE Band ID mapping exists: LWE is importable
+    renderWithWorkbook(<UploadCsvPage />, { url: '/data/upload-csv', auth: authValue({ user: CI_OD }) });
+    await screen.findByLabelText('Circle (assigned)');
+    expect(screen.queryByText(/LWE rows cannot be imported yet/)).not.toBeInTheDocument();
+  });
+
+  it('shows the programme classification tiles and does not present outside-programme rows as pending', async () => {
+    const user = userEvent.setup();
+    const classified: RawUpload = {
+      ...PREVIEW, summary: { ...PREVIEW.summary!, total_rows: 10, classification: { matched: 5, unmatched_programme: 2, outside_programme: 2, invalid: 1 } },
+      pending_sites: ['UVOR777', 'UVOR778'],
+      rows: null,
+    };
+    const rows: RawRowsPage = { ...ROWS, rows: ROWS.rows.map((r) => ({ ...r, category: r.status === 'ready' ? 'matched' as const : r.status === 'out_of_scope' ? 'outside_programme' as const : 'invalid' as const })) };
+    m.fetchRawUploadRows.mockResolvedValue(rows);
+    m.fetchRawUploads.mockResolvedValue({ uploads: [classified] });
+    m.fetchRawUpload.mockResolvedValue(classified);
+    renderWithWorkbook(<UploadCsvPage />, { url: '/data/upload-csv', auth: authValue({ user: CI_OD }) });
+    await user.click(await screen.findByRole('button', { name: 'View' }));
+    const tiles = await screen.findByLabelText('Row classification');
+    expect(tiles).toHaveTextContent('Matched5');
+    expect(tiles).toHaveTextContent('Unmatched programme2');
+    expect(tiles).toHaveTextContent('Outside programme scope2');
+    expect(tiles).toHaveTextContent('Invalid1');
+    expect(tiles).toHaveTextContent('Outside programme scope (not in the Consolidation Matrix; not counted as unmatched)');
+    // Only the genuine unmatched programme IDs are pending: the outside-programme raw ID is not.
+    const pending = screen.getByLabelText('Pending sites');
+    expect(pending).toHaveTextContent('UVOR777, UVOR778');
+    expect(pending).not.toHaveTextContent('ZZOR999');
+    // The row table shows the category, and a category filter sits next to the status filter.
+    const table = screen.getByRole('table', { name: 'Rows' });
+    expect(await within(table).findByText('Outside programme scope')).toBeInTheDocument();
+    const filter = screen.getByRole('group', { name: 'Show category' });
+    expect(screen.getByRole('group', { name: 'Show rows' })).toBeInTheDocument();
+    await user.click(within(filter).getByRole('button', { name: 'Outside programme scope (2)' }));
+    expect(m.fetchRawUploadRows).toHaveBeenLastCalledWith(7, '', 1, expect.anything(), 'outside_programme');
   });
 });

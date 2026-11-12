@@ -646,8 +646,8 @@ class SitePersonnelAssignment(models.Model):
     Intervals are half-open: [effective_from, effective_to).
     """
     site = models.ForeignKey(
-        'uptimedb.UptimeSite',
-        on_delete=models.CASCADE,
+        'sitedata.Site',  # the data layer's site master; PROTECT: sites are never deleted, assignments are ended
+        on_delete=models.PROTECT,
         related_name='personnel_assignments',
         db_index=True,
     )
@@ -747,7 +747,7 @@ class SitePersonnelAssignment(models.Model):
                 raise ValidationError({
                     'parent_ci': (
                         f"Parent CI '{self.parent_ci.display_name}' has no overlapping CI assignment on site "
-                        f"'{self.site.site_id}' for the interval [{eff_from}, {self.effective_to or 'ongoing'})."
+                        f"'{self.site.bsnl_site_id}' for the interval [{eff_from}, {self.effective_to or 'ongoing'})."
                     )
                 })
         elif self.role_type == Personnel.RoleType.CI and self.parent_ci is not None:

@@ -1,8 +1,8 @@
-"""Master Data API: read-only, paginated, filtered and sorted on the server; exports of the filtered records.
+"""Master Data API: paginated, filtered and sorted on the server; exports of the filtered records; Data Panel saves.
 
 - Every portal user may open it. Admins and NOC Leads see every record; a CI user only the project/circle pairs granted
   to them (accounts.scope). Phone numbers (``Column.contact``) are returned to Admins only.
-- Always the PostgreSQL tables (it is the database explorer); the dashboard's Excel/PostgreSQL choice is not involved.
+- Always the database tables of the data layer (apps.sitedata) and the RCA register (it is the database explorer).
 """
 from __future__ import annotations
 
@@ -11,8 +11,10 @@ import csv
 import io
 from datetime import date, datetime
 
-from django.db.models import Q, QuerySet
+from django.db.models import DateField, F, Q, QuerySet
+from django.db.models.functions import TruncMonth
 from django.http import HttpResponse, StreamingHttpResponse
+from django.utils import timezone
 from openpyxl import Workbook
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -24,12 +26,14 @@ from apps.accounts.audit import audit
 from apps.accounts.catalog import data_module
 from apps.accounts.permissions import IsPortalUser
 from apps.accounts.roles import ADMIN, role_of
-from apps.dashboard.metrics import WEEKS
+from apps.dashboard.metrics import POPULATION_COLUMNS, WEEKS, population as population_info
+from apps.dashboard.serializers import parse_scope
 from apps.rca import taxonomy
 
 from .datasets import DATASETS, Column, Dataset
 
 PAGE_SIZES = (25, 50, 100, 200)
+POPULATION_COLUMNS_LABELS = {k: population_info(k)['label'] for k in POPULATION_COLUMNS}
 XLSX_MAX_ROWS = 200_000  # larger exports: CSV (streamed)
 PERIODS = ('daily', 'weekly', 'monthly', 'overall')
 
@@ -96,9 +100,30 @@ def period_range(ds: Dataset, params) -> tuple[date | None, date | None]:
     return _date(params.get('date_from'), 'date_from'), _date(params.get('date_to'), 'date_to')
 
 
+def population_filter(qs: QuerySet, ds: Dataset, scope: str | None) -> QuerySet:
+    """Records of the site population ``scope`` (None: unchanged), by the Consolidation Matrix effective date: Site
+    Master / Escalation: effective today; Daily: effective on the reporting date; Monthly: effective in the month.
+    Dashboard-scope sites only (outside-scope sites belong to no population)."""
+    if scope is None or ds.population is None:
+        return qs
+    column = POPULATION_COLUMNS[scope][1]
+    if ds.population == 'site':
+        return qs.filter(reporting_scope='dashboard', **{f'{column}__isnull': False, f'{column}__lte': timezone.localdate()})
+    qs = qs.filter(**{'site__reporting_scope': 'dashboard', f'site__{column}__isnull': False})
+    if ds.population == 'daily':
+        return qs.filter(**{f'site__{column}__lte': F('report_date')})
+    return qs.annotate(_population_month=TruncMonth(f'site__{column}', output_field=DateField())).filter(_population_month__lte=F('month'))
+
+
+def request_population(request, ds: Dataset) -> str | None:
+    """The optional ``scope`` of a request (on_air / om_start; absent: None = no population filter; invalid: HTTP 400)."""
+    scope = parse_scope(request.query_params.get('scope'), default=None)
+    return scope if ds.population else None
+
+
 def filtered(request, ds: Dataset, action: str = 'view') -> QuerySet:
     p = request.query_params
-    qs = scoped(request, ds, action)
+    qs = population_filter(scoped(request, ds, action), ds, request_population(request, ds))
     for key, path in (('project', ds.project), ('circle', ds.circle)):
         if p.get(key):
             qs = qs.filter(**{path: p[key]})
@@ -165,7 +190,9 @@ def datasets(request):
         raise PermissionDenied('You do not have access to any Data Panel dataset.')
     return Response({'datasets': [{'key': d.key, 'label': d.label, 'description': d.description, 'time': bool(d.date or d.month),
                                    'columns': _column_json(d, _columns(request, d)),
-                                   'filters': {'site': bool(d.site_id), 'choices': [{'key': c.key, 'label': c.label} for c in d.choices]},
+                                   'filters': {'site': bool(d.site_id), 'choices': [{'key': c.key, 'label': c.label} for c in d.choices],
+                                               # the optional site population filter (``scope``) of site-based datasets
+                                               'population': bool(d.population)},
                                    'permissions': caps}
                                   for d, caps in visible],
                      'page_sizes': PAGE_SIZES, 'weeks': [{'value': i + 1, 'label': f'{w[0]} (days {w[1]}–{w[2] if w[2] < 31 else "end"})'}
@@ -183,8 +210,10 @@ def records(request, key: str):
     page = _int(request.query_params.get('page'), 'page', 1, 10**7) or 1
     total = qs.count()
     start = (page - 1) * size
+    scope = request_population(request, ds)
     return Response({'total': total, 'page': page, 'page_size': size, 'pages': max(1, -(-total // size)),
-                     'rows': _rows(qs[start:start + size], ds, columns)})
+                     'rows': _rows(qs[start:start + size], ds, columns),
+                     'population': population_info(scope) if scope else None})
 
 
 @api_view(['GET'])
@@ -193,7 +222,8 @@ def options(request, key: str):
     """Filter options from the records the user may see (projects, circles, years and months, choices)."""
     ds = _dataset(key)
     _require(request, ds, 'view')
-    qs = scoped(request, ds).order_by()
+    scope = request_population(request, ds)
+    qs = population_filter(scoped(request, ds), ds, scope).order_by()
     out = {'projects': sorted(v for v in qs.values_list(ds.project, flat=True).distinct() if v)}
     project = request.query_params.get('project')
     circles_qs = qs.filter(**{ds.project: project}) if project else qs
@@ -205,6 +235,9 @@ def options(request, key: str):
         out['dates'] = [d.isoformat() for d in qs.dates(time_field, 'day')] if ds.date else []
     out['choices'] = {c.key: sorted({str(v) for v in qs.values_list(c.field, flat=True).distinct() if v not in (None, '')})[:500]
                       for c in ds.choices}
+    # The population filter the dataset offers (site-based datasets only) and the one applied.
+    out['scopes'] = [{'value': k, 'label': v} for k, v in POPULATION_COLUMNS_LABELS.items()] if ds.population else []
+    out['population'] = population_info(scope) if scope else None
     return Response(out)
 
 
@@ -231,7 +264,7 @@ def export(request, key: str):
         buf = io.BytesIO()
         book.save(buf)
         response = HttpResponse(buf.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        response['Content-Disposition'] = f'attachment; filename="{ds.key}_{stamp}.xlsx"'
+        response['Content-Disposition'] = f'attachment; filename="{ds.key}{_population_suffix(request, ds)}_{stamp}.xlsx"'
         return response
 
     def lines():
@@ -245,8 +278,14 @@ def export(request, key: str):
             writer.writerows([row[c.key] for c in columns] for row in chunk)
             yield out.getvalue()
     response = StreamingHttpResponse(lines(), content_type='text/csv; charset=utf-8')
-    response['Content-Disposition'] = f'attachment; filename="{ds.key}_{stamp}.csv"'
+    response['Content-Disposition'] = f'attachment; filename="{ds.key}{_population_suffix(request, ds)}_{stamp}.csv"'
     return response
+
+
+def _population_suffix(request, ds: Dataset) -> str:
+    from apps.dashboard.metrics import POPULATION_SUFFIX
+    scope = request_population(request, ds)
+    return f'_{POPULATION_SUFFIX[scope]}' if scope else ''
 
 
 def _chunks(qs: QuerySet, ds: Dataset, columns: list[Column], size: int = 5000):
@@ -264,9 +303,9 @@ def save(request, key: str):
     ds = _dataset(key)
     _require(request, ds, 'view')
     try:
-        result = save_changes(request.user, ds, request.data if isinstance(request.data, dict) else {})
+        result = save_changes(request.user, ds, request.data if isinstance(request.data, dict) else {}, request=request)
     except SaveRefused as exc:
-        return Response({'error': str(exc), 'details': {}}, status=exc.status)
+        return Response({'error': str(exc), 'details': exc.details}, status=exc.status)
     if not result['saved']:
         return Response({'error': result['errors'].get('_form') or 'Nothing was saved: correct the highlighted cells.', 'details': result['errors']},
                         status=400)

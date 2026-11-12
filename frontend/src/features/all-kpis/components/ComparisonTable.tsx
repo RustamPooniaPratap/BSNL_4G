@@ -1,17 +1,19 @@
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { ChartCard } from '../../../components/dashboard/ChartCard';
+import { usePopulation } from '../../../context/population';
 import { change, count, hours, NUM, pct } from '../format';
 import type { KpiSummary, KpiValues } from '../types';
 import { KpiTable } from './KpiTable';
 
 /** [label, key, format, change unit, whether a higher value is better] */
 type Row = [string, keyof KpiValues, (v: number | null) => string, 'pts' | '%', boolean];
-const ROWS: Row[] = [
-  ['Availability', 'availability_pct', (v) => pct(v, 3), 'pts', true],
+/** Labels name the selected population (``sites``: "On-Air sites" / "O&M Start sites"). */
+const rowsFor = (sites: string): Row[] => [
+  [`Availability (${sites})`, 'availability_pct', (v) => pct(v, 3), 'pts', true],
   ['Outage hours', 'outage_hours', hours, '%', false],
-  ['USD sites (O&M Start)', 'usd_sites', count, '%', false],
-  ['NSLA sites (O&M Start, < 98.5% on a day)', 'nsla_sites', count, '%', false],
+  [`USD sites (${sites})`, 'usd_sites', count, '%', false],
+  [`NSLA (${sites}, period uptime < 98.5%)`, 'nsla_sites', count, '%', false],
   ['Sites ≥ 98.5% (period)', 'above_98_5_sites', count, '%', true],
   ['Sites < 98.5% (period)', 'below_98_5_sites', count, '%', false],
   ['Sites < 60% (period)', 'below_60_sites', count, '%', false],
@@ -21,7 +23,9 @@ const ROWS: Row[] = [
 
 /** KPI comparison: the selected period against the same number of days immediately before. */
 export function ComparisonTable({ s, keys }: { s: KpiSummary; keys?: (keyof KpiValues)[] }) {
-  const rows = keys ? ROWS.filter((r) => keys.includes(r[1])) : ROWS;
+  const { sitesLabel } = usePopulation();
+  const all = rowsFor(sitesLabel);
+  const rows = keys ? all.filter((r) => keys.includes(r[1])) : all;
   const cur = s.current;
   const prev = s.previous;
   return (
