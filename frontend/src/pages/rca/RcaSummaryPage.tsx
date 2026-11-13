@@ -162,7 +162,8 @@ export function OverviewLinks({ s, search }: { s: RcaSummary; search: string }) 
     <RcaSection heading="RCA analysis" label="RCA analysis pages" columns={3}>
       {tiles.map((v) => (
         <RcaAnalysisTile key={v.path} label={v.label} description={v.description} icon={VIEW_LOOK[v.path].icon} tint={VIEW_LOOK[v.path].tint}
-          headline={facts[v.path].headline} detail={facts[v.path].detail} to={{ pathname: v.path, search }} />
+          headline={facts[v.path].headline} headlineIsMetric={v.path === '/rca/summary/trends'}
+          detail={facts[v.path].detail} to={{ pathname: v.path, search }} />
       ))}
     </RcaSection>
   );

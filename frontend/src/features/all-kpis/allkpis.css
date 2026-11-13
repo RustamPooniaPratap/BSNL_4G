@@ -74,7 +74,7 @@
 .akp button.akp-tile:focus-visible { outline: 2px solid var(--akp-accent); outline-offset: 2px; }
 .akp .akp-tile.na { border-style: dashed; background: var(--akp-page); }
 .akp .akp-tile .l { font-size: 11.5px; font-weight: 600; color: var(--akp-ink2); }
-.akp .akp-tile .v { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.akp .akp-tile .v { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .akp .akp-tile .v small { font-size: 13px; font-weight: 500; color: var(--akp-ink2); }
 .akp .akp-tile.na .v { font-size: 14px; font-weight: 500; color: var(--akp-ink2); }
 .akp .akp-tile .s { font-size: 11.5px; color: var(--akp-ink2); }
@@ -92,7 +92,7 @@
 .akp .akp-stat > div { padding: 10px 12px; border-right: 1px solid var(--akp-grid); }
 .akp .akp-stat > div:last-child { border-right: 0; }
 .akp .akp-stat .l { font-size: 11.5px; font-weight: 600; color: var(--akp-ink2); }
-.akp .akp-stat .v { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.akp .akp-stat .v { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .akp .akp-stat .s { font-size: 11.5px; color: var(--akp-ink2); }
 
 /* Tabs (underline) */

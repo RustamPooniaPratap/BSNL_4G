@@ -116,7 +116,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
+      <p className="mt-1 text-[18px] font-semibold tabular-nums">{value}</p>
     </div>
   );
 }

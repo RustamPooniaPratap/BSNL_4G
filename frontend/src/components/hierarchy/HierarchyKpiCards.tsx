@@ -21,7 +21,7 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
             <Activity className="size-4 text-emerald-600" aria-hidden="true" />
           </div>
           <div className="my-1">
-            <div className="text-[22px] leading-6 font-semibold tracking-tight text-foreground">
+            <div className="text-[18px] leading-6 font-semibold tracking-tight text-foreground">
               {formatPct(kpis.availability_pct, 1)}
             </div>
             <div className="text-[11px] text-muted-foreground">
@@ -40,7 +40,7 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
             <ShieldAlert className="size-4 text-amber-600" aria-hidden="true" />
           </div>
           <div className="my-1">
-            <div className="text-[22px] leading-6 font-semibold tracking-tight text-foreground">
+            <div className="text-[18px] leading-6 font-semibold tracking-tight text-foreground">
               {formatNumber(kpis.nsla_sites)}
               <span className="ml-1.5 text-[11px] font-semibold text-muted-foreground">
                 ({formatPct(kpis.nsla_pct, 1)})
@@ -62,7 +62,7 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
             <WifiOff className="size-4 text-rose-600" aria-hidden="true" />
           </div>
           <div className="my-1">
-            <div className="text-[22px] leading-6 font-semibold tracking-tight text-foreground">
+            <div className="text-[18px] leading-6 font-semibold tracking-tight text-foreground">
               {formatNumber(kpis.usd)}
             </div>
             <div className="text-[11px] text-muted-foreground">
@@ -81,7 +81,7 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
             <AlertOctagon className="size-4 text-indigo-600" aria-hidden="true" />
           </div>
           <div className="my-1">
-            <div className="text-[22px] leading-6 font-semibold tracking-tight text-foreground">
+            <div className="text-[18px] leading-6 font-semibold tracking-tight text-foreground">
               {formatNumber(kpis.incidents)}
             </div>
             <div className="text-[11px] text-muted-foreground">
@@ -100,7 +100,7 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
             <Wrench className="size-4 text-muted-foreground/60" aria-hidden="true" />
           </div>
           <div className="my-1">
-            <div className="text-[22px] leading-6 font-semibold tracking-tight text-muted-foreground">
+            <div className="text-[18px] leading-6 font-semibold tracking-tight text-muted-foreground">
               N/A
             </div>
             <div className="text-[11px] text-muted-foreground">

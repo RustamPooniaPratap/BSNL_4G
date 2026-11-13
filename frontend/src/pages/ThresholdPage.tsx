@@ -257,14 +257,14 @@ function PenaltyExposure({ data, period, currentLabel, scopeLabel, onSelect }: {
           <div className="min-w-0">
             <p className="truncate text-[11px] font-medium text-emerald-700">Meeting Threshold — ≥{data.penalty.threshold}%</p>
             <p className="mt-0.5 flex items-baseline gap-2">
-              <span className="text-[19px] leading-none font-semibold tracking-tight text-emerald-700 tabular-nums">{meetingCount == null ? '—' : formatNumber(meetingCount)}</span>
+              <span className="text-[18px] leading-none font-semibold tracking-tight text-emerald-700 tabular-nums">{meetingCount == null ? '—' : formatNumber(meetingCount)}</span>
               <span className="text-[11px] font-semibold text-emerald-700 tabular-nums">{formatPct(meetingPct, 1)}</span>
             </p>
           </div>
           <div className="min-w-0 border-l pl-3">
             <p className="truncate text-[11px] font-medium text-red-700">Below Threshold — &lt;{data.penalty.threshold}%</p>
             <p className="mt-0.5 flex items-baseline gap-2">
-              <span className="text-[19px] leading-none font-semibold tracking-tight text-red-700 tabular-nums">{belowCount == null ? '—' : formatNumber(belowCount)}</span>
+              <span className="text-[18px] leading-none font-semibold tracking-tight text-red-700 tabular-nums">{belowCount == null ? '—' : formatNumber(belowCount)}</span>
               <span className="text-[11px] font-semibold text-red-700 tabular-nums">{formatPct(belowPct, 1)}</span>
             </p>
           </div>
@@ -294,7 +294,7 @@ function PenaltyExposure({ data, period, currentLabel, scopeLabel, onSelect }: {
               <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
                 <span className="size-2.5 shrink-0 rounded-full" style={{ background: BUCKET_COLORS[b.id] }} aria-hidden="true" />{b.label}
               </span>
-              <span className={cn('mt-0.5 block text-[22px] leading-6 font-semibold tabular-nums', critical ? 'text-red-600' : 'text-foreground')}>{n == null ? '—' : formatNumber(n)}</span>
+              <span className={cn('mt-0.5 block text-[18px] leading-6 font-semibold tabular-nums', critical ? 'text-red-600' : 'text-foreground')}>{n == null ? '—' : formatNumber(n)}</span>
               <span className="mt-0.5 block text-[11px] text-muted-foreground tabular-nums">{formatPct(share, 1)} of sites</span>
             </button>
           );
@@ -394,7 +394,7 @@ function SummaryCard({ label, value, detail, tone }: { label: string; value: Rea
   return (
     <Card className="gap-0 px-3 py-2">
       <p className="truncate text-[11px] font-medium text-muted-foreground" title={label}>{label}</p>
-      <p className={cn('mt-0.5 text-[22px] leading-6 font-semibold tabular-nums', tone === 'critical' && 'text-destructive')}>{value}</p>
+      <p className={cn('mt-0.5 text-[18px] leading-6 font-semibold tabular-nums', tone === 'critical' && 'text-destructive')}>{value}</p>
       <p className="text-[11px] text-muted-foreground">{detail}</p>
     </Card>
   );
@@ -493,7 +493,7 @@ function ThresholdKpis({ data, id, mode }: { data: ThresholdResponse; id: Thresh
               <p className="truncate text-[11px] font-medium text-muted-foreground" title={card.label}>{card.label}</p>
               {card.period?.kind !== 'day' && <PeriodStatusBadge status={card.period?.status} missing={card.period?.missing} />}
             </div>
-            <p className="mt-0.5 text-[22px] leading-6 font-semibold tabular-nums">{value ? show(current, mode) : 'No data'}</p>
+            <p className="mt-0.5 text-[18px] leading-6 font-semibold tabular-nums">{value ? show(current, mode) : 'No data'}</p>
             <p className="text-[11px] text-muted-foreground">
               {value ? `${show(pick(value, id, other), other)} ${other === 'pct' ? 'of sites' : 'sites'}` : 'Not reported for this period'}
               {delta != null && ` · ${delta > 0 ? '+' : ''}${mode === 'count' ? formatNumber(delta) : `${delta.toFixed(1)} pts`} vs ${card.previousLabel}`}

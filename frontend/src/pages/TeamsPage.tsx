@@ -180,7 +180,7 @@ function Kpi({ label, value, detail, tone, onClick }: { label: string; value: st
   const body = (
     <>
       <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
-      <p className={cn('mt-0.5 text-[22px] leading-6 font-semibold tabular-nums', tone === 'bad' && 'text-destructive')}>{value}</p>
+      <p className={cn('mt-0.5 text-[18px] leading-6 font-semibold tabular-nums', tone === 'bad' && 'text-destructive')}>{value}</p>
       <p className="truncate text-[11px] text-muted-foreground" title={detail}>{detail}</p>
     </>
   );

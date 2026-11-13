@@ -117,7 +117,7 @@ function Kpi({ icon, label, value, detail, share: pct, header, emphasis, tone, a
         {header ?? <span aria-hidden="true" className={cn('shrink-0', tone === 'critical' && 'text-destructive', tone === 'warning' && 'text-amber-600')}>{icon}</span>}
       </div>
       <p className="flex flex-wrap items-baseline gap-x-2">
-        <span className={cn('text-[22px] leading-6 font-semibold tabular-nums tracking-tight', tone === 'critical' && 'text-destructive')}>{value}</span>
+        <span className={cn('text-[18px] leading-6 font-semibold tabular-nums tracking-tight', tone === 'critical' && 'text-destructive')}>{value}</span>
         {pct != null && <span className="text-[13px] font-medium text-muted-foreground tabular-nums">{formatPct(pct, 1)}</span>}
       </p>
       <p className="text-[11px] leading-snug text-muted-foreground">{detail}</p>

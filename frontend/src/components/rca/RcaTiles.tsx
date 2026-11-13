@@ -24,7 +24,7 @@ export function RcaKpiTile({ label, definition, icon, tint, value, unit, missing
         <IconTile size="sm" icon={icon} tint={tint} />
       </div>
       <p className="-mt-1 flex items-baseline gap-1.5">
-        <span className={cn('text-[22px] leading-6 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
+        <span className={cn('text-[18px] leading-6 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
           {value ?? missing ?? 'Not available'}
         </span>
         {unit && value != null && <span className="text-[13px] text-muted-foreground">{unit}</span>}
@@ -36,8 +36,8 @@ export function RcaKpiTile({ label, definition, icon, tint, value, unit, missing
 }
 
 /** One RCA analysis page on the Overview: what it holds, one figure from the same response, and the way in. */
-export function RcaAnalysisTile({ label, description, icon, tint, headline, detail, to }: {
-  label: string; description: string; icon: LucideIcon; tint: Tint; headline: ReactNode; detail: ReactNode; to: To;
+export function RcaAnalysisTile({ label, description, icon, tint, headline, headlineIsMetric = false, detail, to }: {
+  label: string; description: string; icon: LucideIcon; tint: Tint; headline: ReactNode; headlineIsMetric?: boolean; detail: ReactNode; to: To;
 }) {
   return (
     <Card role="group" aria-label={label} className="relative h-full gap-0 rounded-xl px-3 py-2 shadow-xs transition-shadow hover:shadow-sm">
@@ -45,7 +45,7 @@ export function RcaAnalysisTile({ label, description, icon, tint, headline, deta
         <p className="text-[13px] font-medium text-foreground/80">{label}</p>
         <IconTile icon={icon} tint={tint} />
       </div>
-      <p className="-mt-2 truncate text-[19px] font-semibold tracking-tight tabular-nums">{headline}</p>
+      <p className={cn('-mt-2 truncate font-semibold tracking-tight tabular-nums', headlineIsMetric ? 'text-[18px]' : 'text-[19px]')}>{headline}</p>
       <p className="mt-0.5 text-[11px] text-muted-foreground">{detail}</p>
       <p className="mt-1.5 text-[11px] text-muted-foreground">{description}</p>
       <div className="mt-auto pt-2"><ViewLink to={to}>Open {label}</ViewLink></div>
