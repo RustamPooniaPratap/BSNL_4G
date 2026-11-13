@@ -1,4 +1,4 @@
-/** Raw daily CSV upload (Data Entry -> Upload CSV). Every count, status and value comes from the API. */
+/** Raw daily CSV upload (Uptime Data -> Uptime Data Upload). Every count, status and value comes from the API. */
 
 /** A project key of the Organization (e.g. "4G Saturation"); projects are not fixed in the frontend. */
 export type RawProject = string;

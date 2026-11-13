@@ -105,19 +105,30 @@ describe('comparisons and exceptions', () => {
 });
 
 describe('circle-wise breakdown', () => {
-  // Site Scope per circle is its sites_total (site status, whatever the population).
+  // Site Scope is full dashboard inventory; sites_in_scope and team counts follow the breakdown population.
   const totals: Record<string, number> = { 'LWE|CG': 364, '4G Saturation|RJ': 1458, '4G Saturation|MP': 1483, 'LWE|MP': 22 };
-  const circle = (report_type: string, c: string, sites: number, withTotal = true) => ({
-    ...breakdown.circles[0], report_type, circle: c, sites_in_scope: sites, ...(withTotal ? { sites_total: totals[`${report_type}|${c}`] } : {}),
+  const teams = (ci_count: number, ie_count: number) => ({ ci_count, ie_count, sites_without_ci: 0, sites_without_ie: 0 });
+  const circle = (report_type: string, c: string, sites: number, ci = 0, ie = 0) => ({
+    ...breakdown.circles[0], report_type, circle: c, sites_in_scope: sites, sites_total: totals[`${report_type}|${c}`],
+    ...teams(ci, ie),
   });
-  const scope = (rows: [string, string, number][], withTotal = true): BreakdownResponse => ({ ...breakdown, circles: rows.map(([t, c, n]) => circle(t, c, n, withTotal)) });
-  const onAir = scope([['LWE', 'CG', 357], ['4G Saturation', 'RJ', 1362], ['4G Saturation', 'MP', 1351], ['LWE', 'MP', 20]]);
-  const om = scope([['LWE', 'CG', 357], ['4G Saturation', 'RJ', 1316], ['4G Saturation', 'MP', 1332], ['LWE', 'MP', 19]]);
+  const scope = (rows: [string, string, number, number, number][]): BreakdownResponse => ({
+    ...breakdown,
+    circles: rows.map(([t, c, n, ci, ie]) => circle(t, c, n, ci, ie)),
+  });
+  const onAir = scope([
+    ['LWE', 'CG', 357, 3, 21], ['4G Saturation', 'RJ', 1362, 11, 92],
+    ['4G Saturation', 'MP', 1351, 10, 91], ['LWE', 'MP', 20, 1, 1],
+  ]);
+  const om = scope([
+    ['LWE', 'CG', 357, 3, 21], ['4G Saturation', 'RJ', 1316, 11, 90],
+    ['4G Saturation', 'MP', 1332, 9, 88], ['LWE', 'MP', 19, 1, 1],
+  ]);
 
-  it('shows Site Scope as "not available" (never invented) when the API gives no total per circle', () => {
-    const { groups, total } = circleBreakdown(scope([['4G Saturation', 'MP', 1351]], false), scope([['4G Saturation', 'MP', 1332]], false));
-    expect(groups[0].rows[0]).toMatchObject({ siteScope: null, onAir: 1351, omStart: 1332, gapTotal: null, gapOnAir: 19 });
-    expect(total).toMatchObject({ siteScope: null, gapTotal: null });
+  it('keeps full Site Scope independent from the selected population and sums all inventory rows', () => {
+    const { groups, total } = circleBreakdown(onAir, om, om);
+    expect(groups[0].rows[0]).toMatchObject({ siteScope: 1483, onAir: 1351, omStart: 1332 });
+    expect(total).toMatchObject({ siteScope: 3327, onAir: 3090, omStart: 3024 });
   });
 
   it('groups 4G before LWE, keeps the same circle separate per network, and derives both gaps', () => {
@@ -137,18 +148,33 @@ describe('circle-wise breakdown', () => {
   });
 
   it('adds CIs, IEs and sites per person; subtotals and the total count each person once', () => {
-    const teams = (ci: number, ie: number) => ({ ci_count: ci, ie_count: ie, sites_without_ci: 0, sites_without_ie: 0 });
     const withTeams: BreakdownResponse = {
       ...onAir,
-      circles: onAir.circles.map((c) => ({ ...c, ...(c.circle === 'MP' && c.report_type === '4G Saturation' ? teams(10, 91) : c.circle === 'RJ' ? teams(12, 89) : teams(1, 4)) })),
+      circles: onAir.circles.map((c) => ({
+        ...c, ...(c.circle === 'MP' && c.report_type === '4G Saturation' ? teams(10, 91) : c.circle === 'RJ' ? teams(12, 89) : teams(1, 4)),
+      })),
       // MP 4G and RJ share 2 CIs, so the network has 20 CIs, not 22.
       team_totals: { all: teams(21, 180), '4G Saturation': teams(20, 178), LWE: teams(1, 4) },
     };
     const { groups, total } = circleBreakdown(withTeams, om);
-    expect(groups[0].rows[0]).toMatchObject({ circle: 'MP', ciCount: 10, ieCount: 91, sitesPerCi: 148.3, sitesPerIe: 16.3 });  // 1,483 sites
-    expect(groups[0].subtotal).toMatchObject({ ciCount: 20, ieCount: 178, sitesPerCi: 147.1 });  // 2,941 ÷ 20, from team_totals
-    expect(total).toMatchObject({ ciCount: 21, ieCount: 180, sitesPerCi: 158.4 });
-    expect(circleBreakdown(onAir, om).total).toMatchObject({ ciCount: null, sitesPerCi: null });  // not in the response: not invented
+    expect(groups[0].rows[0]).toMatchObject({ circle: 'MP', ciCount: 10, ieCount: 91, sitesPerCi: 135.1, sitesPerIe: 14.8 });  // 1,351 On-Air sites
+    expect(groups[0].subtotal).toMatchObject({ ciCount: 20, ieCount: 178, sitesPerCi: 135.7 });  // 2,713 On-Air sites ÷ 20
+    expect(total).toMatchObject({ ciCount: 21, ieCount: 180, sitesPerCi: 147.1 });  // 3,090 On-Air sites ÷ 21
+
+    const omTeams: BreakdownResponse = {
+      ...om,
+      team_totals: { all: teams(20, 170), '4G Saturation': teams(19, 168), LWE: teams(1, 2) },
+    };
+    const selectedOm = circleBreakdown(withTeams, om, omTeams);
+    expect(selectedOm.groups[0].rows[0]).toMatchObject({ ciCount: 9, ieCount: 88, sitesPerCi: 148 });
+    expect(selectedOm.total).toMatchObject({ ciCount: 20, ieCount: 170, sitesPerCi: 151.2 }); // 3,024 O&M Start sites ÷ 20
+
+    const noAssignedTeams: BreakdownResponse = {
+      ...onAir,
+      circles: onAir.circles.map((c) => ({ ...c, ci_count: 0, ie_count: 0 })),
+      team_totals: { all: teams(0, 0), '4G Saturation': teams(0, 0), LWE: teams(0, 0) },
+    };
+    expect(circleBreakdown(noAssignedTeams, om).total).toMatchObject({ ciCount: 0, ieCount: 0, sitesPerCi: null, sitesPerIe: null });
   });
 
   it('shows O&M Start and both gaps as not available when the workbook has no O&M Start column', () => {

@@ -82,10 +82,10 @@ class ParserTests(RcaTestCase):
         jh = next(r for r in rows if r['site_key'] == 'LWEJH0001')
         self.assertEqual((jh['om_start_raw'], jh['om_start']), ('YES', True))  # case ignored for filtering only
         self.assertEqual((jh['bucket_2'], jh['bucket_2_key']), ('-', ''))  # placeholder = unclassified, value kept
-        self.assertEqual(report['issue_counts']['outage_over_day'], 1)
+        self.assertNotIn('outage_over_day', report['issue_counts'])  # more than 1,440 min is valid (no warning)
         # Case variants share a key; the source spellings are kept.
         self.assertEqual(od['final_bucket_key'], next(r for r in rows if r['site_key'] == 'RJ0001')['final_bucket_key'])
-        # "IaasP OFC" and "Iaasp OFC" are the approved IaaSP OFC (case ignored) and are kept exactly as uploaded: never renamed.
+        # "IaasP OFC" and "Iaasp OFC" are the approved IaasP OFC (case ignored) and are kept exactly as uploaded: never renamed.
         self.assertEqual({r['final_bucket'] for r in rows if r['final_bucket_key'] == 'iaasp ofc'}, {'IaasP OFC', 'Iaasp OFC'})
         self.assertNotIn('bucket_spelling_approved', report['issue_counts'])
         self.assertEqual(next(r for r in rows if r['site_key'] == 'RJ0001')['rca_key'], 'media fluctuation')
@@ -180,7 +180,7 @@ class ValidationPriorityTests(RcaTestCase):
         self.assertEqual(RcaRecord.objects.count(), 0)
 
     def test_sub_bucket_and_rca_description_problems_are_warnings_that_never_block(self):
-        rows = self.rows(('OD0001', 5, 'TCS', 'BBU', 'Card'), ('OD0002', 5, 'IaaSP Others', 'Natural Clamity', 'Storm'),
+        rows = self.rows(('OD0001', 5, 'TCS', 'BBU', 'Card'), ('OD0002', 5, 'IaasP Others', 'Natural Clamity', 'Storm'),
                          ('OD0003', 5, 'DMW', '', 'Radio'), ('OD0004', 5, 'HFCL', 'HFCL Radio', ''), ('OD0005', 5, 'TCS', 'TCS', '-'))
         batch = importer.preview(self.path(rows=rows), 'rca.xlsx', user=self.admin)
         report = batch.report
@@ -255,10 +255,32 @@ class ValidationPriorityTests(RcaTestCase):
             importer.commit(batch, user=self.admin)
         self.assertEqual(RcaRecord.objects.count(), 0)
 
-    def test_outage_over_a_day_is_a_separate_warning_and_kept(self):
-        report = parser.parse(self.path(rows=self.rows(('OD0001', 1500, 'TCS', 'BBU', 'Card'))), 'rca.xlsx')['report']
-        self.assertEqual((report['valid_rows'], report['outage_over_day_rows']), (1, 1))
-        self.assertEqual(report['issue_counts'], {**report['issue_counts'], 'outage_over_day': 1})
+    def test_outage_over_a_day_is_valid_without_a_warning_and_kept_as_submitted(self):
+        result = parser.parse(self.path(rows=self.rows(('OD0001', 1441, 'TCS', 'BBU', 'Card'), ('OD0002', 1500, 'TCS', 'BBU', 'Card'),
+                                                       ('OD0003', 4320.75, 'TCS', 'BBU', 'Card'), ('OD0004', '2,880', 'TCS', 'BBU', 'Card'))),
+                              'rca.xlsx')
+        report = result['report']
+        self.assertEqual((report['valid_rows'], report['rejected_rows']), (4, 0))
+        self.assertEqual({r['site_id']: r['outage_minutes'] for r in result['rows']},
+                         {'OD0001': 1441.0, 'OD0002': 1500.0, 'OD0003': 4320.75, 'OD0004': 2880.0})  # never capped
+        self.assertFalse([i for i in report['all_issues'] if 'outage' in i['code']])
+        self.assertNotIn('outage_over_day_rows', report)
+
+    def test_negative_and_non_numeric_outage_stay_invalid(self):
+        result = parser.parse(self.path(rows=self.rows(('OD0001', -5, 'TCS', 'BBU', 'Card'), ('OD0002', 'abc', 'TCS', 'BBU', 'Card'),
+                                                       ('OD0003', 'nan', 'TCS', 'BBU', 'Card'), ('OD0004', 'inf', 'TCS', 'BBU', 'Card'),
+                                                       ('OD0005', '', 'TCS', 'BBU', 'Card'))), 'rca.xlsx')
+        errors = {i['site_id']: i['code'] for i in result['report']['all_issues'] if i['severity'] == 'error'}
+        self.assertEqual(errors, {'OD0001': 'negative_outage', 'OD0002': 'invalid_outage', 'OD0003': 'invalid_outage', 'OD0004': 'invalid_outage'})
+        blank = next(r for r in result['rows'] if r['site_id'] == 'OD0005')
+        self.assertIsNone(blank['outage_minutes'])  # blank = not recorded (a warning), never 0
+
+    def test_outage_over_a_day_is_imported_and_summed_as_submitted(self):
+        self.imported(rows=self.rows(('OD0001', 1500, 'TCS', 'BBU', 'Card'), ('OD0002', 2000.5, 'TCS', 'BBU', 'Card')))
+        self.assertEqual(sorted(RcaRecord.objects.values_list('outage_minutes', flat=True)), [1500.0, 2000.5])
+        self.client.force_login(self.admin)
+        summary = self.client.get(reverse('rca-summary')).json()
+        self.assertAlmostEqual(summary['kpis']['outage_minutes'], 3500.5, places=2)
 
 
 class ImportTests(RcaTestCase):
@@ -340,7 +362,7 @@ class ApiTests(RcaTestCase):
                          ('October 2026 RCA Report', '2026-10-21', '2026-10-21', 'previewed'))
         self.assertNotIn('all_issues', body['report'])
         csv = self.client.get(reverse('rca-import-issues', args=[body['id']]))
-        self.assertIn('outage_over_day', csv.content.decode('utf-8-sig'))
+        self.assertNotIn('outage_over_day', csv.content.decode('utf-8-sig'))
         commit = self.client.post(reverse('rca-import-commit', args=[body['id']]), {}, content_type='application/json')
         self.assertEqual((commit.status_code, commit.json()['records']), (200, 5))
         again = self.client.post(reverse('rca-import-commit', args=[body['id']]), {}, content_type='application/json')
@@ -381,7 +403,7 @@ class ApiTests(RcaTestCase):
         self.assertNotIn('-', b2)
         self.assertTrue(data['bucket_2'][-1]['unclassified'])  # listed last, never ranked as a cause
         iaasp = next(i for i in data['final_buckets'] if i['key'] == 'iaasp ofc')
-        self.assertEqual((iaasp['label'], iaasp['records'], iaasp['variants'], iaasp['approved']), ('IaaSP OFC', 2, ['IaasP OFC', 'Iaasp OFC'], True))  # approved label, uploaded spellings kept
+        self.assertEqual((iaasp['label'], iaasp['records'], iaasp['variants'], iaasp['approved']), ('IaasP OFC', 2, ['IaasP OFC', 'Iaasp OFC'], True))  # approved label, uploaded spellings kept
         self.assertEqual(data['categories']['unreviewed']['records'], 4)
         self.assertEqual(data['top_records'][0]['site_id'], 'LWEJH0001')
         self.assertEqual(self.client.get(reverse('rca-summary'), {'project': 'LWE'}).json()['kpis']['records'], 2)

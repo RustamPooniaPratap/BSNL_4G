@@ -37,7 +37,7 @@ export function RcaImportPreview({ batch, busy, onCommit, onDiscard }: {
   ];
 
   return (
-    <Card className="gap-4 rounded-xl px-5 py-4" aria-label="Import preview">
+    <Card className="gap-3 rounded-xl px-4 py-3" aria-label="Import preview">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold">{rejected ? 'Rejected' : 'Validation result'}: {batch.report_name ?? batch.file}</h2>
@@ -101,7 +101,7 @@ export function RcaImportPreview({ batch, busy, onCommit, onDiscard }: {
           {(r.earlier_date_rows ?? 0) > 0 && <p className="mt-1 text-xs text-muted-foreground">The workbook also repeats earlier dates ({formatNumber(r.earlier_date_rows!)} rows): identical rows are skipped, new ones are added under their own date, differences need your choice below, and nothing of an earlier date is withdrawn.</p>}
         </div>
       )}
-      <div className="grid gap-4 text-sm lg:grid-cols-3">
+      <div className="grid gap-3 text-sm lg:grid-cols-3">
         <Counts title="Reporting dates" items={Object.entries(r.dates).map(([d, n]) => [formatDate(d), n])} />
         <Counts title="Project and circle (valid rows)" items={Object.entries(r.circles).map(([k, n]) => [k.replace('|', ' / '), n])} />
         <Counts title="Circles (source name → code)" items={Object.entries(r.circle_names)} />

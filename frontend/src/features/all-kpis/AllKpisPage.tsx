@@ -1,38 +1,49 @@
-import {
-  Activity, Building2, CalendarDays, ClipboardCheck, Clock, Gauge, Info, LayoutGrid, ListTree, Network, RadioTower, ShieldAlert, ShieldCheck, Timer,
-  TriangleAlert, Wrench, type LucideIcon,
-} from 'lucide-react';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
+import { useCallback, useRef, useState, type CSSProperties } from 'react';
+import { ArrowRight, Info, TriangleAlert } from 'lucide-react';
 import { hasPermission, useAuth } from '../../context/auth';
 import { PageHeading } from '../../context/pageHeader';
 import { usePopulation } from '../../context/population';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { fetchKpiFilters, fetchKpiSummary, fetchKpiTrends } from './api';
+import './allkpis.css';
 import { ComparisonTable } from './components/ComparisonTable';
-import { DrillDown, SitesTable } from './components/DrillDown';
+import { DrillDown } from './components/DrillDown';
 import { KpiFilters } from './components/KpiFilters';
-import { KpiGroup, type KpiCardSpec } from './components/KpiCards';
+import { KpiCard, type KpiCardSpec } from './components/KpiCards';
+import { KpiNav, type NavItem } from './components/KpiNav';
+import { KpiView, LevelCard } from './components/KpiView';
 import { RcaPanel } from './components/RcaPanel';
 import { TrendPanel } from './components/TrendPanel';
+import { TrendsView } from './components/TrendsView';
+import { ChangeText, StatStrip } from './components/Ui';
 import { count, hours, NA, pct } from './format';
-import { availabilityTone, coverageTone, problemTone } from './status';
+import { isKpiId, KPI_BY_ID } from './kpis';
+import { availabilityTone, problemTone } from './status';
 import type { KpiSummary } from './types';
-import { useKpiFilters, type KpiTab } from './useKpiFilters';
+import { TABS, useKpiFilters, type KpiTab } from './useKpiFilters';
 
-const TAB_LABELS: Record<KpiTab, string> = {
-  overview: 'Overview', availability: 'Availability', outage: 'Outage & SLA', rca: 'RCA', drilldown: 'Circle / CI / IE / Site', completeness: 'Data Completeness',
+const VIEW_TITLES: Record<KpiTab, string> = {
+  overview: 'All KPIs – overview', trends: 'KPI trends', availability: 'Availability', outage: 'Outage hours', usd: 'USD Sites', nsla: 'NSLA Sites',
+  below_98_5: 'Sites < 98.5%', below_60: 'Sites < 60%', ranking: 'Ranking', rca: 'Root cause analysis', drilldown: 'Circle / CI / IE / Site',
 };
-const TAB_ICONS: Record<KpiTab, LucideIcon> = {
-  overview: LayoutGrid, availability: Activity, outage: Timer, rca: ListTree, drilldown: Network, completeness: ClipboardCheck,
-};
+const NAV_LABELS: Partial<Record<KpiTab, string>> = { overview: 'All KPIs – Overview', trends: 'KPI Trends (Month / Week)', outage: 'Outage Hours', rca: 'RCA', drilldown: 'Circle / CI / IE / Site' };
+/** Height of the sticky filter bar, so the KPI tab bar sticks right below it. */
+function useHeight() {
+  const [height, setHeight] = useState(0);
+  const observer = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((el: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    observer.current = new ResizeObserver(() => setHeight(el.offsetHeight));
+    observer.current.observe(el);
+  }, []);
+  return [ref, height] as const;
+}
 
 /**
- * All KPI's: an optional, self-contained module (src/features/all-kpis, backend apps/allkpis; see README.md). Every
- * figure comes from /api/all-kpis/, computed on the server from the canonical daily records and the Site Master.
+ * All KPI's: an optional, self-contained module (src/features/all-kpis, backend apps/allkpis; see README.md), laid out
+ * as the reference report (sticky filters, a horizontal KPI tab bar in three groups, KPI views without heading cards). Every figure comes from
+ * /api/all-kpis/, computed on the server from the canonical daily records and the Site Master.
  */
 export function AllKpisPage() {
   const f = useKpiFilters();
@@ -43,169 +54,124 @@ export function AllKpisPage() {
   const options = useApiQuery(`allkpis-filters-${f.query}`, (signal) => fetchKpiFilters(f.query, signal));
   const summary = useApiQuery(`allkpis-summary-${f.query}`, (signal) => fetchKpiSummary(f.query, signal));
   const s = summary.data;
-  const tabs = (Object.keys(TAB_LABELS) as KpiTab[]).filter((t) => t !== 'rca' || canRca);
+  const [fbarRef, fbarHeight] = useHeight();
+  const tabs = TABS.filter((t) => t !== 'rca' || canRca);
   const tab = tabs.includes(f.tab) ? f.tab : 'overview';
   const open = (t: KpiTab) => f.update({ tab: t === 'overview' ? null : t });
-  // The RCA filter only applies to RCA data; other tabs ignore it.
+  // The RCA filter only applies to RCA data; other views ignore it.
   const query = new URLSearchParams(f.query);
   if (tab !== 'rca') query.delete('final_bucket');
-  const period = s?.period?.label ?? '';
-  const compareLabel = s?.previous_period?.label;
+  const kpi = isKpiId(tab) ? KPI_BY_ID[tab] : null;
+
+  const navItems: NavItem[] = tabs.map((t) => {
+    const k = isKpiId(t) ? KPI_BY_ID[t] : null;
+    const v = k && s?.current ? (s.current[k.key] as number | null) : null;
+    return {
+      id: t, label: NAV_LABELS[t] ?? VIEW_TITLES[t],
+      group: t === 'rca' || t === 'drilldown' ? 'analysis' : t === 'overview' || t === 'trends' || t === 'ranking' ? 'reports' : 'kpi',
+      value: k && s?.current ? (v == null ? 'N/A' : k.format(v)) : undefined,
+      tone: k ? k.tone(v) : undefined,
+    };
+  });
 
   return (
-    <div className="space-y-4">
+    <div className="akp" style={{ '--akp-fbar-h': `${fbarHeight}px` } as CSSProperties}>
       <PageHeading title="All KPI's" subtitle={`Consolidated 4G & LWE Performance Overview · Population: ${sitesLabel}`} />
-      {options.error && <Alert variant="destructive"><TriangleAlert /><AlertDescription>{options.error.message}</AlertDescription></Alert>}
-      {options.data
-        ? <KpiFilters f={f} options={options.data} summary={s} showFinalBucket={tab === 'rca'} />
-        : !options.error && <Skeleton className="h-36 w-full rounded-xl" />}
-      {s && <OmNotice s={s} om={om} />}
-      <nav aria-label="All KPI's sections" className="overflow-x-auto border-b">
-        <div className="flex min-w-max gap-1">
-          {tabs.map((t) => {
-            const Icon = TAB_ICONS[t];
-            return (
-              <button key={t} type="button" aria-current={t === tab ? 'page' : undefined} onClick={() => open(t)}
-                className={cn('-mb-px inline-flex h-10 items-center gap-1.5 border-b-2 px-3 text-sm font-medium whitespace-nowrap transition-colors',
-                  t === tab ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:border-border hover:text-foreground')}>
-                <Icon className="size-4" aria-hidden="true" />{TAB_LABELS[t]}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
-      {summary.error && <Alert variant="destructive" role="alert"><TriangleAlert /><AlertDescription>{summary.error.message}</AlertDescription></Alert>}
-      {!s && !summary.error && (
-        <div aria-label="Loading KPIs" aria-busy="true" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
-        </div>
-      )}
-      {s && !s.current && <Alert><Info /><AlertDescription>{s.notes?.join(' ') ?? 'No data for these filters.'}</AlertDescription></Alert>}
-      {s?.current && (
-        <div className="space-y-5">
-          {tab === 'overview' && <Overview s={s} query={query} onOpen={open} canRca={canRca} sites={sitesLabel} om={om} />}
-          {tab === 'availability' && (
+      <div className="akp-fbar" ref={fbarRef}>
+        {options.data
+          ? <KpiFilters f={f} options={options.data} showFinalBucket={tab === 'rca'} />
+          : options.error
+            ? <p role="alert" className="akp-fbar-in t-crit"><TriangleAlert className="size-4" aria-hidden="true" />{options.error.message}</p>
+            : <div className="akp-fbar-in"><div className="akp-skel h-[58px] w-full" /></div>}
+      </div>
+
+      <KpiNav items={navItems} active={tab} onOpen={open} />
+
+      <div className="akp-layout">
+        <main className="akp-main" aria-label={VIEW_TITLES[tab]}>
+          {/* No heading card on any view (the filters show the period, population and scope); only the data checks remain. */}
+          {s && <DataChecks s={s} om={om} />}
+          {summary.error && <div role="alert" className="akp-card akp-pad t-crit flex items-center gap-2"><TriangleAlert className="size-4" aria-hidden="true" />{summary.error.message}</div>}
+          {!s && !summary.error && (
+            <div aria-label="Loading KPIs" aria-busy="true" className="akp-tiles">
+              {Array.from({ length: 8 }, (_, i) => <div key={i} className="akp-skel h-28" />)}
+            </div>
+          )}
+          {s && !s.current && <div className="akp-card akp-pad akp-note flex items-start gap-2"><Info className="mt-px size-4 shrink-0" aria-hidden="true" />{s.notes?.join(' ') ?? 'No data for these filters.'}</div>}
+          {s?.current && (
             <>
-              <KpiGroup title="Availability & Uptime" icon={Activity} period={period} compareLabel={compareLabel} onOpen={open} cards={availabilityCards(s, sitesLabel)} />
-              <TrendPanel query={query} kind="availability" period={period} />
-              <ComparisonTable s={s} keys={['availability_pct', 'coverage_pct', 'missing_site_days']} />
+              {tab === 'overview' && <Overview s={s} f={f} query={query} onOpen={open} canRca={canRca} sites={sitesLabel} om={om} />}
+              {tab === 'trends' && (<><TrendsView query={query} /><ComparisonTable s={s} /></>)}
+              {kpi && options.data && (
+                <KpiView kpi={kpi} s={s} f={f} query={query} options={options.data} sites={sitesLabel}
+                  reason={kpi.population ? populationReason(s, s.current[kpi.key] as number | null, om) : undefined} />
+              )}
+              {tab === 'ranking' && <Ranking s={s} f={f} query={query} />}
+              {tab === 'rca' && canRca && <RcaPanel query={f.query} />}
+              {tab === 'drilldown' && <DrillDown f={f} />}
             </>
           )}
-          {tab === 'outage' && (
-            <>
-              <KpiGroup title="Outage Performance" icon={Timer} period={period} compareLabel={compareLabel} cards={outageCards(s, sitesLabel, om)} />
-              <KpiGroup title="SLA / Threshold Analysis" icon={ShieldCheck} period={period} compareLabel={compareLabel} cards={slaCards(s, sitesLabel, om)} />
-              <TrendPanel query={query} kind="outage" period={period} />
-              <ComparisonTable s={s} keys={['outage_hours', 'usd_sites', 'nsla_sites', 'above_98_5_sites', 'below_98_5_sites', 'below_60_sites']} />
-            </>
-          )}
-          {tab === 'rca' && canRca && <RcaPanel query={f.query} />}
-          {tab === 'drilldown' && <DrillDown f={f} />}
-          {tab === 'completeness' && (
-            <>
-              <KpiGroup title="Reporting / Data Completeness" icon={ClipboardCheck} period={period} compareLabel={compareLabel} cards={completenessCards(s)} />
-              <CoverageBar s={s} sites={sitesLabel} />
-              <SitesTable key={`c-${query}`} query={query} defaultSort="days" title="Sites by reporting completeness (fewest days first)" />
-            </>
-          )}
-        </div>
-      )}
+        </main>
+      </div>
     </div>
   );
 }
 
-/**
- * O&M Start is read per month (no carry-forward): a month without it makes the O&M Start site count unavailable, and,
- * with the O&M Start population selected, USD and NSLA too.
- */
-function OmNotice({ s, om: omPopulation }: { s: KpiSummary; om: boolean }) {
-  const om = s.om_start;
-  if (!s.period || !om || om.complete) return null;
-  const months = om.missing_months.join(', ');
-  return (
-    <p role="status" className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs text-amber-900">
-      <TriangleAlert className="mt-px size-3.5 shrink-0 text-amber-600" aria-hidden="true" />
-      {!omPopulation
-        ? `O&M Start data is not available for ${months}: the O&M Start site count (status) shows "Not available" for those months. No other month's O&M Start is carried forward.`
-        : om.available
-          ? `O&M Start data is not available for ${months}: those days are left out of USD and NSLA (no other month's O&M Start is carried forward).`
-          : `O&M Start data is not available for ${months}: O&M Start sites, USD and NSLA show "Not available". No other month's O&M Start is carried forward.`}
-    </p>
-  );
+/** The data checks of every view: nothing at all when there is nothing to report. */
+function DataChecks({ s, om }: { s: KpiSummary; om: boolean }) {
+  const checks = dataChecks(s, om);
+  if (!checks.length) return null;
+  return <div className="akp-warnbox" role="status"><b>Data checks: </b>{checks.join(' ')}</div>;
 }
 
-/** Why an O&M Start-based value is unavailable (shown on its card instead of a misleading 0). */
+/**
+ * Data checks. O&M Start is read per month (no carry-forward): with the O&M
+ * Start population selected, a month without it leaves USD Sites and NSLA Sites out or Not available.
+ */
+function dataChecks(s: KpiSummary, omPopulation: boolean): string[] {
+  const out: string[] = [];
+  const om = s.om_start;
+  if (s.period && om && !om.complete && omPopulation) {
+    const months = om.missing_months.join(', ');
+    out.push(om.available
+        ? `O&M Start data is not available for ${months}: those days are left out of USD Sites and NSLA Sites (no other month's O&M Start is carried forward).`
+        : `O&M Start data is not available for ${months}: O&M Start sites, USD Sites and NSLA Sites show "Not available". No other month's O&M Start is carried forward.`);
+  }
+  if (s.current && s.notes?.length) out.push(...s.notes);
+  return out;
+}
+
+/** Why an O&M Start-based value is unavailable (shown on its tile instead of a misleading 0). */
 const omReason = (s: KpiSummary, v: number | null | undefined) =>
   v == null ? `No O&M Start data for ${s.om_start?.missing_months.join(', ') || 'this period'}` : undefined;
-/** Why a population value (USD, NSLA) is unavailable: missing O&M Start data matters only for the O&M Start population. */
+/** Why a population value (USD Sites, NSLA Sites) is unavailable: missing O&M Start data matters only for the O&M Start population. */
 const populationReason = (s: KpiSummary, v: number | null | undefined, om: boolean) =>
   v == null ? (om ? omReason(s, v) : 'Not available for this period') : undefined;
 
-/** Site status counts (not population figures): every count is shown whatever the population. */
-const portfolioCards = (s: KpiSummary, sites: string): KpiCardSpec[] => [
-  { label: 'Total sites', icon: Building2, value: count(s.current!.total_sites), current: s.current!.total_sites, previous: s.previous?.total_sites, higherIsBetter: null, tab: 'drilldown', note: 'Site status: in the Site Master, selected filters' },
-  { label: 'On-Air sites', icon: RadioTower, value: count(s.current!.on_air_sites), current: s.current!.on_air_sites, previous: s.previous?.on_air_sites, higherIsBetter: null, tab: 'drilldown', note: `Site status · KPIs use ${sites}` },
-  { label: 'O&M Start sites', icon: Wrench, value: count(s.current!.om_start_sites), current: s.current!.om_start_sites, previous: s.previous?.om_start_sites, higherIsBetter: null, tab: 'drilldown',
-    note: omReason(s, s.current!.om_start_sites) ?? `Site status, latest month in the period · KPIs use ${sites}` },
-];
+/** Previous value in the value's own format (tile "Prev …"). */
+const prevOf = (s: KpiSummary, key: keyof NonNullable<KpiSummary['previous']>, fmt: (v: number | null) => string) =>
+  (s.previous ? fmt((s.previous[key] as number | null) ?? null) : undefined);
+
 const availabilityCards = (s: KpiSummary, sites: string): KpiCardSpec[] => [
-  { label: 'Availability (selected period)', icon: Gauge, value: pct(s.current!.availability_pct, 3), current: s.current!.availability_pct, previous: s.previous?.availability_pct, unit: 'pts',
+  { label: 'Availability (selected period)', value: pct(s.current!.availability_pct, 3), current: s.current!.availability_pct, previous: s.previous?.availability_pct, unit: 'pts', availability: true,
     higherIsBetter: true, tone: availabilityTone(s.current!.availability_pct), tab: 'availability',
     note: s.current!.availability_pct == null ? 'No reported values in this period' : `Outage-weighted, ${sites}` },
 ];
 const outageCards = (s: KpiSummary, sites: string, om: boolean): KpiCardSpec[] => [
-  { label: 'Outage minutes', icon: Clock, value: count(s.current!.outage_minutes == null ? null : Math.round(s.current!.outage_minutes)), current: s.current!.outage_minutes, previous: s.previous?.outage_minutes, higherIsBetter: false, tab: 'outage' },
-  { label: 'Outage hours', icon: Timer, value: hours(s.current!.outage_hours), current: s.current!.outage_hours, previous: s.previous?.outage_hours, higherIsBetter: false, tab: 'outage' },
-  { label: 'USD sites', icon: TriangleAlert, value: count(s.current!.usd_sites), current: s.current!.usd_sites, previous: s.previous?.usd_sites, higherIsBetter: false, tone: problemTone(s.current!.usd_sites), tab: 'outage',
-    note: populationReason(s, s.current!.usd_sites, om) ?? `${sites} with outage > 0 on a day` },
+  { label: 'Outage minutes', value: count(s.current!.outage_minutes == null ? null : Math.round(s.current!.outage_minutes)), current: s.current!.outage_minutes, previous: s.previous?.outage_minutes,
+    prev: prevOf(s, 'outage_minutes', (v) => count(v == null ? null : Math.round(v))), higherIsBetter: false, tab: 'outage' },
+  { label: 'Outage hours', value: hours(s.current!.outage_hours), current: s.current!.outage_hours, previous: s.previous?.outage_hours, prev: prevOf(s, 'outage_hours', hours), higherIsBetter: false, tab: 'outage' },
+  { label: 'USD Sites', value: count(s.current!.usd_sites), current: s.current!.usd_sites, previous: s.previous?.usd_sites, prev: prevOf(s, 'usd_sites', count), higherIsBetter: false, tone: problemTone(s.current!.usd_sites), tab: 'usd',
+    note: populationReason(s, s.current!.usd_sites, om) ?? `${sites} with outage > 0 on a day (sites, not outage events)` },
 ];
 const slaCards = (s: KpiSummary, sites: string, om: boolean): KpiCardSpec[] => [
-  { label: 'NSLA sites (< 98.5%)', icon: ShieldAlert, value: count(s.current!.nsla_sites), current: s.current!.nsla_sites, previous: s.previous?.nsla_sites, higherIsBetter: false, tone: problemTone(s.current!.nsla_sites, 'bad'), tab: 'outage',
+  { label: 'NSLA Sites (< 98.5%)', value: count(s.current!.nsla_sites), current: s.current!.nsla_sites, previous: s.previous?.nsla_sites, prev: prevOf(s, 'nsla_sites', count), higherIsBetter: false, tone: problemTone(s.current!.nsla_sites, 'bad'), tab: 'nsla',
     note: populationReason(s, s.current!.nsla_sites, om) ?? `NSLA (${sites}, period uptime < 98.5%)` },
-  { label: 'Sites ≥ 98.5% (period)', icon: ShieldCheck, value: count(s.current!.above_98_5_sites), current: s.current!.above_98_5_sites, previous: s.previous?.above_98_5_sites, higherIsBetter: true,
-    tone: s.current!.above_98_5_sites ? 'good' : 'neutral', tab: 'drilldown' },
-  { label: 'Sites < 98.5% (period)', value: count(s.current!.below_98_5_sites), current: s.current!.below_98_5_sites, previous: s.previous?.below_98_5_sites, higherIsBetter: false, tone: problemTone(s.current!.below_98_5_sites), tab: 'drilldown' },
-  { label: 'Sites < 60% (period)', value: count(s.current!.below_60_sites), current: s.current!.below_60_sites, previous: s.previous?.below_60_sites, higherIsBetter: false, tone: problemTone(s.current!.below_60_sites, 'bad'), tab: 'drilldown' },
+  { label: 'Sites ≥ 98.5% (period)', value: count(s.current!.above_98_5_sites), current: s.current!.above_98_5_sites, previous: s.previous?.above_98_5_sites, prev: prevOf(s, 'above_98_5_sites', count), higherIsBetter: true,
+    tone: s.current!.above_98_5_sites ? 'good' : 'neutral', tab: 'below_98_5' },
+  { label: 'Sites < 98.5% (period)', value: count(s.current!.below_98_5_sites), current: s.current!.below_98_5_sites, previous: s.previous?.below_98_5_sites, prev: prevOf(s, 'below_98_5_sites', count), higherIsBetter: false, tone: problemTone(s.current!.below_98_5_sites), tab: 'below_98_5' },
+  { label: 'Sites < 60% (period)', value: count(s.current!.below_60_sites), current: s.current!.below_60_sites, previous: s.previous?.below_60_sites, prev: prevOf(s, 'below_60_sites', count), higherIsBetter: false, tone: problemTone(s.current!.below_60_sites, 'bad'), tab: 'below_60' },
 ];
-const completenessCards = (s: KpiSummary): KpiCardSpec[] => [
-  { label: 'Reporting coverage', icon: ClipboardCheck, value: pct(s.current!.coverage_pct, 1), current: s.current!.coverage_pct, previous: s.previous?.coverage_pct, unit: 'pts', higherIsBetter: true,
-    tone: coverageTone(s.current!.coverage_pct), tab: 'completeness', note: `${count(s.current!.reported_site_days)} of ${count(s.current!.expected_site_days)} site-days` },
-  { label: 'Missing availability (site-days)', value: count(s.current!.missing_site_days), current: s.current!.missing_site_days, previous: s.previous?.missing_site_days, higherIsBetter: false, tone: problemTone(s.current!.missing_site_days), tab: 'completeness',
-    note: 'Not reported; not counted as 0%' },
-  { label: 'Sites missing a day', value: count(s.current!.sites_missing_any_day), current: s.current!.sites_missing_any_day, previous: s.previous?.sites_missing_any_day, higherIsBetter: false, tone: problemTone(s.current!.sites_missing_any_day), tab: 'completeness' },
-  { label: 'Sites without any value', value: count(s.current!.sites_without_any_value), current: s.current!.sites_without_any_value, previous: s.previous?.sites_without_any_value, higherIsBetter: false, tone: problemTone(s.current!.sites_without_any_value), tab: 'completeness' },
-];
-
-/** Reported against missing site-days: missing values are a reporting gap, never low availability. */
-function CoverageBar({ s, sites }: { s: KpiSummary; sites: string }) {
-  const v = s.current!;
-  if (!v.expected_site_days) return null;
-  const reported = (100 * v.reported_site_days) / v.expected_site_days;
-  const missing = (100 * v.missing_site_days) / v.expected_site_days;
-  return (
-    <Card className="gap-2.5 px-4 py-3 shadow-xs">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-sm font-semibold">Reporting coverage</h3>
-        <p className="text-xs text-muted-foreground tabular-nums">{count(v.reported_site_days)} of {count(v.expected_site_days)} site-days reported ({sites}) · {period(s)}</p>
-      </div>
-      <div className="flex h-2.5 overflow-hidden rounded-full bg-muted" role="img" aria-label={`${pct(v.coverage_pct, 1)} of site-days reported`}>
-        <div className="bg-emerald-600" style={{ width: `${reported}%` }} />
-        <div className="bg-amber-400" style={{ width: `${missing}%` }} />
-      </div>
-      <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-emerald-600" aria-hidden="true" />Reported: {count(v.reported_site_days)} site-days, included in every KPI</span>
-        <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-amber-400" aria-hidden="true" />Missing: {count(v.missing_site_days)} site-days, left out of availability, outage, USD and NSLA</span>
-      </div>
-      <p className="flex items-start gap-1.5 rounded-md bg-muted/50 px-2.5 py-1.5 text-[11px] text-muted-foreground">
-        <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-        Missing availability is a reporting gap, not low availability: a site-day without a value is never counted as 0%.
-        Low availability is shown on the Availability and Outage &amp; SLA tabs.
-      </p>
-    </Card>
-  );
-}
-const period = (s: KpiSummary) => s.period?.label ?? '';
-
 /** Daily / weekly / monthly availability: the latest point of each trend (all derived from daily records). */
 function useLatest(query: URLSearchParams, granularity: 'day' | 'week' | 'month') {
   const params = new URLSearchParams(query);
@@ -214,34 +180,57 @@ function useLatest(query: URLSearchParams, granularity: 'day' | 'week' | 'month'
   return t.data?.points.at(-1) ?? null;
 }
 
-function Overview({ s, query, onOpen, canRca, sites, om }: { s: KpiSummary; query: URLSearchParams; onOpen: (t: KpiTab) => void; canRca: boolean; sites: string; om: boolean }) {
+function Overview({ s, f, query, onOpen, canRca, sites, om }: {
+  s: KpiSummary; f: ReturnType<typeof useKpiFilters>; query: URLSearchParams; onOpen: (t: KpiTab) => void; canRca: boolean; sites: string; om: boolean;
+}) {
   const day = useLatest(query, 'day');
   const week = useLatest(query, 'week');
   const month = useLatest(query, 'month');
-  const p = period(s);
+  const p = s.period?.label ?? '';
   const compareLabel = s.previous_period?.label;
+  const latestCard = (label: string, point: typeof day, what: string): KpiCardSpec => ({
+    label, value: point ? pct(point.availability_pct, 3) : NA, tone: availabilityTone(point?.availability_pct), availability: Boolean(point), note: point ? `Latest ${what}: ${point.label}` : undefined, tab: 'availability',
+  });
   return (
-    <div className="space-y-6">
-      <KpiGroup title="Site Portfolio" icon={Building2} period={p} compareLabel={compareLabel} onOpen={onOpen} cards={portfolioCards(s, sites)} />
-      <KpiGroup title="Availability & Uptime" icon={Activity} period={p} compareLabel={compareLabel} onOpen={onOpen} cards={[
-        ...availabilityCards(s, sites),
-        { label: 'Daily availability', icon: CalendarDays, value: day ? pct(day.availability_pct, 3) : NA, tone: availabilityTone(day?.availability_pct), note: day ? `Latest day: ${day.label}` : undefined, tab: 'availability' },
-        { label: 'Weekly availability', icon: CalendarDays, value: week ? pct(week.availability_pct, 3) : NA, tone: availabilityTone(week?.availability_pct), note: week ? `Latest week: ${week.label}` : undefined, tab: 'availability' },
-        { label: 'Monthly availability', icon: CalendarDays, value: month ? pct(month.availability_pct, 3) : NA, tone: availabilityTone(month?.availability_pct), note: month ? `Latest month: ${month.label}` : undefined, tab: 'availability' },
-      ]} />
-      <KpiGroup title="Outage Performance" icon={Timer} period={p} compareLabel={compareLabel} onOpen={onOpen} cards={outageCards(s, sites, om)} />
-      <KpiGroup title="SLA / Threshold Analysis" icon={ShieldCheck} period={p} compareLabel={compareLabel} onOpen={onOpen} cards={slaCards(s, sites, om)} />
-      <KpiGroup title="Reporting / Data Completeness" icon={ClipboardCheck} period={p} compareLabel={compareLabel} onOpen={onOpen} cards={completenessCards(s)} />
+    <>
+      {/* Every overview KPI in one grid (reference tile grid): five per row on desktop, equal width and height. */}
+      <section aria-label="Key indicators">
+        <div className="akp-tiles akp-tiles5">
+          {[...availabilityCards(s, sites), latestCard('Daily availability', day, 'day'), latestCard('Weekly availability', week, 'week'), latestCard('Monthly availability', month, 'month'),
+            ...outageCards(s, sites, om), ...slaCards(s, sites, om)].map((c) => <KpiCard key={c.label} spec={c} onOpen={onOpen} />)}
+        </div>
+      </section>
+      <LevelCard f={f} query={query} s={s} kpi={null} title={(level) => `Ranking · ${level}`}
+        note={`${p}${compareLabel ? ` vs ${compareLabel}` : ''} · ranked by availability; select a name to open its next level`} />
+      <TrendPanel query={query} kind="availability" period={p} />
       {canRca && (
-        <Card className="flex-row flex-wrap items-center gap-3 px-4 py-3 shadow-xs">
-          <ListTree className="size-4 text-muted-foreground" aria-hidden="true" />
+        <section className="akp-card akp-pad flex flex-wrap items-center gap-3" aria-label="RCA Performance">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold">RCA Performance</p>
-            <p className="text-xs text-muted-foreground">Final Bucket distribution and circle-wise RCA. Own / Customer / Third Party / Pending are not configured yet.</p>
+            <h3 className="akp-h" style={{ marginBottom: 2 }}>RCA Performance</h3>
+            <p className="akp-note">Final Bucket distribution and circle-wise RCA. Own / Customer / Third Party / Pending are not configured yet.</p>
           </div>
-          <Button size="sm" variant="outline" className="h-8" onClick={() => onOpen('rca')}>Open RCA</Button>
-        </Card>
+          <button type="button" className="akp-btn" onClick={() => onOpen('rca')}>Open RCA <ArrowRight className="size-3.5" aria-hidden="true" /></button>
+        </section>
       )}
-    </div>
+    </>
   );
 }
+
+/** Ranking (reference "Ranking & score"): availability of the period against the previous, then the ranked units. */
+function Ranking({ s, f, query }: { s: KpiSummary; f: ReturnType<typeof useKpiFilters>; query: URLSearchParams }) {
+  const [a, b] = [s.current?.availability_pct ?? null, s.previous?.availability_pct ?? null];
+  return (
+    <>
+      <StatStrip label="Availability: this period against the previous" items={[
+        { label: 'Availability', value: pct(a, 3), sub: s.period?.label },
+        { label: 'Previous period', value: s.previous ? pct(b, 3) : NA, sub: s.previous_period?.label ?? 'No comparison period' },
+        { label: 'Change', value: <ChangeText current={a} previous={b} unit="pts" higherIsBetter />, sub: 'percentage points' },
+        { label: 'NSLA Sites', value: count(s.current?.nsla_sites), sub: 'period uptime < 98.5%' },
+        { label: 'Sites < 60%', value: count(s.current?.below_60_sites), sub: 'this period' },
+      ]} />
+      <LevelCard f={f} query={query} s={s} kpi={null} title={(level) => `Ranking · ${level}`}
+        note={`${s.period?.label ?? ''}${s.previous_period ? ` vs ${s.previous_period.label}` : ''} · rank 1 = highest availability · Δ = rank change`} />
+    </>
+  );
+}
+

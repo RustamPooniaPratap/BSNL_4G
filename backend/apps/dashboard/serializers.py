@@ -23,8 +23,8 @@ def scope_field():
 
 def parse_scope(value, default: str | None = DEFAULT_SCOPE) -> str | None:
     """The validated population of a request parameter (endpoints without a serializer): missing -> ``default``
-    (DEFAULT_SCOPE; None where the filter is optional, see masterdata); anything else than on_air / om_start (including
-    the former "all") -> HTTP 400 {error, details: {scope: [...]}}."""
+    (DEFAULT_SCOPE; None where the filter is optional, see masterdata); values other than on_air / om_start result in
+    HTTP 400 {error, details: {scope: [...]}}."""
     value = (value or '').strip()
     if not value:
         return default

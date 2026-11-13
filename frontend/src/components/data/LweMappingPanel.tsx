@@ -50,7 +50,7 @@ export function LweMappingPanel({ onCommitted }: { onCommitted: () => void }) {
     ['LWE sites mapped after import', r?.lwe_sites_mapped_after_import, false], ['LWE sites without mapping', r?.lwe_sites_without_mapping, true],
   ] : [];
   return (
-    <div className="space-y-4" role="region" aria-label="LWE Band ID mapping import">
+    <div className="space-y-3" role="region" aria-label="LWE Band ID mapping import">
       <p className="text-xs text-muted-foreground">
         Reads the LWE Band ID mapping workbook (Circle, BTS IP ID, BTS Site ID 2100 / 700, btsIpId - Master ID) and links each raw LWE identifier to
         its master site, so LWE rows of the raw daily CSV can be imported. Sites are never created; a site missing from the file keeps its mapping.
@@ -74,7 +74,7 @@ export function LweMappingPanel({ onCommitted }: { onCommitted: () => void }) {
         </Alert>
       )}
       {batch && r && (
-        <section aria-label="LWE mapping preview" className="space-y-4 rounded-xl border p-4">
+        <section aria-label="LWE mapping preview" className="space-y-3 rounded-xl border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">Preview #{batch.id}: {batch.file}{r.sheet ? ` · sheet “${r.sheet}”` : ''} · nothing has been written yet</h2>
             <a href={lweMappingIssuesUrl(batch.id)} className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline">

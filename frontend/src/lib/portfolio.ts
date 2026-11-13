@@ -207,8 +207,8 @@ export function buildExceptions(b: BreakdownResponse | null, alerts: DashboardAl
 }
 
 export interface PortfolioCounts {
-  /** Total sites of the circle (site status); null when the API does not give it. */
-  siteScope: number | null;
+  /** Distinct BSNL Site IDs in the full dashboard inventory for the circle. */
+  siteScope: number;
   onAir: number;
   omStart: number | null;
   /** Site Scope − O&M Start */
@@ -217,10 +217,10 @@ export interface PortfolioCounts {
   gapOnAir: number | null;
 }
 
-/** CIs and IEs named on the sites, and the average Site Scope per CI / IE (one decimal). */
+/** CIs and IEs named on the selected population, and its average sites per CI / IE (one decimal). */
 export interface TeamFigures {
-  ciCount: number | null;
-  ieCount: number | null;
+  ciCount: number;
+  ieCount: number;
   sitesPerCi: number | null;
   sitesPerIe: number | null;
 }
@@ -228,6 +228,7 @@ export interface TeamFigures {
 export interface CircleBreakdownRow extends PortfolioCounts, TeamFigures {
   circle: string;
   reportType: string;
+  omHeads: string[];
 }
 
 export interface CircleBreakdownGroup {
@@ -236,45 +237,39 @@ export interface CircleBreakdownGroup {
   subtotal: PortfolioCounts & TeamFigures;
 }
 
-const counts = (siteScope: number | null, onAir: number, omStart: number | null): PortfolioCounts => ({
+const counts = (siteScope: number, onAir: number, omStart: number | null): PortfolioCounts => ({
   siteScope, onAir, omStart,
-  gapTotal: omStart == null || siteScope == null ? null : siteScope - omStart,
+  gapTotal: omStart == null ? null : siteScope - omStart,
   gapOnAir: omStart == null ? null : onAir - omStart,
 });
 
-const perPerson = (sites: number | null, people: number | null | undefined) => (people && sites != null ? Math.round((10 * sites) / people) / 10 : null);
-const teamFigures = (t: { ci_count?: number; ie_count?: number } | undefined, siteScope: number | null): TeamFigures => ({
-  ciCount: t?.ci_count ?? null, ieCount: t?.ie_count ?? null,
-  sitesPerCi: perPerson(siteScope, t?.ci_count), sitesPerIe: perPerson(siteScope, t?.ie_count),
+const perPerson = (sites: number, people: number) => (people ? Math.round((10 * sites) / people) / 10 : null);
+const teamFigures = (t: BreakdownResponse['team_totals'][string], sites: number): TeamFigures => ({
+  ciCount: t.ci_count, ieCount: t.ie_count,
+  sitesPerCi: perPerson(sites, t.ci_count), sitesPerIe: perPerson(sites, t.ie_count),
 });
 
 /**
- * Circle-wise site STATUS counts: Site Scope / On Air / O&M Start per circle, from the On-Air and O&M Start breakdowns
- * (the two populations' site counts; never a performance figure). Site Scope is the circle's ``sites_total`` when the
- * API gives it (there is no "all sites" population to ask for), else "—". Subtotals and the total add the detail rows
- * once and derive their gaps from the summed counts. ``omStart`` is null without O&M Start dates. CI / IE counts come
- * from the On-Air breakdown; averages are Site Scope per person.
+ * Site Scope is the full dashboard inventory; status counts are from both population breakdowns. Team counts and ratios
+ * follow the selected global population so their site numerator and distinct-person denominator use the same sites.
  */
-export function circleBreakdown(onAir: BreakdownResponse, omStart: BreakdownResponse | null) {
+export function circleBreakdown(onAir: BreakdownResponse, omStart: BreakdownResponse | null, selected: BreakdownResponse = onAir) {
   const key = (c: { report_type: string; circle: string }) => `${c.report_type}|${c.circle}`;
   const inScope = (b: BreakdownResponse | null) => new Map((b?.circles ?? []).map((c) => [key(c), c.sites_in_scope]));
   const onAirBy = inScope(onAir);
   const omBy = omStart ? inScope(omStart) : null;
-  const circles = new Map<string, BreakdownResponse['circles'][number]>();
-  for (const c of [...onAir.circles, ...(omStart?.circles ?? [])]) {
-    const existing = circles.get(key(c));
-    if (!existing || (existing.sites_total == null && c.sites_total != null)) circles.set(key(c), c);
-  }
-  const rows: CircleBreakdownRow[] = [...circles.values()].map((c) => {
-    const siteScope = c.sites_total ?? null;
+  const rows: CircleBreakdownRow[] = selected.circles.map((c) => {
+    const siteScope = c.sites_total;
+    const selectedSites = c.sites_in_scope;
     return {
       circle: c.circle, reportType: c.report_type,
+      omHeads: c.om_heads ?? [],
       ...counts(siteScope, onAirBy.get(key(c)) ?? 0, omBy ? omBy.get(key(c)) ?? 0 : null),
-      ...teamFigures(onAir.circles.find((x) => key(x) === key(c)), siteScope),
+      ...teamFigures(c, selectedSites),
     };
   });
   const sum = (items: PortfolioCounts[]) => counts(
-    items.every((r) => r.siteScope != null) ? items.reduce((n, r) => n + (r.siteScope ?? 0), 0) : null,
+    items.reduce((n, r) => n + r.siteScope, 0),
     items.reduce((n, r) => n + r.onAir, 0),
     omBy ? items.reduce((n, r) => n + (r.omStart ?? 0), 0) : null,
   );
@@ -284,11 +279,15 @@ export function circleBreakdown(onAir: BreakdownResponse, omStart: BreakdownResp
     .map((reportType) => {
       const groupRows = rows.filter((r) => r.reportType === reportType).sort((a, b) => a.circle.localeCompare(b.circle));
       const subtotal = sum(groupRows);
-      // People are counted once per network (a CI on two circles is one CI), so these are not sums of the rows.
-      return { reportType, rows: groupRows, subtotal: { ...subtotal, ...teamFigures(onAir.team_totals?.[reportType], subtotal.siteScope) } };
+      const selectedSites = selected.circles
+        .filter((circle) => circle.report_type === reportType)
+        .reduce((n, circle) => n + circle.sites_in_scope, 0);
+      // People are counted once per network (a CI on two circles is one CI), so use API totals rather than summing rows.
+      return { reportType, rows: groupRows, subtotal: { ...subtotal, ...teamFigures(selected.team_totals[reportType], selectedSites) } };
     });
   const total = sum(rows);
-  return { groups, total: { ...total, ...teamFigures(onAir.team_totals?.all, total.siteScope) } };
+  const selectedSites = selected.circles.reduce((n, circle) => n + circle.sites_in_scope, 0);
+  return { groups, total: { ...total, ...teamFigures(selected.team_totals.all, selectedSites) } };
 }
 
 /**

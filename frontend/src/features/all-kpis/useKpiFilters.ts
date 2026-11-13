@@ -5,7 +5,8 @@ import { usePopulation } from '../../context/population';
 /** Filters of the All KPI's page, kept in the URL so tabs, drill-down and reloads keep them. Multi-values are comma-separated. */
 export const MULTI_KEYS = ['project', 'circle', 'ci', 'ie', 'site', 'bucket', 'final_bucket'] as const;
 export type MultiKey = (typeof MULTI_KEYS)[number];
-export const TABS = ['overview', 'availability', 'outage', 'rca', 'drilldown', 'completeness'] as const;
+/** The views of the KPI menu (the `tab` URL parameter; an unknown or removed view, e.g. `completeness`, opens the overview). */
+export const TABS = ['overview', 'trends', 'availability', 'outage', 'usd', 'nsla', 'below_98_5', 'below_60', 'ranking', 'rca', 'drilldown'] as const;
 export type KpiTab = (typeof TABS)[number];
 
 const split = (v: string | null) => (v ? v.split(',').filter(Boolean) : []);

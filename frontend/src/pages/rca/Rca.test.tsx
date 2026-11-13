@@ -35,7 +35,7 @@ const REC: RcaRecord = {
 const PAGE: RcaPage = { count: 2, page: 1, page_size: 25, pages: 1, results: [REC, { ...REC, id: 2, site_id: 'LWEBH0063', project: 'LWE', project_raw: 'LWE', circle: 'BH', outage_minutes: 20.6, bucket_2: 'BSNL Media', bucket_2_unclassified: false, rca_text: 'Media Flacuatation' }] };
 const DETAIL: RcaRecordDetail = { ...REC, source_file: 'Book1_RCA_Rustam.xlsx', source_row: 7, batch: 1, created_by: null, created_at: '2026-10-26T09:05:00', workflow: null, comments: [], history: [], other_records: [] };
 const BREAKDOWN_LABELS = [
-  'IaaSP Power', 'IaaSP Others', 'IaaSP Battery', 'IaaSP OFC', 'BSNL OFC',
+  'IaasP Power', 'IaasP Others', 'IaasP Battery', 'IaasP OFC', 'BSNL OFC',
   'BSNL Media', 'Others', 'TCS', 'DMW', 'HFCL',
 ];
 const counts = (values: Record<string, number>, empty = false) =>

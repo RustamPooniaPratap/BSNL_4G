@@ -8,8 +8,8 @@ pages, the exports, All KPI's and Site Portfolio, so the same sites, dates and r
   CSV); monthly history: sitedata_monthlysiteperformance and the daily records of earlier months;
 - reporting month: the latest month whose 1st is complete (dataset.reporting_month); MTD: the continuous run of
   complete dates (portfolio.continuous);
-- On-Air and O&M Start: each site counts from its matrix effective date. The scope picks the variant of the dataset:
-  "on_air" and "om_start" leave out a site's values before its date (portfolio.VARIANTS); every other scope uses "all".
+- On-Air and O&M Start: each site counts from its matrix effective date. The requested population picks one of those two
+  variants (portfolio.VARIANTS); a missing scope uses the unrestricted base dataset for non-population consumers.
 
 The calculations are the shared dashboard.metrics functions. When the new layer has no data the page shows the error;
 nothing falls back to another source.
@@ -30,7 +30,11 @@ def load(variant: str = 'all') -> Dataset:
 
 
 def variant_of(scope: str | None) -> str:
-    return scope if scope in portfolio.VARIANTS else 'all'
+  if scope is None:
+    return 'all'
+  if scope not in portfolio.VARIANTS:
+    raise ValueError(f'Unsupported site population: {scope}')
+  return scope
 
 
 def dataset(pairs=None, scope: str | None = None) -> Dataset:

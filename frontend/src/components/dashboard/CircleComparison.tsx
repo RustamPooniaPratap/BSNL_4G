@@ -5,7 +5,7 @@ import { formatCompact, formatDate, formatMinutes, formatNumber, formatPct, form
 import type { BreakdownResponse } from '../../types';
 import { ChartCard } from './ChartCard';
 import { DataTable } from './DataTable';
-import { reportTypeColor } from './constants';
+import { DENSE_CARD, reportTypeColor } from './constants';
 
 interface CircleComparisonProps {
   breakdown: BreakdownResponse | null;
@@ -78,7 +78,7 @@ export function CircleComparison({ breakdown, loading, error }: CircleComparison
   const order = isOutage ? 'highest first' : 'lowest first';
 
   return (
-    <ChartCard
+    <ChartCard className={DENSE_CARD}
       title="Circle comparison"
       description={compare && comparison
         ? `${what} against the same days of ${comparison.label} (${prevLabel}), ${order}.`
@@ -97,7 +97,7 @@ export function CircleComparison({ breakdown, loading, error }: CircleComparison
       empty={!rows.length}
     >
       {!compare && comparison && (
-        <p className="mb-3 flex items-start gap-1.5 rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+        <p className="mb-2 flex items-start gap-1.5 rounded-md bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
           <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
           The comparison with the same days of {comparison.label} appears once its daily outage values are available in the data source.
         </p>
@@ -107,7 +107,7 @@ export function CircleComparison({ breakdown, loading, error }: CircleComparison
         <span className="inline-flex items-center gap-1"><span className="size-2.5 rounded-full bg-foreground" />{mtdLabel}</span>
       </div>
       <div role="img" aria-label={`Dot chart of ${what} by circle${compare ? ` against the same days of ${comparison?.label}` : ''}`}>
-        <div className="grid grid-cols-[4.5rem_1fr_5.5rem] items-center gap-x-2 text-[10px] text-muted-foreground">
+        <div className="grid grid-cols-[5.75rem_1fr_5.5rem] items-center gap-x-2 text-[10px] text-muted-foreground">
           <span />
           <div className="relative h-4">
             {ticks.map((t) => <span key={t} className="absolute -translate-x-1/2" style={{ left: x(t) }}>{tick(t)}</span>)}
@@ -120,7 +120,7 @@ export function CircleComparison({ breakdown, loading, error }: CircleComparison
           // Better is up for uptime, down for outage.
           const better = r.change == null || r.change === 0 ? null : isOutage ? r.change < 0 : r.change > 0;
           return (
-            <div key={r.key} className="grid grid-cols-[4.5rem_1fr_5.5rem] items-center gap-x-2 py-0.5 hover:bg-muted/40" title={title}>
+            <div key={r.key} className="grid grid-cols-[5.75rem_1fr_5.5rem] items-center gap-x-2 py-0.5 hover:bg-muted/40" title={title}>
               <span className="truncate text-xs font-medium">{r.name}</span>
               <div className="relative h-5">
                 {ticks.map((t) => <span key={t} className="absolute inset-y-0 border-l border-dashed border-border" style={{ left: x(t) }} aria-hidden="true" />)}
@@ -168,7 +168,7 @@ function Segmented<T extends string>({ value, onChange, options, label }: { valu
     <div className="inline-flex rounded-lg border p-0.5" role="group" aria-label={label}>
       {options.map(([v, text]) => (
         <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}
-          className={cn('rounded-md px-2.5 py-1 text-xs font-medium', value === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+          className={cn('rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none', value === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
           {text}
         </button>
       ))}

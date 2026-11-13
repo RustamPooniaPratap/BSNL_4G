@@ -14,7 +14,7 @@ export function CircleRankings({ circle, period, link }: {
   circle: TopPerformerCircle; period: string; link: (group: TeamGroup, c: TopPerformerCircle, name: string) => string;
 }) {
   return (
-    <section className="grid items-start gap-4 lg:grid-cols-2" aria-label={`${circle.circle} ${projectLabel(circle.report_type)} rankings`}>
+    <section className="grid items-start gap-3 lg:grid-cols-2" aria-label={`${circle.circle} ${projectLabel(circle.report_type)} rankings`}>
       {(['ci', 'ie'] as TeamGroup[]).map((group) => (
         <RankingTable key={group} title={`${circle.circle} · ${projectLabel(circle.report_type)} — ${GROUP_LABELS[group]} ranking`}
           group={group} ranking={circle[group]} period={period} link={(name) => link(group, circle, name)} />

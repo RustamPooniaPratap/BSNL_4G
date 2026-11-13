@@ -56,9 +56,9 @@ export function RcaSummaryPage() {
   const { scope, sitesLabel } = usePopulation();
   const summary = useApiQuery(`rca-summary-${scope}-${query}`, (signal) => fetchRcaSummary(query, scope, signal));
   if (!view) return <Navigate to={{ pathname: '/rca/summary', search: location.search }} replace />;  // unknown subpage: the Overview
-  const onFilter = (key: FilterKey, value: string) => setParams((cur) => {
+  const onFilter = (key: FilterKey, value: string, extra: Partial<Record<FilterKey, string>> = {}) => setParams((cur) => {
     const next = new URLSearchParams(cur);
-    if (value) next.set(key, value); else next.delete(key);
+    for (const [k, v] of Object.entries({ [key]: value, ...extra })) { if (v) next.set(k, v); else next.delete(k); }
     if (key === 'project') next.delete('circle');
     return next;
   }, { replace: true });
@@ -71,7 +71,7 @@ export function RcaSummaryPage() {
   const s = summary.data;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title={view.path === '/rca/summary' ? 'RCA Summary' : `RCA Summary · ${view.label}`}
         subtitle={options.data ? `${showingText(options.data, params)} · Population: ${sitesLabel} · ${rcaCoverageText(options.data.dates)}` : `Accepted RCA records · Population: ${sitesLabel}`} />
       <SummaryNav current={view} search={location.search} />
@@ -109,7 +109,7 @@ export function RcaSummaryPage() {
           {view.path === '/rca/summary/root-causes' && (
             <>
               {s.classification && <ClassificationStatus counts={s.classification} />}
-              <div className="grid gap-5 xl:grid-cols-2">
+              <div className="grid gap-4 xl:grid-cols-2">
                 <ClassificationCard title="RCA classification: Final Bucket" items={s.final_buckets} field="final_bucket" onSelect={openRegister} />
                 <ClassificationCard title="Secondary classification: Bucket - 2 (per Final Bucket)" items={s.bucket_2} field="bucket_2" onSelect={openRegister}
                   scopeNote={s.kpis.rca_not_applicable.records ? `RCA-applicable records only: the ${formatNumber(s.kpis.rca_not_applicable.records)} ${s.kpis.rca_not_applicable.label} records are not included.` : undefined} />
@@ -189,7 +189,7 @@ function TrendsCard({ dates }: { dates: RcaSummary['dates'] }) {
     key, label: monthLabel(key), value: m.records, display: formatNumber(m.records), note: `${m.dates} reporting date${m.dates === 1 ? '' : 's'}`,
   }));
   return (
-    <div className="grid gap-5 xl:grid-cols-2">
+    <div className="grid gap-4 xl:grid-cols-2">
       <ChartCard title="Daily: RCA records per reporting date" description="Oldest first. Only dates with RCA records are listed; a missing date is not shown as zero." empty={!dates.length}>
         <RankedBars rows={daily} label="RCA records per reporting date" />
         <DataTable caption="RCA records per reporting date" columns={['Reporting date', 'Records']} rows={dates.map((d) => [formatDate(d.date), formatNumber(d.records)])} />

@@ -61,7 +61,7 @@ const subBucketOptions = (options: RcaOptions, finalBucket: string) => {
 
 /** The RCA filters, in the same compact filter card and label style as the dashboard pages. */
 export function RcaFilterBar({ options, params, onChange, onReset, search = false, statusFilter = false, population = false, actions, lead }: {
-  options: RcaOptions; params: URLSearchParams; onChange: (key: FilterKey, value: string) => void; onReset: () => void;
+  options: RcaOptions; params: URLSearchParams; onChange: (key: FilterKey, value: string, extra?: Partial<Record<FilterKey, string>>) => void; onReset: () => void;
   search?: boolean; statusFilter?: boolean; actions?: ReactNode;
   /** The global population selector (RCA Summary: its site metrics), next to the Site Scope record filter. */
   population?: boolean;
@@ -73,10 +73,17 @@ export function RcaFilterBar({ options, params, onChange, onReset, search = fals
   const circles = options.circles.filter((c) => !project || c.project === project);
   const select = (key: FilterKey, label: string, all: string, items: { value: string; label: string }[], width = 'w-40') => (
     <Field id={`rca-${key}`} label={label} className={width}>
-      <SelectField id={`rca-${key}`} value={get(key) || ALL} placeholder={all} onChange={(v) => onChange(key, v === ALL ? '' : v)}
+      <SelectField id={`rca-${key}`} value={get(key) || ALL} placeholder={all} onChange={(v) => change(key, v === ALL ? '' : v)}
         options={[{ value: ALL, label: all }, ...items]} />
     </Field>
   );
+  // A new Final Bucket clears a chosen Bucket - 2 that is not one of its approved Sub Buckets (one URL update).
+  const change = (key: FilterKey, value: string) => {
+    const sub = get('bucket_2');
+    if (key === 'final_bucket' && sub && !subBucketOptions(options, value).some((o) => o.value === sub)) {
+      onChange(key, value, { bucket_2: '' });
+    } else onChange(key, value);
+  };
   const dates = options.dates;
   const active = FILTER_KEYS.some((k) => get(k));
   return (

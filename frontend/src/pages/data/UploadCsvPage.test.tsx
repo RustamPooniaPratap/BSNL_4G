@@ -59,7 +59,7 @@ beforeEach(() => {
   m.fetchRawUploadRows.mockResolvedValue(ROWS);
 });
 
-describe('Upload CSV', () => {
+describe('Uptime Data Upload', () => {
   it('validates on the server, shows the preview and imports only after explicit confirmation', async () => {
     const user = userEvent.setup();
     const refresh = vi.fn();

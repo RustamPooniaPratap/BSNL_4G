@@ -165,7 +165,12 @@ def filtered(params, pairs=None) -> QuerySet:
 
         if value:
 
-            qs = qs.filter(**{field: '' if value == UNCLASSIFIED else value})
+            if value == UNCLASSIFIED:
+                qs = qs.filter(**{field: ''})
+            elif name == 'bucket_2':
+                qs = qs.filter(sub_bucket_q(value))
+            else:
+                qs = qs.filter(**{f'{field}__in': equivalent_keys(field, value)})
 
     category = params.get('category')
 
@@ -213,6 +218,40 @@ def filtered(params, pairs=None) -> QuerySet:
 
 
 
+
+
+def equivalent_keys(field: str, value: str) -> list[str]:
+    """Stored keys of ``field`` that are the same bucket as ``value`` (case and whitespace ignored, apps.rca.taxonomy):
+    a filter on the approved "NEC Mini link" also selects records uploaded as "NEC minilink"; the stored values are not
+    changed."""
+    wanted = taxonomy.match_key(value)
+    keys = [k for k in RcaRecord.objects.order_by().values_list(field, flat=True).distinct() if k and taxonomy.match_key(k) == wanted]
+    return keys or [value]
+
+
+def sub_bucket_q(value: str) -> Q:
+    """Records of a Sub Bucket: its spellings (case and whitespace ignored) plus its approved aliases under their own Final
+    Bucket only (taxonomy.ALIASES: "Fluctuation" also selects BSNL Media / HFCL records uploaded as "Flactuation")."""
+    q = Q(bucket_2_key__in=equivalent_keys('bucket_2_key', value))
+    for final, alias in taxonomy.alias_pairs_of_sub_bucket(value):
+        q |= Q(bucket_2_key__in=equivalent_keys('bucket_2_key', alias), final_bucket_key__in=equivalent_keys('final_bucket_key', final))
+    return q
+
+
+def _merge(items: list[dict], group) -> list[dict]:
+    """Merge rows that are the same approved bucket under different spellings or spacing (one row, the approved label,
+    every uploaded spelling kept in "variants")."""
+    out: dict = {}
+    for i in items:
+        key = group(i)
+        if key is None or key not in out:
+            out[key if key is not None else id(i)] = i
+            continue
+        kept = out[key]
+        kept['records'] += i['records']
+        kept['outage_minutes'] = _round((kept['outage_minutes'] or 0) + (i['outage_minutes'] or 0))
+        kept['variants'] = sorted(set(kept['variants']) | set(i['variants']))
+    return list(out.values())
 
 
 def _labels(qs: QuerySet, key: str, label: str) -> dict[str, str]:
@@ -507,6 +546,8 @@ def summary(params, pairs=None) -> dict:
 
                 i['label'] = taxonomy.approved_final(i['label'])
 
+        items = _merge(items, lambda i: ('final', i['label']) if i['approved'] else None)
+
         # Technical causes first (ranked), then RCA-not-applicable groups, then unclassified.
 
         return sorted(items, key=lambda i: (i['unclassified'], i['rca_not_applicable'], -i['records'], i['label'].casefold()))
@@ -550,6 +591,8 @@ def summary(params, pairs=None) -> dict:
                           'filter': {'final_bucket': fk or UNCLASSIFIED, 'bucket_2': ck or UNCLASSIFIED},
 
                           'records': r['records'], 'outage_minutes': _round(r['minutes']), 'variants': variants.get(ck, []) if ck else []})
+
+        items = _merge(items, lambda i: ('pair', i['final_bucket'], i['bucket_2']) if i['approved'] else None)
 
         return sorted(items, key=lambda i: (i['unclassified'], -i['records'], i['label'].casefold()))
 

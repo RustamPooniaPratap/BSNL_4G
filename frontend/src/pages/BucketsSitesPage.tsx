@@ -112,7 +112,7 @@ export function BucketsSitesPage() {
   }
   if (!options.data || !filters) {
     return (
-      <div className="space-y-4" aria-busy="true" aria-label="Loading uptime buckets">
+      <div className="space-y-3" aria-busy="true" aria-label="Loading uptime buckets">
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-72 w-full" />
       </div>
@@ -124,7 +124,7 @@ export function BucketsSitesPage() {
   const outsideScope = team && ((filters.reportType && filters.reportType !== team.project) || (filters.circle && filters.circle !== team.circle));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <FilterBar options={options.data} filters={filters} onChange={setFilters} onReset={reset} canReset={!isDefault || bucket !== ''}
         showTrendRange={false} title="Uptime buckets & site details"
         description={<>{options.data.month.label} reporting month · {summary}</>} />

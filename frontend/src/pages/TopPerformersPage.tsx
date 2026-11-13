@@ -109,7 +109,7 @@ export function TopPerformersPage() {
   const insufficient = circles.filter((c) => !c.ci.top.length || !c.ie.top.length).length;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <FilterBar options={options.data} filters={filters} onChange={setFilters}
         canReset={!isDefault || !!month} onReset={reset} showTrendRange={false} showDate={false}
         title="Circle-wise Top Performers"

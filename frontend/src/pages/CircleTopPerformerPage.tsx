@@ -167,7 +167,7 @@ export function CircleTopPerformerPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Set top app navigation bar heading */}
       <PageHeading title={circleName} subtitle={subtitle} />
 
@@ -241,7 +241,7 @@ export function CircleTopPerformerPage() {
       ) : topResult.loading && !topData ? (
         <Skeleton className="h-96 w-full" aria-label="Loading circle performance" />
       ) : matchingCircles.length > 0 ? (
-        <div className="space-y-6">
+        <div className="space-y-4">
           {matchingCircles.map((c) => (
             <CircleRankings
               key={`${c.report_type}|${c.circle}`}

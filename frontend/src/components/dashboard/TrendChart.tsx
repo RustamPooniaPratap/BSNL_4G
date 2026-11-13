@@ -10,7 +10,7 @@ import type { CircleSeriesInfo, MonthlyResponse, TrendResponse } from '../../typ
 import { UptimeHeatmap, type HeatmapColumn } from './UptimeHeatmap';
 import { ChartCard } from './ChartCard';
 import { DataTable } from './DataTable';
-import { AXIS_TICK, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor, type UptimeChartView } from './constants';
+import { AXIS_TICK, DENSE_CARD, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor, type UptimeChartView } from './constants';
 import { PeriodStatusBadge } from '../reporting/ReportingStatus';
 import { statusText } from '../../lib/reportingStatus';
 
@@ -57,6 +57,8 @@ interface TrendChartProps {
   chartView?: UptimeChartView;
   /** Controls shown above the chart (view switch, circle picker). */
   controls?: React.ReactNode;
+  /** Chart view controls shown in the card header beside the period switch. */
+  viewControls?: React.ReactNode;
   /** Every circle in the data (heatmap rows). */
   allCircles?: CircleSeriesInfo[];
   /** Heatmap row clicked: show that circle's trend. */
@@ -78,6 +80,9 @@ export function TrendChart(props: TrendChartProps) {
   const style = styleFor(circles);
 
   const switcher = <TrendViewSwitch view={view} onChange={setView} />;
+  // Header controls: the chart view switch (when the page gives one) and the period switch, on one row.
+  const actions = props.viewControls
+    ? <div className="flex flex-wrap items-center justify-end gap-2">{props.viewControls}{switcher}</div> : switcher;
 
   if (chartView === 'heatmap') {
     const isMonthly = view === 'monthly';
@@ -88,10 +93,10 @@ export function TrendChart(props: TrendChartProps) {
         : selectDays(props.trend?.series ?? [], dayList).filter((p) => p.reported).map((p) => ({ key: p.date, label: p.date.slice(8), title: formatDate(p.date), values: p.by_circle }));
     const rows = props.allCircles ?? [];
     return (
-      <ChartCard
+      <ChartCard className={DENSE_CARD}
         title="Uptime trend"
         description={`${scopeLabel}, every circle by ${isMonthly ? 'month (* = month to date)' : view === 'weekly' ? 'workbook week' : 'reporting date'}: uptime %, coloured by the workbook buckets. Hatched = no data. Select a circle to see its trend.`}
-        action={switcher}
+        action={actions}
         loading={isMonthly ? props.monthlyLoading : props.loading}
         error={isMonthly ? props.monthlyError : props.error}
         empty={!columns.length || !rows.length}
@@ -107,10 +112,10 @@ export function TrendChart(props: TrendChartProps) {
   if (view === 'monthly') {
     const months = monthly?.months ?? [];
     return (
-      <ChartCard
+      <ChartCard className={DENSE_CARD}
         title="Uptime trend"
         description={`${scopeLabel}, by ${props.monthsFiltered ? 'selected' : ''} month. Recomputed from each site's monthly outage with today's On-Air / O&M flags; months reported earlier in the workbook's Summ sheet can differ slightly.`}
-        action={switcher}
+        action={actions}
         loading={props.monthlyLoading}
         error={props.monthlyError}
         empty={!months.some((m) => m.uptime_pct != null)}
@@ -125,10 +130,10 @@ export function TrendChart(props: TrendChartProps) {
   if (view === 'weekly') {
     const weeks = selectWeeks(trend?.weeks ?? [], weekList);
     return (
-      <ChartCard
+      <ChartCard className={DENSE_CARD}
         title="Uptime trend"
         description={`${scopeLabel}, ${weekList.length ? `weeks ${weekList.join(', ')}` : 'by workbook week'} of ${props.monthLabel} (days 1–7, 8–14, 15–21, 22–end). Daily values exist only for the reporting month, so earlier months' weeks cannot be compared.`}
-        action={switcher}
+        action={actions}
         loading={props.loading}
         error={props.error}
         empty={!weeks.some((w) => w.uptime_pct != null)}
@@ -143,7 +148,7 @@ export function TrendChart(props: TrendChartProps) {
   const reported = series.filter((p) => p.reported);
   const missing = series.length - reported.length;
   return (
-    <ChartCard
+    <ChartCard className={DENSE_CARD}
       title="Uptime trend"
       description={
         <>
@@ -153,7 +158,7 @@ export function TrendChart(props: TrendChartProps) {
           {missing > 0 && ` ${missing} day${missing > 1 ? 's' : ''} not reported (shown as gaps).`}
         </>
       }
-      action={switcher}
+      action={actions}
       loading={props.loading}
       error={props.error}
       empty={!reported.length}
@@ -213,7 +218,7 @@ function DailyView({ trend, picked, style }: { trend: TrendResponse; picked: boo
 
   return (
     <>
-      <div className="h-80" role="img" aria-label="Line chart of daily uptime">
+      <div className="h-[clamp(240px,34vh,304px)]" role="img" aria-label="Line chart of daily uptime">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -8 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
@@ -264,7 +269,7 @@ function WeeklyView({ trend, weeks, style }: { trend: TrendResponse; weeks: Tren
 
   return (
     <>
-      <div className="h-72" role="img" aria-label="Bar chart comparing weekly uptime">
+      <div className="h-[clamp(224px,30vh,280px)]" role="img" aria-label="Bar chart comparing weekly uptime">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -8 }} barGap={2}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
@@ -284,7 +289,7 @@ function WeeklyView({ trend, weeks, style }: { trend: TrendResponse; weeks: Tren
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Weekly uptime and change">
+      <dl className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Weekly uptime and change">
         {weeks.map((w) => (
           <div key={w.label} className="rounded-lg bg-muted/60 px-3 py-2">
             <dt className="text-[11px] text-muted-foreground">{w.label} · {formatShortDate(w.start)}–{formatShortDate(w.end)}</dt>
@@ -326,7 +331,7 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
 
   return (
     <>
-      <dl className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <dl className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
         <div className="rounded-lg bg-muted/60 px-3 py-2">
           <dt className="text-[11px] text-muted-foreground">
             Overall · {firstLabel} to {formatDate(overall.end)} · {overall.months} months
@@ -349,7 +354,7 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
         )}
         <BestWorst months={months} />
       </dl>
-      <div className="h-72" role="img" aria-label="Line chart of monthly uptime">
+      <div className="h-[clamp(224px,30vh,280px)]" role="img" aria-label="Line chart of monthly uptime">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -8 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />

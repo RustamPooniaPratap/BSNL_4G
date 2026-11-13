@@ -45,7 +45,7 @@ export function AlertHistoryPage() {
   const set = (k: keyof Filters, v: string) => { setFilters((f) => ({ ...f, [k]: v })); setPage(1); };
   const h = history.data;
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="Email History" subtitle="Every email sent by an automation, a test or a resend, with the mail server's response." />
       {h && <WorkerStatus worker={h.worker} />}
       <Card className="gap-3 px-4 py-3">
@@ -142,7 +142,7 @@ function MessageSheet({ id, onClose, onChanged }: { id: number; onClose: () => v
           <SheetTitle>{m?.subject ?? 'Email'}</SheetTitle>
           <SheetDescription>{m ? `${m.automation} · ${m.trigger} · created ${formatDateTime(m.created_at)}` : 'Loading…'}</SheetDescription>
         </SheetHeader>
-        <div className="space-y-4 px-4 pb-6">
+        <div className="space-y-3 px-4 pb-6">
           {query.error && <p role="alert" className="text-sm text-destructive">{query.error.message}</p>}
           {!m && !query.error && <Skeleton className="h-64" />}
           {m && (

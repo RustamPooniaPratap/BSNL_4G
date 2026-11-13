@@ -80,7 +80,7 @@ export function OmOverviewPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Top Heading */}
       <PageHeading title="Team Performance Hierarchy" subtitle={subtitle} />
 
@@ -117,7 +117,7 @@ export function OmOverviewPage() {
 
       {/* Circle-wise Performance Table Card */}
       <Card className="rounded-xl border bg-card shadow-xs">
-        <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <Building2 className="size-4 text-primary" aria-hidden="true" />

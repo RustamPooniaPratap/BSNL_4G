@@ -125,8 +125,10 @@ class RecordsApiTests(DashboardApiTestCase):
         self.assertEqual([r['site_id'] for r in data['records']], ['UVRJ001', 'UVMP002', 'UVMP001'])
         last = self.get('dashboard-records', page_size=3, page=2)
         self.assertEqual(len(last['records']), 2)
+        self.assertEqual(self.get('dashboard-records', scope='on_air', page_size=100)['count'], 5)
         self.assertEqual(self.get('dashboard-records', scope='om_start', page_size=100)['count'], 5)
-        self.get('dashboard-records', 400, scope='all')  # "all" is no longer a population
+        self.get('dashboard-records', 400, scope='all')  # Only on_air and om_start are supported populations.
+        self.get('dashboard-records', 400, scope='unsupported')
 
     def test_search_and_bucket_filter(self):
         self.assertEqual(self.get('dashboard-records', search='bravo')['count'], 1)

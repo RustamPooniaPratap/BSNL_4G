@@ -4,10 +4,9 @@ The management landing page, listed first in the sidebar.
 
 **Landing:** opening the app at `/` with no filters lands here (`landsOnPortfolio` in `main.tsx`). Links with filters (`/?bucket=lt_60`, `/?report_type=LWE`) and the sidebar's Overview link still open the Overview, so no deep link changed.
 
-**Sources:** existing endpoints only, with no backend change. No figure is recalculated in the browser.
-- `summary/` for the On-Air, O&M Start and all-sites scopes, and for the previous reporting date;
-- `summary/` (all sites) for 4G and LWE separately, for the split by network;
-- `breakdowns/` and `trends/`.
+**Sources:** existing endpoints only. The shared `circleBreakdown` mapper derives the displayed gaps, selected-population sites-per-person ratios, subtotals and totals from the API values; it does not recalculate uptime or other performance KPIs.
+- `summary/` for the On-Air and O&M Start performance populations and the full-inventory status counts included in each response;
+- `breakdowns/` for the On-Air and O&M Start circle counts, and `trends/` for performance trends.
 
 **Filters:** one compact bar holds the period controls, **Project** (the report type: 4G Saturation or LWE) and **Circle**. Notes on unavailable periods appear in one line under the bar.
 
@@ -37,7 +36,7 @@ One card holds the title ("Site Portfolio · Summary (KPIs)" with the filters an
 
 | Section | Cards |
 |---|---|
-| Site portfolio | **Total sites** (all-sites scope, split 4G · LWE) · **On-Air vs O&M Start**: On-Air, O&M Start (`O&M Start - <month>` = Yes) and Difference = On-Air − O&M Start · **Site Conversion Progress**: **Sites Converted** (On-Air = Yes and O&M Start = Yes on the same site) with its share of all sites, then the follow-up groups *On-Air achieved; O&M Start outstanding or unrecorded* and *On-Air status outstanding or unrecorded* |
+| Site portfolio | **Total sites** (full dashboard-scope Matrix inventory, independent of the selected population, split 4G · LWE) · **On-Air vs O&M Start**: On-Air, O&M Start (`O&M Start - <month>` = Yes) and Difference = On-Air − O&M Start · **Site Conversion Progress**: **Sites Converted** (On-Air = Yes and O&M Start = Yes on the same site) with its share of all sites, then the follow-up groups *On-Air achieved; O&M Start outstanding or unrecorded* and *On-Air status outstanding or unrecorded* |
 | Uptime buckets (MTD) | Sites at 98.5% or above · Sites below 60% · **Uptime bucket mix** split card: all five buckets for On-Air sites with a value |
 
 - **Card anatomy:** every card has a title with its definition (ⓘ), an icon tile, the value with "of N" where there is a denominator, a context line and a "View … →" link.
@@ -98,18 +97,22 @@ Directly under the KPI cards. Its layout follows the "first page" sheet (`BSNL 4
 | Column | Source |
 |---|---|
 | Circle, Client | Master data; one row per circle and report type (MP and OD appear in both networks) |
-| Site Scope / On Air / O&M Start | `breakdowns/` with scope `all` / `on_air` / `om_start` (`sites_in_scope` per circle) |
+| Site Scope / On Air / O&M Start | `breakdowns/` returns distinct full dashboard-scope BSNL Site IDs per circle and technology as `sites_total`, independently of population. `sites_in_scope` is the count for the selected On-Air or O&M Start population; the page combines the two population responses for the status columns. |
 | Gap against Total Sites | Site Scope − O&M Start |
 | Gap against On Air Sites | On Air − O&M Start |
-| CIs, IEs | `breakdowns/` (scope `all`): distinct names in the CI Name / IE Name columns per circle (case and spacing ignored; blank, "-" and "0" are unassigned). Subtotals and the total use `team_totals`, which count a person named in several circles once, so they are not sums of the rows |
-| Sites per CI / IE | Site Scope ÷ CIs / IEs, one decimal |
-| O&M Head, Remarks | Not in the Master workbook. Shown as "—" and editable on the page, held in browser memory only |
+| CIs, IEs | `breakdowns/` for the selected global population: distinct names in the CI Name / IE Name columns per circle (case and spacing ignored; blank, "-" and "0" are unassigned). Subtotals and the total use `team_totals`, which count a person named in several circles once, so they are not sums of the rows |
+| Sites per CI / IE | Selected-population `sites_in_scope` ÷ distinct CIs / IEs, one decimal; null when the count is zero |
+| O&M Head, Remarks | O&M Head comes from active O&M Head role assignments in Users & Roles for the project/circle. Remarks are editable page notes held in browser memory only |
 
 - **Subtotals and the total** add the circle rows once, and their gaps come from the summed counts (`circleBreakdown` in `lib/portfolio.ts`).
+- **Population filter:** On-Air and O&M Start status columns remain side by side. CI/IE counts and sites-per-person ratios follow the selected global population; Site Scope remains the complete dashboard-scope inventory.
+- **Inventory identity:** the Consolidation Matrix is authoritative. Distinct BSNL Site IDs count once; different IDs count separately even when they refer to the same physical location. Outside-dashboard records are excluded.
 - **Circles** keep the workbook's codes (RJ, BH, JH, MH, TL), where the sheet writes RAJ, BR, JKD, MAH, TGN.
 - **Filters:** report type and circle apply. The counts are current flags, not daily figures, so the reporting date does not change them.
 
-**Reconciliation with the reference sheet** (active workbook, 22 Oct 15:50 upload). Every gap matches its own counts; the differences come from the counts themselves:
+**Current inventory reconciliation** (read-only database snapshot, latest reporting date 10 Nov 2026): 6,724 distinct dashboard-scope Site IDs across Circle + Technology rows, matching the overall total. The 40 outside-dashboard Site IDs are excluded. This is a dynamically derived snapshot, not a fixed expected count.
+
+**Historical reconciliation with the reference sheet** (active workbook, 22 Oct 15:50 upload). Every gap matches its own counts; the differences come from the counts themselves:
 
 | Row | Dashboard (Scope / On Air / O&M) | Reference | Difference |
 |---|---|---|---|

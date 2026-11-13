@@ -5,6 +5,9 @@ import { formatPct } from '../../lib/format';
 import { circleLabel, shortType } from '../../lib/circleSeries';
 import type { CircleSeriesInfo } from '../../types';
 import { BUCKET_COLORS, BUCKET_LABELS, BUCKET_ORDER, uptimeColor } from './constants';
+
+/** Cell text with readable contrast: white on the dark red / green buckets, near-black on yellow, lime and orange. */
+const cellText = (pct: number) => (pct >= 98.5 || pct < 60 ? 'text-white' : 'text-slate-950');
 import { DataTable } from './DataTable';
 
 export interface HeatmapColumn {
@@ -32,7 +35,7 @@ export function UptimeHeatmap({ circles, columns, onSelectCircle, caption }: {
         ))}
         <span className="inline-flex items-center gap-1"><span className="size-2.5 rounded-sm border" style={{ background: NO_DATA }} aria-hidden="true" />No data</span>
       </div>
-      <div className="overflow-x-auto rounded-md border" role="region" aria-label="Uptime heatmap" tabIndex={0}>
+      <div className="overflow-x-auto rounded-md border focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" role="region" aria-label="Uptime heatmap" tabIndex={0}>
         <table className="border-separate border-spacing-0.5 text-[10px] tabular-nums">
           <caption className="sr-only">{caption}</caption>
           <thead>
@@ -54,17 +57,17 @@ export function UptimeHeatmap({ circles, columns, onSelectCircle, caption }: {
                     <td colSpan={columns.length + 1} className="p-0"><div className="h-px bg-[#8b8c8e]" /></td>
                   </tr>
                 )}
-                <tr className={cn(onSelectCircle && 'group cursor-pointer')} onClick={() => onSelectCircle?.(c.key)}
+                <tr className={cn(onSelectCircle && 'group cursor-pointer focus-visible:outline-none')} onClick={() => onSelectCircle?.(c.key)}
                   tabIndex={onSelectCircle ? 0 : undefined} aria-label={onSelectCircle ? `${circleLabel(c.key)}: open its trend` : undefined}
                   onKeyDown={(e) => { if (onSelectCircle && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelectCircle(c.key); } }}>
-                  <th scope="row" className="sticky left-0 z-10 bg-card px-2 py-0.5 text-left text-[11px] font-medium whitespace-nowrap group-hover:text-primary">
-                    <span className="inline-flex items-center gap-1">{circleLabel(c.key)}{onSelectCircle && <ChevronRight className="size-3 opacity-0 group-hover:opacity-100" aria-hidden="true" />}</span>
+                  <th scope="row" className="sticky left-0 z-10 rounded-sm bg-card px-2 py-0.5 text-left text-[11px] font-medium whitespace-nowrap group-hover:text-primary group-focus-visible:text-primary group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-inset">
+                    <span className="inline-flex items-center gap-1">{circleLabel(c.key)}{onSelectCircle && <ChevronRight className="size-3 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" />}</span>
                   </th>
                   {columns.map((col) => {
                     const v = col.values?.[c.key] ?? null;
                     return (
                       <td key={col.key} title={`${circleLabel(c.key)} · ${col.title}: ${v == null ? 'no data' : formatPct(v)}`}
-                        className={cn('h-6 min-w-10 rounded-sm text-center', v == null ? 'text-muted-foreground' : 'font-medium text-white')}
+                        className={cn('h-6 min-w-10 rounded-sm text-center group-focus-visible:outline-2 group-focus-visible:outline-ring group-focus-visible:-outline-offset-1', v == null ? 'text-muted-foreground' : cn('font-medium', cellText(v)))}
                         style={{ background: v == null ? NO_DATA : uptimeColor(v) }}>
                         {v == null ? '' : v >= 99.95 ? '100' : v.toFixed(1)}
                       </td>

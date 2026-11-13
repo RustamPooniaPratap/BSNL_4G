@@ -35,12 +35,12 @@ export function DatabaseImportPage() {
   const history = useApiQuery(`new-layer-uploads|${tick}`, fetchNewLayerUploads);
   const refresh = () => { setTick((t) => t + 1); workbook.refresh(); };
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="Data Source"
         subtitle="Every dashboard page reads the reporting data (the data layer). Import the Uptime Master, Consolidation Matrix and LWE Band ID mapping here." />
       <DataLayerStatus />
       <ImportPanel onCommitted={refresh} />
-      <section aria-label="Reporting configuration" className="space-y-4">
+      <section aria-label="Reporting configuration" className="space-y-3">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase">Reporting configuration</h2>
         <ReportingUnitsCard />
         <CoverageThresholdCard />
@@ -71,7 +71,7 @@ function ImportPanel({ onCommitted }: { onCommitted: () => void }) {
           importer. Nothing is written until you confirm after the preview; records are never deleted, and importing the same file again adds nothing.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-3">
         <fieldset className="space-y-2" aria-label="Workbook type">
           <legend className="text-xs font-medium">Workbook type <span className="text-destructive">*</span></legend>
           <div className="flex flex-wrap gap-2">

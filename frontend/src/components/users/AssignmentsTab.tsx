@@ -58,7 +58,7 @@ export function AssignmentsTab() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {message && <Alert variant={message.ok ? 'default' : 'destructive'} role={message.ok ? 'status' : 'alert'}><AlertDescription>{message.text}</AlertDescription></Alert>}
       {users.data && roles.data && (
         <AssignForm users={candidates} roles={assignableRoles} initialUser={filterUser} onSaved={reload} onError={(text) => setMessage({ ok: false, text })} />
@@ -176,7 +176,7 @@ function AssignForm({ users, roles, initialUser, onSaved, onError }: {
             </Field>
             <fieldset className="md:col-span-3">
               <legend className="mb-1 text-xs font-medium">Access scope</legend>
-              <div className="flex flex-wrap gap-4 text-sm">
+              <div className="flex flex-wrap gap-3 text-sm">
                 {(['circles', 'project'] as const).map((s) => (
                   <label key={s} className="flex items-center gap-1.5">
                     <input type="radio" name="as-scope" checked={f.scope === s} onChange={() => setF((x) => ({ ...x, scope: s }))} />

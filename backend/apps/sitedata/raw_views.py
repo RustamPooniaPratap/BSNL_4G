@@ -1,4 +1,4 @@
-"""Raw daily CNMC CSV upload API (Data Entry -> Upload CSV), mounted at /api/raw-uploads/, and the CSV arrival tracker
+"""Raw daily CNMC CSV upload API (Uptime Data -> Uptime Data Upload), mounted at /api/raw-uploads/, and the CSV arrival tracker
 (/api/arrival-tracker/). Both run on the data layer: uploads are previewed and committed by sitedata.rawcsv into the
 central daily table at precedence 1 (raw CSV), exactly where every dashboard page reads.
 

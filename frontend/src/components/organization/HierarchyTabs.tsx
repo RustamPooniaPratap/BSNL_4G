@@ -113,8 +113,8 @@ export const OperationalAreasTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -150,11 +150,11 @@ export const OperationalAreasTab: React.FC = () => {
           <tbody className="divide-y">
             {loading ? (
               <tr>
-                <td colSpan={7} className="p-4 text-center text-muted-foreground">Loading Operational Areas...</td>
+                <td colSpan={7} className="p-3 text-center text-muted-foreground">Loading Operational Areas...</td>
               </tr>
             ) : areas.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-4 text-center text-muted-foreground">No Operational Areas found.</td>
+                <td colSpan={7} className="p-3 text-center text-muted-foreground">No Operational Areas found.</td>
               </tr>
             ) : (
               areas.map((oa) => (
@@ -191,8 +191,8 @@ export const OperationalAreasTab: React.FC = () => {
 
       {/* Add OA Modal */}
       {showAddOaModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-background rounded-lg max-w-md w-full p-6 space-y-4 shadow-xl border">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
+          <div className="bg-background rounded-lg max-w-md w-full p-6 space-y-3 shadow-xl border">
             <h3 className="text-lg font-semibold">Create Operational Area</h3>
             <div className="space-y-3">
               <div>
@@ -237,8 +237,8 @@ export const OperationalAreasTab: React.FC = () => {
 
       {/* Add Alias Modal */}
       {showAliasModal && selectedOa && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-background rounded-lg max-w-md w-full p-6 space-y-4 shadow-xl border">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
+          <div className="bg-background rounded-lg max-w-md w-full p-6 space-y-3 shadow-xl border">
             <h3 className="text-lg font-semibold">Add Alias for {selectedOa.name}</h3>
             <p className="text-xs text-muted-foreground">
               Map unstandardized or legacy raw OA string variant from external reports.
@@ -355,7 +355,7 @@ export const OmAssignmentsTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-3">
           <label className="flex items-center space-x-2 text-sm text-foreground cursor-pointer">
@@ -392,11 +392,11 @@ export const OmAssignmentsTab: React.FC = () => {
           <tbody className="divide-y">
             {loading ? (
               <tr>
-                <td colSpan={6} className="p-4 text-center text-muted-foreground">Loading O&M assignments...</td>
+                <td colSpan={6} className="p-3 text-center text-muted-foreground">Loading O&M assignments...</td>
               </tr>
             ) : assignments.length === 0 ? (
               <tr>
-                <td colSpan={6} className="p-4 text-center text-muted-foreground">No O&M assignments found.</td>
+                <td colSpan={6} className="p-3 text-center text-muted-foreground">No O&M assignments found.</td>
               </tr>
             ) : (
               assignments.map((a) => (
@@ -456,8 +456,8 @@ export const OmAssignmentsTab: React.FC = () => {
 
       {/* Create Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-background rounded-lg max-w-md w-full p-6 space-y-4 shadow-xl border">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
+          <div className="bg-background rounded-lg max-w-md w-full p-6 space-y-3 shadow-xl border">
             <h3 className="text-lg font-semibold">Assign O&M Manager</h3>
             <div className="space-y-3">
               <div>
@@ -574,8 +574,8 @@ export const OmAssignmentsTab: React.FC = () => {
 
       {/* Audit Modal */}
       {selectedAuditAssignment && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-background rounded-lg max-w-2xl w-full p-6 space-y-4 shadow-xl border">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
+          <div className="bg-background rounded-lg max-w-2xl w-full p-6 space-y-3 shadow-xl border">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold flex items-center space-x-2">
                 <History className="w-5 h-5" />
@@ -670,8 +670,8 @@ export const PersonnelTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center space-x-3">
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -728,11 +728,11 @@ export const PersonnelTab: React.FC = () => {
           <tbody className="divide-y">
             {loading ? (
               <tr>
-                <td colSpan={8} className="p-4 text-center text-muted-foreground">Loading personnel...</td>
+                <td colSpan={8} className="p-3 text-center text-muted-foreground">Loading personnel...</td>
               </tr>
             ) : personnel.length === 0 ? (
               <tr>
-                <td colSpan={8} className="p-4 text-center text-muted-foreground">No personnel records found.</td>
+                <td colSpan={8} className="p-3 text-center text-muted-foreground">No personnel records found.</td>
               </tr>
             ) : (
               personnel.map((p) => (
@@ -777,8 +777,8 @@ export const PersonnelTab: React.FC = () => {
       </div>
 
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-background rounded-lg max-w-md w-full p-6 space-y-4 shadow-xl border">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
+          <div className="bg-background rounded-lg max-w-md w-full p-6 space-y-3 shadow-xl border">
             <h3 className="text-lg font-semibold">Create Personnel</h3>
             <div className="space-y-3">
               <div>
@@ -873,7 +873,7 @@ export const SiteAssignmentsTab: React.FC = () => {
   }, [loadAssignments]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center space-x-3">
         <select
           value={roleFilter}
@@ -911,11 +911,11 @@ export const SiteAssignmentsTab: React.FC = () => {
           <tbody className="divide-y">
             {loading ? (
               <tr>
-                <td colSpan={7} className="p-4 text-center text-muted-foreground">Loading site assignments...</td>
+                <td colSpan={7} className="p-3 text-center text-muted-foreground">Loading site assignments...</td>
               </tr>
             ) : assignments.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-4 text-center text-muted-foreground">No site assignments found.</td>
+                <td colSpan={7} className="p-3 text-center text-muted-foreground">No site assignments found.</td>
               </tr>
             ) : (
               assignments.map((a) => (
@@ -1026,7 +1026,7 @@ export const SourceMappingsAndConflictsTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex space-x-4 border-b pb-2">
         <button
           onClick={() => setSubTab('conflicts')}
@@ -1057,7 +1057,7 @@ export const SourceMappingsAndConflictsTab: React.FC = () => {
             <tbody className="divide-y">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-muted-foreground">Loading conflicts...</td>
+                  <td colSpan={5} className="p-3 text-center text-muted-foreground">Loading conflicts...</td>
                 </tr>
               ) : conflicts.length === 0 ? (
                 <tr>
@@ -1119,11 +1119,11 @@ export const SourceMappingsAndConflictsTab: React.FC = () => {
             <tbody className="divide-y">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-muted-foreground">Loading mappings...</td>
+                  <td colSpan={5} className="p-3 text-center text-muted-foreground">Loading mappings...</td>
                 </tr>
               ) : mappings.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-muted-foreground">No source mappings found.</td>
+                  <td colSpan={5} className="p-3 text-center text-muted-foreground">No source mappings found.</td>
                 </tr>
               ) : (
                 mappings.map((m) => (
@@ -1257,8 +1257,8 @@ export const PersonnelMergeTab: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="p-4 border rounded-lg bg-card space-y-4">
+    <div className="space-y-4">
+      <div className="p-3 border rounded-lg bg-card space-y-3">
         <h3 className="text-base font-semibold flex items-center space-x-2">
           <GitMerge className="w-5 h-5 text-primary" />
           <span>Execute Personnel Merge</span>
@@ -1268,7 +1268,7 @@ export const PersonnelMergeTab: React.FC = () => {
           Reassigns all site assignments, aliases, and source mappings transactionally with full audit protection.
         </p>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium">Source Personnel ID (to be tombstoned)</label>
             <input
@@ -1356,11 +1356,11 @@ export const PersonnelMergeTab: React.FC = () => {
             <tbody className="divide-y">
               {auditsLoading ? (
                 <tr>
-                  <td colSpan={6} className="p-4 text-center text-muted-foreground">Loading merge history...</td>
+                  <td colSpan={6} className="p-3 text-center text-muted-foreground">Loading merge history...</td>
                 </tr>
               ) : audits.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-4 text-center text-muted-foreground">No merge history recorded.</td>
+                  <td colSpan={6} className="p-3 text-center text-muted-foreground">No merge history recorded.</td>
                 </tr>
               ) : (
                 audits.map((a) => (

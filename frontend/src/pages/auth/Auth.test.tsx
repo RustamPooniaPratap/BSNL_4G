@@ -148,11 +148,11 @@ describe('roles in the interface', () => {
     renderWithWorkbook(<Sidebar />, { url: '/portfolio', auth: authValue({ user: CI_USER }) });
     const nav = screen.getByRole('navigation', { name: 'Main' });
     await user.click(within(nav).getByRole('button', { name: 'Data Management' }));
-    await user.click(within(nav).getByRole('button', { name: 'Data Entry' }));
+    await user.click(within(nav).getByRole('button', { name: 'Uptime Data' }));
     const links = within(nav).getAllByRole('link').map((a) => a.textContent);
     expect(links).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', "All KPI's", 'RCA Register', 'Upload Circle RCA',
-      'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site']);
-    expect(within(nav).queryByText('CSV Arrival & Follow-up')).not.toBeInTheDocument();
+      'Data Source & Quality', 'Add Row', 'Uptime Data Upload', 'Add Site']);
+    expect(within(nav).queryByText('Data Arrival & Follow-up')).not.toBeInTheDocument();
     expect(within(nav).queryByText('Administration')).not.toBeInTheDocument();
   });
 

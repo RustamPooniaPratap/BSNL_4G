@@ -22,7 +22,7 @@ function Toolbar({ children }: { children: ReactNode }) {
 }
 
 function Loading({ error }: { error: Error | null }) {
-  return error ? <p className="p-4 text-sm text-destructive" role="alert">{error.message}</p> : <Skeleton className="m-4 h-40" />;
+  return error ? <p className="p-3 text-sm text-destructive" role="alert">{error.message}</p> : <Skeleton className="m-4 h-40" />;
 }
 
 const DEPENDENCY_LABELS: Record<string, string> = {
@@ -100,7 +100,7 @@ function ProjectForm({ project, busy, onCancel, onSave }: {
   const set = (k: keyof typeof form) => (e: ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const submit = (e: FormEvent) => { e.preventDefault(); void onSave(form); };
   return (
-    <Card className="p-4">
+    <Card className="p-3">
       <form noValidate onSubmit={submit} aria-label={project ? `Edit ${project.name}` : 'Add a project'} className="flex flex-wrap items-end gap-3">
         <Field id="org-project-key" label="Identifier (stored on records)" required className="w-48">
           <Input id="org-project-key" value={form.key} onChange={set('key')} disabled={!!project} maxLength={20} />
@@ -197,7 +197,7 @@ function CircleForm({ circle, busy, onCancel, onSave }: {
   const [form, setForm] = useState({ code: circle?.code ?? '', name: circle?.name ?? '', description: circle?.description ?? '', reason: '' });
   const set = (k: keyof typeof form) => (e: ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: k === 'code' ? e.target.value.toUpperCase() : e.target.value }));
   return (
-    <Card className="p-4">
+    <Card className="p-3">
       <form noValidate onSubmit={(e) => { e.preventDefault(); void onSave(form); }} aria-label={circle ? `Edit ${circle.code}` : 'Add a circle'} className="flex flex-wrap items-end gap-3">
         <Field id="org-circle-code" label="Code (stored on records)" required className="w-40">
           <Input id="org-circle-code" value={form.code} onChange={set('code')} disabled={!!circle} maxLength={20} placeholder="e.g. KL" />
@@ -246,7 +246,7 @@ export function MappingTab() {
   return (
     <div className="flex flex-col gap-3">
       <NoticeLine notice={list.notice} />
-      <Card className="p-4">
+      <Card className="p-3">
         <form noValidate onSubmit={add} aria-label="Associate a circle with a project" className="flex flex-wrap items-end gap-3">
           <Field id="org-map-project" label="Project" required className="w-48">
             <SelectField id="org-map-project" value={draft.project} placeholder="Choose" onChange={(v) => setDraft((d) => ({ ...d, project: v }))}

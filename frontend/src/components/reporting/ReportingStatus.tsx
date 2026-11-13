@@ -46,18 +46,31 @@ export function PeriodStatusBadge({ status, finalizationStatus, missing, classNa
  * Banner when the month to date is Provisional: "Provisional — awaiting LWE OD for 03 Oct". Nothing for a Complete
  * month to date or an older response without ``mtd_status``.
  */
-export function ProvisionalBanner({ continuity, className }: { continuity: Continuity | null | undefined; className?: string }) {
+export function ProvisionalBanner({ continuity, className, compact = false }: {
+  continuity: Continuity | null | undefined; className?: string;
+  /** One-row form (Main Dashboard): the same title and explanation, on a single wrapping line. */
+  compact?: boolean;
+}) {
   if (!continuity || continuity.mtd_status !== 'Provisional') return null;
   const missing = continuity.missing?.length ? continuity.missing
     : (continuity.date_status ?? []).filter((d) => d.status === 'Provisional').map((d) => ({ date: d.date, units: d.missing_units }));
   const detail = describeMissing(missing);
+  const title = detail ? `Provisional — awaiting ${detail}` : 'Provisional — not every reporting unit has reported yet';
+  const explanation = 'Month-to-date figures use the data received so far and can change when the missing data arrives. Dates are not dropped because another unit is missing.';
+  if (compact) {
+    return (
+      <div role="status" aria-label="Provisional figures"
+        className={cn('flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/70 px-3 py-1.5 text-xs leading-5 text-amber-950', className)}>
+        <Clock className="mt-[3px] size-3.5 shrink-0 text-amber-700" aria-hidden="true" />
+        <p className="min-w-0"><span className="font-semibold">{title}</span><span className="text-amber-900/85"> · {explanation}</span></p>
+      </div>
+    );
+  }
   return (
     <Alert className={cn('border-amber-300 bg-amber-50/70', className)} role="status" aria-label="Provisional figures">
       <Clock className="text-amber-700" />
-      <AlertTitle>{detail ? `Provisional — awaiting ${detail}` : 'Provisional — not every reporting unit has reported yet'}</AlertTitle>
-      <AlertDescription>
-        Month-to-date figures use the data received so far and can change when the missing data arrives. Dates are not dropped because another unit is missing.
-      </AlertDescription>
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>{explanation}</AlertDescription>
     </Alert>
   );
 }

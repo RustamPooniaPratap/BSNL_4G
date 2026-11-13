@@ -93,7 +93,7 @@ export function IePerformancePage() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Top Heading */}
       <PageHeading title={`${ieName} · Integration Engineer Detail`} subtitle={subtitle} />
 
@@ -140,8 +140,8 @@ export function IePerformancePage() {
       <HierarchyKpiCards kpis={ie} periodLabel={monthLabel} scopeLabel={scopeLabel} />
 
       {/* IE Information Card */}
-      <Card className="rounded-xl border bg-card p-4 shadow-xs">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 text-xs">
+      <Card className="rounded-xl border bg-card p-3 shadow-xs">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 text-xs">
           <div>
             <span className="text-muted-foreground flex items-center gap-1 font-medium">
               <UserCheck className="size-3.5 text-primary" /> IE Full Name
@@ -194,7 +194,7 @@ export function IePerformancePage() {
 
       {/* Historical Monthly Performance Table (Last 5 Months + Current MTD) */}
       <Card className="rounded-xl border bg-card shadow-xs">
-        <div className="flex flex-col gap-1 border-b p-4">
+        <div className="flex flex-col gap-1 border-b p-3">
           <div className="flex items-center gap-2">
             <History className="size-4 text-primary" aria-hidden="true" />
             <h3 className="text-sm font-semibold text-foreground">Historical Monthly Performance</h3>

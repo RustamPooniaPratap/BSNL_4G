@@ -7,7 +7,7 @@ import { RcaFilterBar } from './RcaShared';
 
 /** Part of the taxonomy as the server sends it (apps.rca.taxonomy): the dropdowns must show exactly this, nothing else. */
 const CLASSIFICATION = [
-  { final_bucket: 'IaaSP Others', bucket_2: ['Shadow issue', 'Natural Clamity'] },
+  { final_bucket: 'IaasP Others', bucket_2: ['Shadow issue', 'Natural Clamity'] },
   { final_bucket: 'BSNL Media', bucket_2: ['Nokia mini link', 'Fluctuation'] },
   { final_bucket: 'DMW', bucket_2: ['Ceragoan Radio', 'Fluctuation'] },
 ];
@@ -29,18 +29,52 @@ async function optionsOf(name: RegExp) {
 
 describe('RCA taxonomy dropdowns', () => {
   it('reads the approved lists from the server taxonomy only', () => {
-    expect(approvedFinalBuckets(OPTIONS)).toEqual(['IaaSP Others', 'BSNL Media', 'DMW']);
+    expect(approvedFinalBuckets(OPTIONS)).toEqual(['IaasP Others', 'BSNL Media', 'DMW']);
     expect(approvedSubBuckets(OPTIONS, 'DMW')).toEqual(['Ceragoan Radio', 'Fluctuation']);
     expect(approvedSubBuckets(OPTIONS, 'Unknown')).toEqual([]);
   });
 
   it('offers exactly the approved Final Buckets', async () => {
     render(<RcaFilterBar options={OPTIONS} params={new URLSearchParams()} onChange={vi.fn()} onReset={vi.fn()} />);
-    expect(await optionsOf(/^Final Bucket/)).toEqual(['All Final Buckets', 'IaaSP Others', 'BSNL Media', 'DMW']);
+    expect(await optionsOf(/^Final Bucket/)).toEqual(['All Final Buckets', 'IaasP Others', 'BSNL Media', 'DMW']);
   });
 
   it('offers the Sub Buckets of the chosen Final Bucket only', async () => {
     render(<RcaFilterBar options={OPTIONS} params={new URLSearchParams('final_bucket=dmw')} onChange={vi.fn()} onReset={vi.fn()} />);
     expect(await optionsOf(/^Bucket - 2/)).toEqual(['All Bucket - 2', 'Ceragoan Radio', 'Fluctuation', 'Unclassified (blank or "-")']);
   });
+
+  it('clears a Bucket - 2 that the new Final Bucket does not approve, in the same change', async () => {
+    const onChange = vi.fn();
+    render(<RcaFilterBar options={OPTIONS} params={new URLSearchParams('final_bucket=dmw&bucket_2=ceragoan radio')} onChange={onChange} onReset={vi.fn()} />);
+    await userEvent.setup().click(screen.getByRole('combobox', { name: /^Final Bucket/ }));
+    await userEvent.setup().click(screen.getByRole('option', { name: 'BSNL Media' }));
+    expect(onChange).toHaveBeenCalledWith('final_bucket', 'bsnl media', { bucket_2: '' });
+  });
+
+  it('keeps a Bucket - 2 that the new Final Bucket also approves', async () => {
+    const onChange = vi.fn();
+    render(<RcaFilterBar options={OPTIONS} params={new URLSearchParams('final_bucket=dmw&bucket_2=fluctuation')} onChange={onChange} onReset={vi.fn()} />);
+    await userEvent.setup().click(screen.getByRole('combobox', { name: /^Final Bucket/ }));
+    await userEvent.setup().click(screen.getByRole('option', { name: 'BSNL Media' }));
+    expect(onChange).toHaveBeenCalledWith('final_bucket', 'bsnl media');
+  });
+
+  it('offers the one canonical High V & Low V Sub Bucket of IaasP Power (High V and Low V are aliases, not options)', async () => {
+    const power = { final_bucket: 'IaasP Power', bucket_2: ['High V & Low V', 'Others'] };
+    const opts: RcaOptions = {
+      ...OPTIONS, classification: [power],
+      final_buckets: [{ value: 'iaasp power', label: 'IaasP Power', approved: true, unclassified: false }],
+      bucket_2: power.bucket_2.map((b) => ({ value: key(b), label: b, approved: true, unclassified: false, final_buckets: ['IaasP Power'] })),
+    };
+    const onChange = vi.fn();
+    render(<RcaFilterBar options={opts} params={new URLSearchParams('final_bucket=iaasp power')} onChange={onChange} onReset={vi.fn()} />);
+    const shown = await optionsOf(/^Bucket - 2/);
+    expect(shown).toEqual(['All Bucket - 2', 'High V & Low V', 'Others']);
+    expect(shown).not.toContain('High V');
+    expect(shown).not.toContain('Low V');
+    await userEvent.setup().click(screen.getByRole('option', { name: 'High V & Low V' }));
+    expect(onChange).toHaveBeenCalledWith('bucket_2', 'high v & low v');
+  });
 });
+

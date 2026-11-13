@@ -17,12 +17,12 @@ describe('Sidebar order and groups', () => {
     const user = userEvent.setup();
     renderWithWorkbook(<Sidebar />, { url: '/portfolio' });
     await user.click(within(nav()).getByRole('button', { name: 'Data Management' }));
-    await user.click(within(nav()).getByRole('button', { name: 'Data Entry' }));
-    await user.click(within(nav()).getByRole('button', { name: 'CSV Arrival & Follow-up' }));
+    await user.click(within(nav()).getByRole('button', { name: 'Uptime Data' }));
+    await user.click(within(nav()).getByRole('button', { name: 'Data Arrival & Follow-up' }));
     await user.click(within(nav()).getByRole('button', { name: 'Alert' }));
     expect(links()).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance', "All KPI's",
       'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload Circle RCA',
-      'Data Source', 'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles', 'Organization',
+      'Data Source', 'Data Source & Quality', 'Add Row', 'Uptime Data Upload', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles', 'Organization',
       'Email Setup', 'Automations', 'Email History']);
     expect(within(nav()).getByText('Data')).toBeInTheDocument();
     expect(within(nav()).getByText('Administration')).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe('Sidebar order and groups', () => {
 
   it('keeps closed groups out of the tab order and the accessibility tree', () => {
     renderWithWorkbook(<Sidebar />, { url: '/portfolio' });
-    expect(within(nav()).getByRole('button', { name: 'Data Entry' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(nav()).getByRole('button', { name: 'Uptime Data' })).toHaveAttribute('aria-expanded', 'false');
     expect(within(nav()).queryByRole('link', { name: 'Add Row' })).not.toBeInTheDocument();
     expect(document.getElementById('nav-group-data-entry')).toHaveAttribute('inert');
   });
@@ -87,7 +87,7 @@ describe('Sidebar order and groups', () => {
     renderWithWorkbook(<Sidebar />, { url: '/data-source' });
     expect(within(nav()).getByRole('button', { name: 'Data Management' })).toHaveAttribute('aria-expanded', 'true');
     expect(within(nav()).getByRole('link', { name: 'Data Source & Quality' })).toHaveAttribute('aria-current', 'page');
-    expect(within(nav()).getByRole('button', { name: 'Data Entry' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(nav()).getByRole('button', { name: 'Uptime Data' })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('highlights 4G Saturation and LWE by their query parameter, and reopens Overview when one is reached', async () => {
@@ -104,20 +104,20 @@ describe('Sidebar order and groups', () => {
     const user = userEvent.setup();
     renderWithWorkbook(<Sidebar />, { url: '/data/new-site' });
     await user.click(within(nav()).getByRole('button', { name: 'Data Management' }));
-    await user.click(within(nav()).getByRole('button', { name: 'CSV Arrival & Follow-up' }));
+    await user.click(within(nav()).getByRole('button', { name: 'Data Arrival & Follow-up' }));
     const href = (name: string) => within(nav()).getByRole('link', { name }).getAttribute('href');
     expect(Object.fromEntries(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance', 'Data Source',
-      'Data Source & Quality', 'Add Row', 'Upload CSV', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles'].map((n) => [n, href(n)]))).toEqual({
+      'Data Source & Quality', 'Add Row', 'Uptime Data Upload', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles'].map((n) => [n, href(n)]))).toEqual({
       'Site Portfolio': '/portfolio', 'Master Data': '/master-data', Overview: '/', '4G Saturation': '/?report_type=4G+Saturation', LWE: '/?report_type=LWE',
       'Threshold Analysis': '/thresholds', 'Team Performance': '/teams', 'Data Source': '/workbook', 'Data Source & Quality': '/data-source',
-      'Add Row': '/data/add-row', 'Upload CSV': '/data/upload-csv', 'Add Site': '/data/new-site',
+      'Add Row': '/data/add-row', 'Uptime Data Upload': '/data/upload-csv', 'Add Site': '/data/new-site',
       'CSV Arrival Tracking': '/daily-ingestion', 'Users & Roles': '/admin/users',
     });
   });
 
-  it('opens CSV Arrival & Follow-up on its page', () => {
+  it('opens Data Arrival & Follow-up on its page', () => {
     renderWithWorkbook(<Sidebar />, { url: '/daily-ingestion' });
-    expect(within(nav()).getByRole('button', { name: 'CSV Arrival & Follow-up' })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(nav()).getByRole('button', { name: 'Data Arrival & Follow-up' })).toHaveAttribute('aria-expanded', 'true');
     expect(within(nav()).getByRole('link', { name: 'CSV Arrival Tracking' })).toHaveAttribute('aria-current', 'page');
   });
 
@@ -138,8 +138,8 @@ describe('Sidebar order and groups', () => {
   it('shows a CI only the groups and pages a CI may open', async () => {
     const user = userEvent.setup();
     renderWithWorkbook(<Sidebar />, { url: '/portfolio', auth: authValue({ user: CI_USER }) });
-    expect(within(nav()).getByText('Data')).toBeInTheDocument();  // Data Management and Data Entry remain
-    expect(within(nav()).queryByRole('button', { name: 'CSV Arrival & Follow-up' })).not.toBeInTheDocument();
+    expect(within(nav()).getByText('Data')).toBeInTheDocument();  // Data Management and Uptime Data remain
+    expect(within(nav()).queryByRole('button', { name: 'Data Arrival & Follow-up' })).not.toBeInTheDocument();
     await user.click(within(nav()).getByRole('button', { name: 'Data Management' }));
     expect(within(nav()).queryByRole('link', { name: 'Data Source' })).not.toBeInTheDocument();
     expect(within(nav()).queryByRole('link', { name: 'Team Performance', hidden: true })).not.toBeInTheDocument();

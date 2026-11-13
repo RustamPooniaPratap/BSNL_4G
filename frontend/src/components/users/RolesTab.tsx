@@ -28,9 +28,9 @@ export function RolesTab() {
   const role = roles.data?.roles.find((r) => r.id === selected) ?? null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {message && <Alert variant={message.ok ? 'default' : 'destructive'} role={message.ok ? 'status' : 'alert'}><AlertDescription>{message.text}</AlertDescription></Alert>}
-      <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
+      <div className="grid gap-3 lg:grid-cols-[18rem_1fr]">
         <Card className="gap-1 p-2">
           <Button size="sm" className="mb-1" onClick={() => { setSelected('new'); setMessage(null); }}><Plus /> Create role</Button>
           {roles.error && <p className="p-2 text-sm text-destructive">{roles.error.message}</p>}
@@ -88,7 +88,7 @@ function RoleEditor({ catalog, role, onDone, onError }: {
   const actionLabel = (a: string) => catalog.modules.flatMap((m) => m.actions).find((x) => x.key === a)?.label ?? a;
 
   return (
-    <Card className="gap-4 p-4">
+    <Card className="gap-3 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="text-base font-semibold">{role ? role.name : 'New role'}</h2>

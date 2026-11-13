@@ -70,7 +70,7 @@ export function MasterDataPage() {
   }, { replace: true });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="Master Data" subtitle="Central database explorer of the site data layer and the RCA register. Search, filter and export each dataset. The Site Master, Monthly Performance and Escalation Matrix come from the Consolidation Matrix and the monthly calculation and are read-only; daily values can be corrected (with a reason) and RCA records edited where your role allows (no deletion)." />
       <nav aria-label="Master Data datasets" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1 shadow-xs">
         {/* Only tabs with a dataset this user may view (the server lists only those). */}

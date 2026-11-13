@@ -25,7 +25,6 @@ import {
 import {
   applyChange, availability, monthPeriod, periodQuery, resolveSelection, type Period,
 } from '../lib/periods';
-import { fetchOmHeads } from '../services/api';
 import {
   fetchPortfolioActivity, fetchPortfolioBreakdowns, fetchPortfolioFilters, fetchPortfolioPeriod, fetchPortfolioSummary,
 } from '../services/sitePortfolioApi';
@@ -85,9 +84,7 @@ export function PortfolioPage() {
   const breakdownOnAir = useApiQuery(k('breakdown-onAir', q.onAir), (s) => fetchPortfolioBreakdowns(q.onAir, s));
   const breakdownOm = useApiQuery(statusOm ? k('breakdown-om', q.omStart) : null, (s) => fetchPortfolioBreakdowns(q.omStart, s));
   const breakdown = scope === 'on_air' ? breakdownOnAir : breakdownOm;
-  const omHeadSheet = useApiQuery('om-heads', fetchOmHeads);
   const organization = useOrganization();
-  const omHeads = Object.fromEntries((omHeadSheet.data?.heads ?? []).map((h) => [`${h.report_type}|${h.circle}`, h.om_head]));
   // On-Air / O&M Start this month vs last month (Consolidation Matrix dates in the new data layer); the month is the selected date's.
   const activityParams = new URLSearchParams();
   if (f.reportType) activityParams.set('report_type', f.reportType);
@@ -108,10 +105,10 @@ export function PortfolioPage() {
   }
   if (!options.data || !filters || !statusOnAir.data || !selected.data || !av || !sel) {
     return (
-      <div className="space-y-4" aria-busy="true" aria-label="Loading site portfolio">
+      <div className="space-y-3" aria-busy="true" aria-label="Loading site portfolio">
         <Skeleton className="h-10 w-72" />
         <Skeleton className="h-20 w-full" />
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-28" />)}</div>
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-24" />)}</div>
       </div>
     );
   }
@@ -152,9 +149,9 @@ export function PortfolioPage() {
   // Per project: the circle-wise breakdowns of the same filters, summed by report type. A split is shown only when it
   // adds up to its KPI's total, so the lines under a KPI always reconcile with it.
   const byProject = (b: typeof breakdownOnAir.data | null | undefined, field: 'sites_in_scope' | 'sites_total' = 'sites_in_scope') => {
-    if (!b || (field === 'sites_total' && b.circles.some((c) => c.sites_total == null))) return null;
+    if (!b) return null;
     const totals = new Map<string, number>();
-    for (const c of b.circles) totals.set(c.report_type, (totals.get(c.report_type) ?? 0) + (c[field] ?? 0));
+    for (const c of b.circles) totals.set(c.report_type, (totals.get(c.report_type) ?? 0) + c[field]);
     return totals;
   };
   const [scopeBy, onAirBy, omBy] = [byProject(breakdownOnAir.data, 'sites_total'), byProject(breakdownOnAir.data), omAvailable ? byProject(breakdownOm.data) : null];
@@ -186,7 +183,7 @@ export function PortfolioPage() {
   const daysUsed = periodSel.data ? ` · ${periodSel.data.days_reported} reporting days` : '';
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="Site Portfolio — Summary"
         subtitle={`${scopeText} · Population: ${sitesLabel} · ${daily ? `${formatDate(summary.reporting_date)} · ${mtdLabel} (${summary.mtd_window.days_reported} days)` : `${sel.selected.label}${daysUsed}`}`} />
       <PeriodControls av={av} reportingDates={options.data.reporting_dates} sel={sel}
@@ -220,7 +217,7 @@ export function PortfolioPage() {
         </div>
       </PeriodControls>
 
-      <ProvisionalBanner continuity={summary.source.continuity ?? continuity} />
+      <ProvisionalBanner compact continuity={summary.source.continuity ?? continuity} />
       {periodSel.data?.status && !daily && (
         <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground" aria-label="Period status">
           {sel.selected.label}: <PeriodStatusBadge status={periodSel.data.status} missing={periodSel.data.missing} />
@@ -276,7 +273,7 @@ export function PortfolioPage() {
       ) : periodError ? (
         <Alert variant="destructive"><Database /><AlertTitle>Period figures unavailable</AlertTitle><AlertDescription>{periodError.message}</AlertDescription></Alert>
       ) : !periodKpis || !periodData ? (
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-busy="true" aria-label="Loading period figures">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-36" />)}</div>
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-busy="true" aria-label="Loading period figures">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-32" />)}</div>
       ) : (
       <>
       <KpiSection label={`Uptime buckets · ${shortLabel}${daysUsed} · Population: ${sitesLabel}`}>
@@ -292,10 +289,10 @@ export function PortfolioPage() {
       </>
       )}
 
-      {breakdownOnAir.data && (!omAvailable || breakdownOm.data) ? (
+      {breakdownOnAir.data && (!omAvailable || breakdownOm.data) && breakdown.data ? (
         <CircleBreakdownTable
-          {...circleBreakdown(breakdownOnAir.data, omAvailable ? breakdownOm.data : null)}
-          notes={tracking.portfolioNotes} omHeads={omHeads} omHeadSource={omHeadSheet.data?.source ?? null}
+          {...circleBreakdown(breakdownOnAir.data, omAvailable ? breakdownOm.data : null, breakdown.data)}
+          notes={tracking.portfolioNotes}
           onSaveNote={(key, note) => dispatch({ type: 'saveNote', key, note })}
           loading={breakdownOnAir.loading || breakdownOm.loading}
           periodNote={`Site status (shown whatever the population). Site counts come from the Site On-Air and O&M Start Dates in the Consolidation Matrix for ${month} (${summary.source.workbook}); the reporting date does not change them.`} />

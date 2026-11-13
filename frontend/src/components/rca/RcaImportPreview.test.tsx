@@ -14,7 +14,7 @@ const REPORT: RcaImportReport = {
       { site_id: 'OD0001', project: '4G Saturation', reporting_date: '2026-10-21', final_bucket: 'TCS', sub_bucket: '', first_row: 3, rejected_rows: [7] }] },
   sites_with_several_records: 1,
   final_bucket_problems: [{ value: 'Vsat', code: 'final_bucket_not_approved', rows: 1, example_rows: [9] }], final_bucket_error_rows: 1,
-  sub_bucket_warnings: { rows: 2, missing_rows: 1, not_approved_rows: 1, values: [{ final_bucket: 'IaaSP Others', value: 'Natural Clamity', code: 'sub_bucket_not_approved', rows: 1, example_rows: [4] }] },
+  sub_bucket_warnings: { rows: 2, missing_rows: 1, not_approved_rows: 1, values: [{ final_bucket: 'IaasP Others', value: 'Natural Clamity', code: 'sub_bucket_not_approved', rows: 1, example_rows: [4] }] },
   rca_description_warnings: 1,
 };
 const BATCH: RcaImportBatch = {
@@ -34,7 +34,7 @@ describe('RcaImportPreview validation priorities', () => {
     expect(groups).toHaveTextContent('1 rows with a missing or unapproved Final Bucket: the workbook cannot be imported');
     expect(groups).toHaveTextContent('“Vsat”: 1 rows (row 9)');
     expect(within(groups).getByText(/2 Sub Bucket warnings/).closest('p')).toHaveTextContent('they do not block the import');
-    expect(groups).toHaveTextContent('IaaSP Others / “Natural Clamity”: 1 rows (row 4)');
+    expect(groups).toHaveTextContent('IaasP Others / “Natural Clamity”: 1 rows (row 4)');
     expect(groups).toHaveTextContent('1 sites have more than one RCA record on a date');
     expect(groups).toHaveTextContent('1 rows have a blank or placeholder RCA description: kept as written; they do not block the import.');
   });

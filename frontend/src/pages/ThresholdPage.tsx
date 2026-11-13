@@ -153,7 +153,7 @@ export function ThresholdPage() {
   }, { replace: true });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <FilterBar options={options.data} filters={filters} onChange={setFilters} onReset={reset} canReset={!isDefault} showTrendRange={false}
         title="Threshold analysis"
         description={<>
@@ -180,7 +180,7 @@ export function ThresholdPage() {
       {result.error ? (
         <Alert variant="destructive"><Database /><AlertTitle>Threshold analysis unavailable</AlertTitle><AlertDescription>{result.error.message}</AlertDescription></Alert>
       ) : !data ? (
-        <div className="space-y-4" aria-busy="true">
+        <div className="space-y-3" aria-busy="true">
           <Skeleton className="h-28 w-full" />
           <Skeleton className="h-72 w-full" />
         </div>
@@ -342,7 +342,7 @@ function BucketDetail({ bucket, data, mode, filters, loading, period, currentLab
   const activeFilters = [filters.reportType || 'All projects', filters.circle ? `Circle ${filters.circle}` : 'All circles', `Population: ${populationSites(filters.scope)}`];
 
   return (
-    <section aria-labelledby={`section-${id}`} className={cn('space-y-4 rounded-xl border-l-4 pl-4', critical ? 'border-l-destructive' : 'border-l-slate-300')}
+    <section aria-labelledby={`section-${id}`} className={cn('space-y-3 rounded-xl border-l-4 pl-4', critical ? 'border-l-destructive' : 'border-l-slate-300')}
       style={critical ? undefined : { borderLeftColor: BUCKET_COLORS[id] }}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
@@ -372,7 +372,7 @@ function BucketDetail({ bucket, data, mode, filters, loading, period, currentLab
       </div>
 
       <ThresholdKpis data={data} id={id} mode={mode} />
-      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
         <ThresholdTrend data={data} id={id} mode={mode} color={BUCKET_COLORS[id]} loading={loading} />
         <CircleChart data={data} id={id} mode={mode} color={BUCKET_COLORS[id]} loading={loading} period={period} label={currentLabel} />
       </div>
@@ -392,9 +392,9 @@ function BucketDetail({ bucket, data, mode, filters, loading, period, currentLab
 
 function SummaryCard({ label, value, detail, tone }: { label: string; value: React.ReactNode; detail: string; tone?: 'critical' }) {
   return (
-    <Card className="gap-0 px-4 py-3">
+    <Card className="gap-0 px-3.5 py-2.5">
       <p className="truncate text-xs font-medium text-muted-foreground" title={label}>{label}</p>
-      <p className={cn('mt-1 text-2xl font-semibold tabular-nums', tone === 'critical' && 'text-destructive')}>{value}</p>
+      <p className={cn('mt-1 text-2xl leading-7 font-semibold tabular-nums', tone === 'critical' && 'text-destructive')}>{value}</p>
       <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
     </Card>
   );
@@ -488,12 +488,12 @@ function ThresholdKpis({ data, id, mode }: { data: ThresholdResponse; id: Thresh
         const before = card.previous ? pick(data.total.values[card.previous.key], id, mode) : null;
         const delta = current != null && before != null ? current - before : null;
         return (
-          <Card key={card.label} className="gap-0 px-4 py-3">
+          <Card key={card.label} className="gap-0 px-3.5 py-2.5">
             <div className="flex items-center gap-1.5">
               <p className="truncate text-xs font-medium text-muted-foreground" title={card.label}>{card.label}</p>
               {card.period?.kind !== 'day' && <PeriodStatusBadge status={card.period?.status} missing={card.period?.missing} />}
             </div>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{value ? show(current, mode) : 'No data'}</p>
+            <p className="mt-1 text-2xl leading-7 font-semibold tabular-nums">{value ? show(current, mode) : 'No data'}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {value ? `${show(pick(value, id, other), other)} ${other === 'pct' ? 'of sites' : 'sites'}` : 'Not reported for this period'}
               {delta != null && ` · ${delta > 0 ? '+' : ''}${mode === 'count' ? formatNumber(delta) : `${delta.toFixed(1)} pts`} vs ${card.previousLabel}`}

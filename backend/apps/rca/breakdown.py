@@ -33,7 +33,7 @@ BLANK_LABEL = '(blank)'
 def category_of(final_bucket: str) -> str | None:
     """The reporting column of a Final Bucket value, or None when it maps to no column."""
     key = text_key(final_bucket)
-    return FINAL_BUCKET_CATEGORIES.get(key) if key else None
+    return taxonomy.approved_final(key) if key else None  # case and whitespace ignored (taxonomy.match_key)
 
 
 def _pct(part: int, whole: int) -> float | None:
@@ -47,7 +47,7 @@ def breakdown(qs: QuerySet, *, circles: list[str], through: str | None) -> dict:
     unmapped: Counter = Counter()
     unmapped_by_circle: Counter = Counter()
     for row in qs.values('circle', 'final_bucket_key').annotate(records=Count('id'), label=Max('final_bucket')):
-        column = FINAL_BUCKET_CATEGORIES.get(row['final_bucket_key']) if row['final_bucket_key'] else None
+        column = taxonomy.approved_final(row['final_bucket_key']) if row['final_bucket_key'] else None
         if column:
             counts[row['circle']][column] += row['records']
         else:

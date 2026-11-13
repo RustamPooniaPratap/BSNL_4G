@@ -22,7 +22,7 @@ function Segmented<T extends string>({ value, options, onChange, label, disabled
       {options.map(([v, text]) => (
         <button key={v} type="button" aria-pressed={value === v} disabled={Boolean(disabled?.[v])} title={disabled?.[v]}
           onClick={() => onChange(v)}
-          className={cn('rounded-md px-3 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40',
+          className={cn('rounded-md px-3 text-[13px] font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40',
             value === v ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')}>
           {text}
         </button>

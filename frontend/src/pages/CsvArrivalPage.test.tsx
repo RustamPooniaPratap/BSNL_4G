@@ -83,7 +83,7 @@ async function pick(user: ReturnType<typeof userEvent.setup>, label: RegExp, opt
   await user.click(await screen.findByRole('option', { name: option }));
 }
 
-describe('CSV Arrival & Follow-up', () => {
+describe('Data Arrival & Follow-up', () => {
   it('shows the stored data and the CSV upload state separately, never "Pending"', async () => {
     renderPage();
     await loaded();
@@ -294,7 +294,7 @@ describe('Email actions', () => {
   it('sends the standard reminder to the recorded contact after showing it, in test mode', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    await screen.findByText('Data Arrival & Follow-up');
     expect(await screen.findByText('Email: test mode · not delivered')).toBeInTheDocument();
     await addContactEmail(user, 'MP LWE', 'circle.mp@example.com');
     await user.click(within(row('MP LWE')).getByRole('button', { name: 'Send reminder for MP LWE' }));
@@ -315,7 +315,7 @@ describe('Email actions', () => {
   it('will not send a reminder without a recipient, and offers to add one', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    await screen.findByText('Data Arrival & Follow-up');
     await user.click(within(row('RJ 4G')).getByRole('button', { name: 'Send reminder for RJ 4G' }));
     expect(await screen.findByText('Recipient missing')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Send reminder now/ })).toBeDisabled();
@@ -328,7 +328,7 @@ describe('Email actions', () => {
     vi.mocked(api.sendReminder).mockRejectedValue(new api.ApiError('The email could not be sent: the mail server did not accept it. Nothing was delivered.', 502));
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    await screen.findByText('Data Arrival & Follow-up');
     await addContactEmail(user, 'MP LWE', 'circle.mp@example.com');
     await user.click(within(row('MP LWE')).getByRole('button', { name: 'Send reminder for MP LWE' }));
     await screen.findByRole('region', { name: 'Email preview' });
@@ -341,7 +341,7 @@ describe('Email actions', () => {
   it('composes an edited reminder, validates it, previews it and sends only on Send email', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    await screen.findByText('Data Arrival & Follow-up');
     await user.click(row('MP LWE'));
     const contact = await screen.findByRole('region', { name: 'Contact' });
     await user.click(within(contact).getByRole('button', { name: /Compose email/ }));
@@ -374,7 +374,7 @@ describe('Email actions', () => {
   it('never sends when the composer is cancelled or closed', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    await screen.findByText('Data Arrival & Follow-up');
     await user.click(screen.getByRole('button', { name: /Compose email/ }));
     expect(screen.queryByRole('button', { name: /Load standard reminder/ })).not.toBeInTheDocument();  // blank: no circle chosen
     await user.type(screen.getByLabelText(/^To/), 'test@example.com');
@@ -393,7 +393,7 @@ describe('Email actions', () => {
     vi.mocked(api.sendPersonalEmail).mockRejectedValue(new api.ApiError('Invalid email request.', 400, { to: ['Not a valid email address: x@y.'] }));
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    await screen.findByText('Data Arrival & Follow-up');
     await user.click(screen.getByRole('button', { name: /Compose email/ }));
     await user.type(screen.getByLabelText(/^To/), 'x@y.co');
     await user.type(screen.getByLabelText(/^Subject/), 'Hello');
@@ -407,7 +407,7 @@ describe('Email actions', () => {
   it('sends a reminder from the toolbar by choosing a circle without data, through the same confirmation', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    await screen.findByText('Data Arrival & Follow-up');
     await addContactEmail(user, 'MP LWE', 'circle.mp@example.com');
     const toolbar = screen.getByRole('search', { name: 'Tracking filters' });
     await user.click(within(toolbar).getByRole('button', { name: /Send reminder/ }));
@@ -424,7 +424,7 @@ describe('Email actions', () => {
   it('groups the filter card: date and filters on the left, email actions together, Refresh as the primary action', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('CSV Arrival & Follow-up');
+    await screen.findByText('Data Arrival & Follow-up');
     const toolbar = screen.getByRole('search', { name: 'Tracking filters' });
     expect(within(within(toolbar).getByRole('group', { name: 'Email' })).getAllByRole('button').map((b) => b.textContent?.trim()))
       .toEqual(['Send reminder', 'Compose email']);

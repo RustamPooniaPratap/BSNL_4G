@@ -59,7 +59,7 @@ export function RcaOverviewTable({ query }: Props) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* 4 KPI Cards Above Table */}
       {data ? (
         <RcaSection heading="Attribution KPIs" label="RCA attribution KPIs" columns={4}>
@@ -81,7 +81,7 @@ export function RcaOverviewTable({ query }: Props) {
           />
           <RcaKpiTile
             label="Third Party"
-            definition="Outage attributed to third-party infrastructure and providers (IaaSP Power, IaaSP OFC, EB, Theft, etc.)"
+            definition="Outage attributed to third-party infrastructure and providers (IaasP Power, IaasP OFC, EB, Theft, etc.)"
             icon={Network}
             tint="teal"
             value={formatMin(data.kpis.third_party.outage_minutes)}

@@ -16,7 +16,7 @@ export function MultiSelect({ id, label, options, value, onChange, allLabel = 'A
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button id={id} type="button" variant="outline" aria-label={`${label}: ${summary}`} className={cn('h-9 justify-between font-normal', width, value.length > 0 && 'border-primary/40 bg-primary/5 font-medium hover:bg-primary/10')}>
+        <Button id={id} type="button" variant="outline" aria-label={`${label}: ${summary}`} className={cn('akp-ms h-9 justify-between font-normal', width, value.length > 0 && 'on font-medium')}>
           <span className="truncate">{summary}</span><ChevronDown className="shrink-0 opacity-60" />
         </Button>
       </PopoverTrigger>

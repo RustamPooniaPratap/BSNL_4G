@@ -13,7 +13,7 @@ import { PortfolioPage } from './PortfolioPage';
 
 vi.mock('../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/api')>()),
-  fetchFilterOptions: vi.fn(), fetchSummary: vi.fn(), fetchBreakdowns: vi.fn(), fetchTrends: vi.fn(), fetchAlerts: vi.fn(), fetchPeriod: vi.fn(), fetchOmHeads: vi.fn(),
+  fetchFilterOptions: vi.fn(), fetchSummary: vi.fn(), fetchBreakdowns: vi.fn(), fetchTrends: vi.fn(), fetchAlerts: vi.fn(), fetchPeriod: vi.fn(),
 }));
 // Conversion activity has no legacy endpoint any more: only the Site Portfolio API (/site-portfolio/conversion-activity/).
 const fetchActivity = vi.hoisted(() => vi.fn());
@@ -82,11 +82,6 @@ beforeEach(() => {
     on_air: { this_month: { count: null, covered_to: null, complete: false }, last_month: { count: 27, covered_to: '2026-09-25', complete: false }, change: null, latest_date: '2026-09-25' },
     om_start: { this_month: { count: 12, covered_to: '2026-10-05', complete: false }, last_month: { count: 54, covered_to: '2026-09-30', complete: true }, change: -42, latest_date: '2026-10-05' },
   });
-  m.fetchOmHeads.mockResolvedValue({ source: 'BSNL 4G - first page.xlsx', message: null, heads: [
-    { report_type: '4G Saturation', circle: 'MP', circle_in_sheet: 'MP', om_head: 'Dhanraj Longre' },
-    { report_type: 'LWE', circle: 'MP', circle_in_sheet: 'MP', om_head: null },
-    { report_type: 'LWE', circle: 'BH', circle_in_sheet: 'BR', om_head: 'Sanjeev Ranjan' },
-  ] });
 });
 
 function Location() {
@@ -196,7 +191,7 @@ describe('Site Portfolio', () => {
     expect(calls().every((c) => c.circle === 'MP' && c.report_type === 'LWE')).toBe(true);
     // Status On-Air and O&M Start (the On-Air one is also the selected population's), and the previous date.
     expect(calls().map((c) => c.reporting_date).sort()).toEqual(['2026-10-02', '2026-10-03', '2026-10-03']);
-    expect(calls().some((c) => c.scope === 'all')).toBe(false);
+    expect(new Set(calls().map((c) => c.scope))).toEqual(new Set(['on_air', 'om_start']));
     expect(Object.fromEntries(m.fetchBreakdowns.mock.calls[0][0] as URLSearchParams)).toMatchObject({ circle: 'MP', report_type: 'LWE', reporting_date: '2026-10-03' });
   });
 
@@ -269,19 +264,25 @@ describe('Site Portfolio', () => {
 });
 
 describe('Circle-wise Site Portfolio Breakdown', () => {
-  // Site Scope per circle is the circle's sites_total (site status); On Air / O&M Start are the two populations' counts.
-  const byScope = (n: Record<string, number>) => ({
+  // Site Scope is full inventory; CI/IE assignments follow the response population.
+  const teams = (ci_count: number, ie_count: number) => ({ ci_count, ie_count, sites_without_ci: 0, sites_without_ie: 0 });
+  const byScope = (n: Record<string, number>, isOm = false) => ({
     ...breakdown,
     circles: [
-      { ...breakdown.circles[0], report_type: '4G Saturation', circle: 'MP', sites_in_scope: n.mp4g, sites_total: 1483 },
-      { ...breakdown.circles[0], report_type: 'LWE', circle: 'MP', sites_in_scope: n.mpLwe, sites_total: 22 },
-      { ...breakdown.circles[0], report_type: 'LWE', circle: 'BH', sites_in_scope: n.bh, sites_total: 250 },
+      { ...breakdown.circles[0], report_type: '4G Saturation', circle: 'MP', sites_in_scope: n.mp4g, sites_total: 1483, om_heads: ['Mira One', 'Mira Two'], ...teams(isOm ? 9 : 10, isOm ? 88 : 91) },
+      { ...breakdown.circles[0], report_type: 'LWE', circle: 'MP', sites_in_scope: n.mpLwe, sites_total: 22, om_heads: ['Ravi Head'], ...teams(1, 1) },
+      { ...breakdown.circles[0], report_type: 'LWE', circle: 'BH', sites_in_scope: n.bh, sites_total: 250, om_heads: [], ...teams(3, 20) },
     ],
+    team_totals: isOm
+      ? { all: teams(20, 170), '4G Saturation': teams(19, 168), LWE: teams(1, 2) }
+      : { all: teams(21, 180), '4G Saturation': teams(20, 178), LWE: teams(1, 4) },
   });
   beforeEach(() => {
     m.fetchBreakdowns.mockImplementation(async (params) => {
       const scope = params.get('scope');
-      return scope === 'om_start' ? byScope({ mp4g: 1332, mpLwe: 19, bh: 250 }) : byScope({ mp4g: 1351, mpLwe: 20, bh: 250 });
+      return scope === 'om_start'
+        ? byScope({ mp4g: 1332, mpLwe: 19, bh: 250 }, true)
+        : byScope({ mp4g: 1351, mpLwe: 20, bh: 250 });
     });
   });
 
@@ -295,7 +296,7 @@ describe('Circle-wise Site Portfolio Breakdown', () => {
     expect(within(table).getAllByRole('rowheader', { name: 'MP' })).toHaveLength(2);
     const mp4g = within(table).getByRole('rowgroup', { name: '4G Saturation circles' });
     expect([...within(mp4g).getByRole('rowheader', { name: 'MP' }).closest('tr')!.querySelectorAll('td')].map((c) => c.textContent).slice(0, 7))
-      .toEqual(['4G', 'Dhanraj Longre', '1,483', '1,351', '1,332', '151', '19']);
+      .toEqual(['4G', 'Mira One, Mira Two', '1,483', '1,351', '1,332', '151', '19']);
     expect(row('BH').slice(2, 7)).toEqual(['250', '250', '250', '0', '0']);
     const subtotal = within(table).getByRole('row', { name: 'LWE subtotal' });
     expect([...subtotal.querySelectorAll('td')].map((c) => c.textContent).slice(0, 5)).toEqual(['272', '270', '269', '3', '1']);
@@ -311,30 +312,47 @@ describe('Circle-wise Site Portfolio Breakdown', () => {
     await screen.findByRole('region', { name: 'Circle-wise Site Portfolio Breakdown' });
     const params = m.fetchBreakdowns.mock.calls.map((c) => Object.fromEntries(c[0] as URLSearchParams));
     expect(params.every((p) => p.report_type === 'LWE')).toBe(true);
-    expect(new Set(params.map((p) => p.scope))).toEqual(new Set(['on_air', 'om_start']));  // the status counts; never 'all'
+    expect(new Set(params.map((p) => p.scope))).toEqual(new Set(['on_air', 'om_start']));  // the two supported status populations
   });
 
-  it('shows the O&M Head of each circle from the reference sheet, "—" where it gives none', async () => {
+  it('updates CI/IE counts and per-person ratios with the global population filter', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const table = await screen.findByRole('region', { name: 'Circle-wise Site Portfolio Breakdown' });
+    const mp4gCells = () => {
+      const row = within(within(table).getByRole('rowgroup', { name: '4G Saturation circles' }))
+        .getByRole('rowheader', { name: 'MP' }).closest('tr')!;
+      return [...row.querySelectorAll('td')].map((cell) => cell.textContent);
+    };
+
+    expect(mp4gCells().slice(7, 11)).toEqual(['10', '91', '135.1', '14.8']);
+    await user.click(screen.getByRole('combobox', { name: 'Population' }));
+    await user.click(screen.getByRole('option', { name: 'O&M Start' }));
+    await waitFor(() => expect(mp4gCells().slice(7, 11)).toEqual(['9', '88', '148.0', '15.1']));
+    // Site Scope remains the full Matrix inventory when the selected population changes.
+    expect(mp4gCells()[2]).toBe('1,483');
+  });
+
+  it('shows all API-assigned O&M Heads and a dash when a circle has none', async () => {
     renderPage();
     const table = await screen.findByRole('region', { name: 'Circle-wise Site Portfolio Breakdown' });
     const omHead = (group: string, circle: string) => within(within(table).getByRole('rowgroup', { name: group }))
       .getByRole('rowheader', { name: circle }).closest('tr')!.querySelectorAll('td')[1];
-    expect(await within(table).findByText('Dhanraj Longre')).toHaveAttribute('title', 'From BSNL 4G - first page.xlsx');
-    expect(omHead('4G Saturation circles', 'MP')).toHaveTextContent('Dhanraj Longre');
-    expect(omHead('LWE circles', 'MP')).toHaveTextContent('—');  // no name in the sheet: not guessed
-    expect(omHead('LWE circles', 'BH')).toHaveTextContent('Sanjeev Ranjan');
+    expect(omHead('4G Saturation circles', 'MP')).toHaveTextContent('Mira One, Mira Two');
+    expect(omHead('LWE circles', 'MP')).toHaveTextContent('Ravi Head');
+    expect(omHead('LWE circles', 'BH')).toHaveTextContent('—');
+    expect(within(table).queryByRole('textbox', { name: /O&M Head/ })).not.toBeInTheDocument();
   });
 
-  it('lets O&M Head and Remarks be added, held in the browser only', async () => {
+  it('keeps Remarks editable in browser memory without editing O&M Head assignments', async () => {
     const user = userEvent.setup();
     renderPage();
     const table = await screen.findByRole('region', { name: 'Circle-wise Site Portfolio Breakdown' });
-    await user.click(within(table).getByRole('button', { name: 'Edit O&M Head and Remarks for BH LWE' }));
-    await user.type(within(table).getByLabelText('O&M Head for BH LWE'), 'Sanjeev Ranjan');
+    await user.click(within(table).getByRole('button', { name: 'Edit Remarks for BH LWE' }));
     await user.type(within(table).getByLabelText('Remarks for BH LWE'), 'All sites in O&M');
     await user.click(within(table).getByRole('button', { name: 'Save' }));
     const bh = within(table).getByRole('rowheader', { name: 'BH' }).closest('tr')!;
-    expect(bh).toHaveTextContent('Sanjeev Ranjan');
+    expect(bh.querySelectorAll('td')[1]).toHaveTextContent('—');
     expect(bh).toHaveTextContent('All sites in O&M');
     expect(within(table).getByText(/held in this browser only/)).toBeInTheDocument();
   });

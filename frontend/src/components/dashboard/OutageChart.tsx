@@ -7,7 +7,7 @@ import { formatCompact, formatDate, formatMinutes, formatNumber, formatShortDate
 import type { MonthlyResponse, TrendResponse } from '../../types';
 import { ChartCard } from './ChartCard';
 import { DataTable } from './DataTable';
-import { AXIS_TICK, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor } from './constants';
+import { AXIS_TICK, DENSE_CARD, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor } from './constants';
 import { TrendViewSwitch } from './TrendChart';
 
 const COMBINED = 'Combined';
@@ -76,7 +76,7 @@ export function OutageChart(props: OutageChartProps) {
   );
 
   return (
-    <ChartCard
+    <ChartCard className={DENSE_CARD}
       title="Outage minutes"
       description={outageView === 'circles'
         ? `${scopeLabel}: outage minutes per site in scope, ${period}, highest first. Per site, so circles of different sizes compare fairly.`
@@ -113,7 +113,7 @@ function OverallOutage({ points, types, view, picked, showCombined, onShowCombin
           Show combined total
         </label>
       )}
-      <div className="h-64" role="img" aria-label={`Line chart of ${view} outage minutes`}>
+      <div className="h-[clamp(208px,28vh,256px)]" role="img" aria-label={`Line chart of ${view} outage minutes`}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -4 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />

@@ -52,7 +52,7 @@ export function MatrixImportPanel({ onCommitted }: { onCommitted: () => void }) 
   const p = r?.preview;
   const changes = p ? p.new_sites + p.updated_sites : 0;
   return (
-    <div className="space-y-4" role="region" aria-label="Consolidation Matrix import">
+    <div className="space-y-3" role="region" aria-label="Consolidation Matrix import">
       <p className="text-xs text-muted-foreground">
         Reads the “Raw Data” sheet of the Consolidated Escalation Matrix into the site master of the new data layer (sites, On-Air and O&amp;M Start dates,
         identities). Blank cells never replace stored values, sites are never deleted, and daily or monthly performance records are not changed.
@@ -77,7 +77,7 @@ export function MatrixImportPanel({ onCommitted }: { onCommitted: () => void }) 
         </Alert>
       )}
       {batch && r && p && (
-        <section aria-label="Matrix import preview" className="space-y-4 rounded-xl border p-4">
+        <section aria-label="Matrix import preview" className="space-y-3 rounded-xl border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">Preview #{batch.id}: {batch.file} · sheet “{r.sheet}” · nothing has been written yet</h2>
             <a href={matrixIssuesUrl(batch.id)} className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline">

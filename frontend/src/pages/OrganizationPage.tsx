@@ -39,7 +39,7 @@ export function OrganizationPage() {
   if (!current) return <Navigate to="/admin/organization" replace />;
   const { Tab } = current;
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <PageHeading title="Organization & Team Performance Hierarchy"
         subtitle="Manage Circles, Operational Areas, O&M Managers, Personnel, site assignments, and identity mappings." />
       <nav aria-label="Organization sections" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1 shadow-xs">

@@ -73,11 +73,17 @@ export const breakdown: BreakdownResponse = {
   mtd_window: { start: '2026-10-01', end: '2026-10-03', days_reported: 3 },
   comparison: { key: '2026-09', label: 'Sep-26', available: false, start: null, end: null, days_reported: 0 },
   circles: [{
-    report_type: '4G Saturation', circle: 'MP', sites_in_scope: 2, sites_reported: 2, daily_uptime_pct: 50, mtd_uptime_pct: 80,
+    report_type: '4G Saturation', circle: 'MP', sites_total: 3, sites_in_scope: 2, sites_reported: 2, daily_uptime_pct: 50, mtd_uptime_pct: 80,
     previous_uptime_pct: null, mtd_change_pts: null,
+    ci_count: 1, ie_count: 1, sites_without_ci: 0, sites_without_ie: 0,
     buckets: { lt_60: 1, '60_90': 1, '90_97': 0, '97_98_5': 0, gte_98_5: 0 },
     daily_buckets: { lt_60: 1, '60_90': 0, '90_97': 0, '97_98_5': 0, gte_98_5: 1 },
   }],
+  team_totals: {
+    all: { ci_count: 1, ie_count: 1, sites_without_ci: 0, sites_without_ie: 0 },
+    '4G Saturation': { ci_count: 1, ie_count: 1, sites_without_ci: 0, sites_without_ie: 0 },
+    LWE: { ci_count: 0, ie_count: 0, sites_without_ci: 0, sites_without_ie: 0 },
+  },
   buckets: [
     { id: 'lt_60', label: 'Below 60%', workbook_label: '<60', count: 1 },
     { id: '60_90', label: '60% to <90%', workbook_label: '>60 To <90', count: 1 },

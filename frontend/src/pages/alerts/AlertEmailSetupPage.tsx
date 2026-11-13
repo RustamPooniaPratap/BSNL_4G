@@ -25,7 +25,7 @@ export function AlertEmailSetupPage() {
   const query = useApiQuery(`alert-account-${version}`, fetchAlertAccount);
   const account = query.data?.account ?? null;
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="Email Setup" subtitle="The outgoing email account used by every alert and automation. Configure it once, test it, then activate it." />
       {query.data && <WorkerStatus worker={query.data.worker} />}
       {query.error && <p className="text-sm text-destructive" role="alert">{query.error.message}</p>}
@@ -79,8 +79,8 @@ function AccountForm({ account, onChanged }: { account: AlertAccount | null; onC
     </Field>
   );
   return (
-    <div className="grid gap-4 xl:grid-cols-3">
-      <Card className="gap-4 px-5 py-4 xl:col-span-2">
+    <div className="grid gap-3 xl:grid-cols-3">
+      <Card className="gap-3 px-4 py-3 xl:col-span-2">
         <form noValidate onSubmit={save} aria-label="Email configuration" className="grid gap-3 sm:grid-cols-2">
           {text('name', 'Configuration name', 'text', true)}
           <div className="grid grid-cols-[1fr_6rem] gap-3">{text('host', 'SMTP host', 'text', true)}{text('port', 'Port', 'number', true)}</div>
@@ -114,7 +114,7 @@ function AccountForm({ account, onChanged }: { account: AlertAccount | null; onC
           </p>
         )}
       </Card>
-      <Card className="gap-3 px-5 py-4">
+      <Card className="gap-3 px-4 py-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold">Status</h2>
           {account?.is_active ? <Badge variant="outline" className="border-emerald-300 text-emerald-800">Active</Badge> : <Badge variant="outline">Not active</Badge>}

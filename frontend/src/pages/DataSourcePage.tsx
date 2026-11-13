@@ -63,10 +63,10 @@ export function DataSourcePage() {
   const notes = data.warnings.filter((w) => w.severity === 'info');
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="Data Source & Quality" subtitle="What the dashboard reads, what was validated, and how each figure is defined" />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-sm font-semibold">Reporting data</CardTitle>

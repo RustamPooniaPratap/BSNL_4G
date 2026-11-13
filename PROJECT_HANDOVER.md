@@ -242,7 +242,7 @@ uptime % = 100 × (1 − Σ outage minutes ÷ (1,440 × site-days reported))    
 ```
 
 - Raw CNMC files: outage minutes = 1440 × (1 − availability / 100) (verified for 4G Saturation; not confirmed for LWE).
-- **Site scopes** (dashboard filter): On-Air sites (default; On-Air = Yes), O&M Start sites (O&M Start of the current month = Yes), All sites. Internal scopes `on_air_om_start` / `on_air_om_not_started` exist for the RCA Site Scope and are not offered as dashboard filters.
+- **Site populations** (dashboard filter): On-Air sites (default) and O&M Start sites. Full Matrix inventory/status totals are separate from the selected performance population; they are not a third filter. Internal scopes `on_air_om_start` / `on_air_om_not_started` exist for the RCA Site Scope and are not offered as dashboard filters.
 - **Buckets** (MTD or period uptime per site): <60%, 60–<90%, 90–<97%, 97–<98.5%, ≥98.5%.
 - **NSLA / Not meeting SLA:** sites whose uptime is **below 98.5%** (`PENALTY_THRESHOLD`, the penalty buckets); sites without a value are not counted.
 
@@ -522,7 +522,7 @@ No production deployment configuration (Docker, CI pipeline, web server config) 
 | Two data layers | Site Portfolio (new layer, through 31 Oct 2026) and the other pages (legacy tables, include 1 Nov) can show different latest dates and figures until the remaining modules are migrated. The legacy LWE October data also differs from the new layer: the legacy import of 4 Nov used the consolidated October workbook, the new layer the approved LWE Oct'26 report. |
 | Source data gaps (new layer) | 78 MP 4G sites and 3 MP LWE sites have no O&M Start Date in the matrix, and 12 4G sites (6 MP, 6 OD) and 2 MP LWE sites have no On-Air Date; they are excluded from those populations until the matrix is corrected. 2 RJ sites are missing from the matrix; 436 matrix band IDs are claimed by several sites; mapping row LWEBH0141 uses a single `;`; BLG1394's 2100 and 700 IDs map to different Master IDs; 188 LWE sites have no mapping row (`docs/phase2-replay/`). |
 | Excel runtime reads | `dashboard/activity.py` (legacy conversion activity) reads `Data/reference/*Escalation Matrix*.xlsx`; `dashboard/reference.py` (O&M heads, used by Site Portfolio too) reads `Data/reference/*first page*.xlsx`; the Excel data source reads the uploaded Master workbook. Site Portfolio's conversion activity now comes from the matrix dates in the database. |
-| Dashboard filters | No "O&M Start = No" dashboard scope and no multi-circle selection. "All sites" scope still excludes non-On-Air sites from USD by design. |
+| Dashboard filters | Only On-Air and O&M Start performance populations are offered; full Matrix inventory totals remain separate. No "O&M Start = No" dashboard scope and no multi-circle selection. |
 | Permissions | Project-wide assignments include circles added to the project later. NOC Lead gets View/Export on new datasets automatically. CI users without assignments see nothing. |
 | RCA edit rules | Register forbids editing imported RCA facts; the Data Panel allows it (recorded as events; a later re-import shows them as conflicts). |
 | Data Panel | Saves are limited to 500 rows; the browser Back button is not intercepted by the unsaved-changes guard (links and reload are); each save becomes the "latest import", so the dashboard source label shows "Data Panel edit". |

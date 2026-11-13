@@ -1,19 +1,16 @@
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { ChartCard } from '../../../components/dashboard/ChartCard';
 import { usePopulation } from '../../../context/population';
 import { useApiQuery } from '../../../hooks/useApiQuery';
 import { fetchKpiHierarchy, fetchKpiSites } from '../api';
-import { count, hours, NUM, pct } from '../format';
-import { availabilityTone, coverageTone, problemTone, TONE_TEXT } from '../status';
+import { count, hours, pct } from '../format';
+import { availabilityTone, problemTone, toneText } from '../status';
 import type { HierarchyLevel, KpiGroupRow } from '../types';
 import type { useKpiFilters } from '../useKpiFilters';
 import { KpiTable, Pager } from './KpiTable';
+import { Panel } from './Ui';
 
 type Level = HierarchyLevel | 'site';
 const LEVELS: Level[] = ['circle', 'ci', 'ie', 'site'];
@@ -21,7 +18,7 @@ const NAMES: Record<Level, string> = { circle: 'Circle', ci: 'CI / Cluster', ie:
 const project = (p: string) => (p === '4G Saturation' ? '4G' : p);
 
 /**
- * Circle → CI/Cluster → IE → Site. A click narrows the filters to the row (so every tab follows) and opens the next
+ * Circle → CI/Cluster → IE → Site. A click narrows the filters to the row (so every view follows) and opens the next
  * level; the breadcrumb goes back. An IE is always the IE of one CI (the same name can work under several CIs).
  */
 export function DrillDown({ f }: { f: ReturnType<typeof useKpiFilters> }) {
@@ -38,40 +35,37 @@ export function DrillDown({ f }: { f: ReturnType<typeof useKpiFilters> }) {
   if (level === 'site' && f.values.ie.length) crumbs.push({ field: 'IE', label: f.values.ie.map((k) => k.split('::')[2]).join(', '), to: 'site', clear: {} });
   const step = LEVELS.indexOf(level);
   return (
-    <div className="space-y-3">
-      <Card className="gap-0 px-4 py-2.5 shadow-xs">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          {level !== 'circle' && (
-            <Button size="sm" variant="outline" className="h-8" onClick={() => {
-              const back = crumbs[crumbs.length - 2];
-              go(back.to, back.clear);
-            }}><ChevronLeft /> Back</Button>
-          )}
-          <nav aria-label="Drill-down" className="flex min-w-0 flex-wrap items-center gap-1 text-sm">
-            {crumbs.map((c, i) => (
-              <span key={c.label} className="inline-flex min-w-0 items-center gap-1">
-                {i > 0 && <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />}
-                {c.field && <span className="text-xs text-muted-foreground">{c.field}</span>}
-                {i === crumbs.length - 1 ? <span className="truncate font-semibold" aria-current="location">{c.label}</span>
-                  : <button type="button" className="truncate font-medium text-primary hover:underline" onClick={() => go(c.to, c.clear)}>{c.label}</button>}
+    <>
+      <section className="akp-card akp-pad flex flex-wrap items-center gap-x-4 gap-y-2" aria-label="Drill-down position">
+        {level !== 'circle' && (
+          <button type="button" className="akp-btn sm" onClick={() => {
+            const back = crumbs[crumbs.length - 2];
+            go(back.to, back.clear);
+          }}><ChevronLeft className="size-3.5" aria-hidden="true" /> Back</button>
+        )}
+        <nav aria-label="Drill-down" className="akp-crumb min-w-0">
+          {crumbs.map((c, i) => (
+            <span key={c.label} className="inline-flex min-w-0 items-center gap-1">
+              {i > 0 && <span aria-hidden="true">›</span>}
+              {c.field && <span className="akp-note">{c.field}</span>}
+              {i === crumbs.length - 1 ? <span className="truncate font-semibold" style={{ color: 'var(--akp-ink)' }} aria-current="location">{c.label}</span>
+                : <button type="button" className="truncate" onClick={() => go(c.to, c.clear)}>{c.label}</button>}
+            </span>
+          ))}
+        </nav>
+        <ol aria-label="Hierarchy level" className="akp-tabs small sm:ml-auto" style={{ borderBottom: 0 }}>
+          {LEVELS.map((l, i) => (
+            <li key={l} aria-current={i === step ? 'step' : undefined}>
+              <span className="inline-flex h-[34px] items-center px-2.5 text-[13px]"
+                style={i === step ? { color: 'var(--akp-accent)', fontWeight: 650, borderBottom: '2px solid var(--akp-accent)' } : { color: i < step ? 'var(--akp-ink)' : 'var(--akp-ink2)' }}>
+                {NAMES[l]}-wise
               </span>
-            ))}
-          </nav>
-          <ol aria-label="Hierarchy level" className="flex items-center gap-1 text-[11px] sm:ml-auto">
-            {LEVELS.map((l, i) => (
-              <li key={l} aria-current={i === step ? 'step' : undefined} className="inline-flex items-center gap-1">
-                {i > 0 && <span className={cn('h-px w-3', i <= step ? 'bg-primary/50' : 'bg-border')} aria-hidden="true" />}
-                <span className={cn('rounded-full px-2 py-0.5 font-medium whitespace-nowrap',
-                  i === step ? 'bg-primary text-primary-foreground' : i < step ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground')}>
-                  {NAMES[l]}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </Card>
+            </li>
+          ))}
+        </ol>
+      </section>
       {level === 'site' ? <SitesTable key={f.query.toString()} query={f.query} /> : <GroupTable level={level} query={f.query} onOpen={open} />}
-    </div>
+    </>
   );
 }
 
@@ -83,52 +77,52 @@ function GroupTable({ level, query, onOpen }: { level: HierarchyLevel; query: UR
   const rows = data.data?.rows ?? [];
   const next = NAMES[LEVELS[LEVELS.indexOf(level) + 1]];
   return (
-    <ChartCard title={`${NAMES[level]}-wise performance`} loading={data.loading} error={data.error} empty={!rows.length}
-      description={`${count(rows.length)} ${rows.length === 1 ? 'row' : 'rows'} · select a ${NAMES[level]} to open its ${next} view. Population: ${sitesLabel} (availability, thresholds, USD and NSLA); Total / On-Air / O&M Start are site status counts.`}>
+    <Panel title={`${NAMES[level]}-wise performance`} loading={data.loading} error={data.error} empty={!rows.length}
+      note={`${count(rows.length)} ${rows.length === 1 ? 'row' : 'rows'} · select a ${NAMES[level]} to open its ${next} view. Population: ${sitesLabel}.`}>
       <KpiTable>
         <TableHeader>
           <TableRow>
             <TableHead>{NAMES[level]}</TableHead>{level !== 'circle' && <TableHead>Circle</TableHead>}<TableHead>Project</TableHead>
-            <TableHead className={NUM}>Total sites</TableHead><TableHead className={NUM}>On-Air</TableHead><TableHead className={NUM}>O&amp;M Start</TableHead>
-            <TableHead className={NUM}>Availability</TableHead><TableHead className={NUM}>Outage</TableHead><TableHead className={NUM}>USD</TableHead>
-            <TableHead className={NUM}>NSLA</TableHead><TableHead className={NUM}>&lt; 98.5%</TableHead><TableHead className={NUM}>&lt; 60%</TableHead>
-            <TableHead className={NUM}>Coverage</TableHead><TableHead className="w-6" aria-hidden="true" />
+            <TableHead className="r">Availability</TableHead><TableHead className="r">Outage</TableHead><TableHead className="r">USD Sites</TableHead>
+            <TableHead className="r">NSLA Sites</TableHead><TableHead className="r">&lt; 98.5%</TableHead><TableHead className="r">&lt; 60%</TableHead>
+            <TableHead className="w-6" aria-hidden="true" />
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.map((r) => (
-            <TableRow key={`${r.project}|${r.key}`} className="group/row cursor-pointer hover:bg-muted/50" onClick={() => onOpen(r)}>
+            <TableRow key={`${r.project}|${r.key}`} className="group/row cursor-pointer" onClick={() => onOpen(r)}>
               <TableCell className="font-medium">
-                <button type="button" className="text-left text-primary hover:underline" aria-label={`Open ${NAMES[level]} ${r[level === 'circle' ? 'circle' : level] ?? ''} (${project(r.project)})`}
+                <button type="button" className="akp-link" aria-label={`Open ${NAMES[level]} ${r[level === 'circle' ? 'circle' : level] ?? ''} (${project(r.project)})`}
                   onClick={(e) => { e.stopPropagation(); onOpen(r); }}>{level === 'circle' ? r.circle : level === 'ci' ? r.ci : r.ie}</button>
-                {level === 'ie' && <span className="block text-[11px] font-normal text-muted-foreground">CI: {r.ci}</span>}
+                {level === 'ie' && <span className="sub">CI: {r.ci}</span>}
               </TableCell>
               {level !== 'circle' && <TableCell>{r.circle}</TableCell>}
               <TableCell>{project(r.project)}</TableCell>
-              <TableCell className={NUM}>{count(r.total_sites)}</TableCell>
-              <TableCell className={NUM}>{count(r.on_air_sites)}</TableCell>
-              <TableCell className={NUM}>{count(r.om_start_sites)}</TableCell>
-              <TableCell className={cn(NUM, TONE_TEXT[availabilityTone(r.availability_pct)])}>{pct(r.availability_pct, 3)}</TableCell>
-              <TableCell className={NUM}>{hours(r.outage_hours)}</TableCell>
-              <TableCell className={NUM}>{count(r.usd_sites)}</TableCell>
-              <TableCell className={NUM}>{count(r.nsla_sites)}</TableCell>
-              <TableCell className={NUM}>{count(r.below_98_5_sites)}</TableCell>
-              <TableCell className={cn(NUM, TONE_TEXT[problemTone(r.below_60_sites, 'bad')])}>{count(r.below_60_sites)}</TableCell>
-              <TableCell className={cn(NUM, TONE_TEXT[coverageTone(r.coverage_pct)])}>{pct(r.coverage_pct, 1)}</TableCell>
-              <TableCell className="px-1 text-muted-foreground"><ChevronRight className="size-3.5 opacity-40 group-hover/row:opacity-100" aria-hidden="true" /></TableCell>
+              <TableCell className={cn('r', toneText(availabilityTone(r.availability_pct)))}>{pct(r.availability_pct, 3)}</TableCell>
+              <TableCell className="r">{hours(r.outage_hours)}</TableCell>
+              <TableCell className="r">{count(r.usd_sites)}</TableCell>
+              <TableCell className="r">{count(r.nsla_sites)}</TableCell>
+              <TableCell className="r">{count(r.below_98_5_sites)}</TableCell>
+              <TableCell className={cn('r', toneText(problemTone(r.below_60_sites, 'bad')))}>{count(r.below_60_sites)}</TableCell>
+              <TableCell className="px-1 muted"><ChevronRight className="size-3.5 opacity-40 group-hover/row:opacity-100" aria-hidden="true" /></TableCell>
             </TableRow>
           ))}
         </TableBody>
       </KpiTable>
-    </ChartCard>
+    </Panel>
   );
 }
 
-const SORTS: [string, string][] = [['availability', 'Lowest availability'], ['-outage', 'Most outage'], ['days', 'Fewest days reported'], ['site_id', 'Site ID']];
-const yesNo = (v: boolean | null, yesClass: string) => (v == null ? <span className="text-muted-foreground">—</span> : v ? <span className={yesClass}>Yes</span> : <span className="text-muted-foreground">No</span>);
+const SORTS: [string, string][] = [['availability', 'Lowest availability'], ['-outage', 'Most outage'], ['site_id', 'Site ID']];
+const yesNo = (v: boolean | null, yesClass: string) => (v == null ? <span className="muted">—</span> : v ? <span className={yesClass}>Yes</span> : <span className="muted">No</span>);
 
-/** Site-wise table: server-side search, sort and paging. */
-export function SitesTable({ query, defaultSort = 'availability', title = 'Site-wise performance' }: { query: URLSearchParams; defaultSort?: string; title?: string }) {
+/**
+ * Site-wise table: server-side search, sort and paging. `buckets` limits it to availability buckets through the
+ * existing `bucket` filter (e.g. the "Sites < 60%" list); an empty list means no bucket matches the page's filters.
+ */
+export function SitesTable({ query, defaultSort = 'availability', title = 'Site-wise performance', buckets = null, bare }: {
+  query: URLSearchParams; defaultSort?: string; title?: string; buckets?: string[] | null; bare?: boolean;
+}) {
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState(defaultSort);
   const [q, setQ] = useState('');
@@ -136,29 +130,31 @@ export function SitesTable({ query, defaultSort = 'availability', title = 'Site-
   params.set('page', String(page));
   params.set('sort', sort);
   if (q.trim()) params.set('q', q.trim());
-  const data = useApiQuery(`allkpis-sites-${params}`, (signal) => fetchKpiSites(params, signal));
+  if (buckets) params.set('bucket', buckets.join(','));
+  const none = buckets != null && !buckets.length;
+  const data = useApiQuery(none ? null : `allkpis-sites-${params}`, (signal) => fetchKpiSites(params, signal));
   const d = data.data;
   return (
-    <ChartCard title={title} loading={data.loading} error={data.error} empty={!d?.rows.length}
-      emptyMessage={q.trim() ? `No site matches "${q.trim()}".` : undefined}
-      description={d ? `${count(d.total)} sites · availability and outage over the selected period` : undefined}
+    <Panel title={title} bare={bare} loading={data.loading} error={data.error} empty={none || !d?.rows.length}
+      emptyMessage={none ? 'No site of the selected availability buckets falls in this list.' : q.trim() ? `No site matches "${q.trim()}".` : undefined}
+      note={d && !none ? `${count(d.total)} sites · availability and outage over the selected period` : undefined}
       action={(
-        <div className="flex flex-wrap items-center gap-2">
+        <>
           <div className="relative">
-            <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-            <Input aria-label="Search sites" placeholder="Site ID or name" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} className="h-8 w-48 pl-8 text-xs" />
+            <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" style={{ color: 'var(--akp-ink2)' }} aria-hidden="true" />
+            <input aria-label="Search sites" placeholder="Site ID or name" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} className="akp-input w-48 pl-8" />
           </div>
-          <select aria-label="Sort sites" className="h-8 rounded-md border bg-background px-2 text-xs shadow-xs" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
+          <select aria-label="Sort sites" className="akp-input" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
             {SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
-        </div>
+        </>
       )}>
       <KpiTable>
         <TableHeader>
           <TableRow>
             <TableHead>Site ID</TableHead><TableHead>Name</TableHead><TableHead>Circle</TableHead><TableHead>CI / Cluster</TableHead><TableHead>IE</TableHead>
-            <TableHead>On-Air</TableHead><TableHead>O&amp;M Start</TableHead><TableHead className={NUM}>Availability</TableHead><TableHead className={NUM}>Outage</TableHead>
-            <TableHead>SLA bucket</TableHead><TableHead>USD</TableHead><TableHead>NSLA</TableHead><TableHead className={NUM}>Days reported</TableHead>
+            <TableHead className="r">Availability</TableHead><TableHead className="r">Outage</TableHead>
+            <TableHead>SLA bucket</TableHead><TableHead>USD Site</TableHead><TableHead>NSLA Site</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -166,22 +162,19 @@ export function SitesTable({ query, defaultSort = 'availability', title = 'Site-
             <TableRow key={`${r.project}|${r.site_id}`}>
               <TableCell className="font-medium">{r.site_id}</TableCell>
               <TableCell className="max-w-48 truncate" title={r.site_name || undefined}>{r.site_name || '—'}</TableCell>
-              <TableCell>{r.circle} <span className="text-muted-foreground">· {project(r.project)}</span></TableCell>
+              <TableCell>{r.circle} <span className="muted">· {project(r.project)}</span></TableCell>
               <TableCell className="max-w-40 truncate" title={r.ci}>{r.ci}</TableCell>
               <TableCell className="max-w-40 truncate" title={r.ie}>{r.ie}</TableCell>
-              <TableCell>{r.on_air ? 'Yes' : <span className="text-muted-foreground">No</span>}</TableCell>
-              <TableCell>{r.om_start == null ? <span className="text-muted-foreground">Not available</span> : r.om_start ? 'Yes' : <span className="text-muted-foreground">No</span>}</TableCell>
-              <TableCell className={cn(NUM, TONE_TEXT[availabilityTone(r.availability_pct)])}>{r.availability_pct == null ? <span className="text-muted-foreground">No value</span> : pct(r.availability_pct, 3)}</TableCell>
-              <TableCell className={NUM}>{hours(r.outage_hours)}</TableCell>
-              <TableCell>{r.bucket_label ?? <span className="text-muted-foreground">No value</span>}</TableCell>
-              <TableCell>{yesNo(r.usd, 'font-medium text-amber-700')}</TableCell>
-              <TableCell>{yesNo(r.nsla, 'font-medium text-red-700')}</TableCell>
-              <TableCell className={cn(NUM, r.days_reported < r.days_expected && 'font-medium text-amber-700')}>{r.days_reported} / {r.days_expected}</TableCell>
+              <TableCell className={cn('r', toneText(availabilityTone(r.availability_pct)))}>{r.availability_pct == null ? <span className="muted">No value</span> : pct(r.availability_pct, 3)}</TableCell>
+              <TableCell className="r">{hours(r.outage_hours)}</TableCell>
+              <TableCell>{r.bucket_label ?? <span className="muted">No value</span>}</TableCell>
+              <TableCell>{yesNo(r.usd, 't-warn')}</TableCell>
+              <TableCell>{yesNo(r.nsla, 't-crit')}</TableCell>
             </TableRow>
           ))}
         </TableBody>
       </KpiTable>
-      {d && <Pager page={d.page} pages={d.pages} total={d.total} pageSize={d.page_size} onPage={setPage} noun="sites" />}
-    </ChartCard>
+      {d && !none && <Pager page={d.page} pages={d.pages} total={d.total} pageSize={d.page_size} onPage={setPage} noun="sites" />}
+    </Panel>
   );
 }

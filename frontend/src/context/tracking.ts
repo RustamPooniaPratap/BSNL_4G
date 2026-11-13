@@ -9,12 +9,11 @@ export interface TrackingState {
   contacts: Record<string, Contact>;
   followUps: FollowUp[];
   deadlines: DeadlineConfig;
-  /** O&M Head and Remarks per report type | circle on Site Portfolio (no source in the workbook). */
+  /** Site Portfolio remarks per report type | circle; held in browser memory only. */
   portfolioNotes: Record<string, PortfolioNote>;
 }
 
 export interface PortfolioNote {
-  omHead: string;
   remarks: string;
 }
 

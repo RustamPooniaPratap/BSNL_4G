@@ -98,7 +98,7 @@ export function TeamsPage() {
     : bucket === 'lt_60' ? 'Sites below 60% MTD and who is responsible' : 'Sites and who is responsible';
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
 
       <FilterBar options={options.data} filters={filters} onChange={setFilters} canReset={!isDefault}
         onReset={reset} showTrendRange={false}
@@ -180,12 +180,12 @@ function Kpi({ label, value, detail, tone, onClick }: { label: string; value: st
   const body = (
     <>
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className={cn('mt-1 text-2xl font-semibold tabular-nums', tone === 'bad' && 'text-destructive')}>{value}</p>
+      <p className={cn('mt-1 text-2xl leading-7 font-semibold tabular-nums', tone === 'bad' && 'text-destructive')}>{value}</p>
       <p className="mt-0.5 truncate text-xs text-muted-foreground" title={detail}>{detail}</p>
     </>
   );
   return (
-    <Card className="gap-0 px-4 py-3">
+    <Card className="gap-0 px-3.5 py-2.5">
       {onClick ? (
         <button type="button" onClick={onClick} className="rounded text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">{body}</button>
       ) : body}

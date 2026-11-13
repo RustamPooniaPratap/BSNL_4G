@@ -11,7 +11,7 @@ Everything is computed from existing data through existing interfaces, without c
   population is not available (never estimated). Every response carries the ``population`` block.
 - Shared formulas reused as they are: ``metrics.uptime_pct`` (outage-weighted availability), ``metrics.bucket_ids``
   (threshold buckets), ``metrics.WEEKS``, ``metrics.team_names``; RCA: ``rca.services.filtered`` and the approved
-  Final Bucket mapping ``rca.breakdown.FINAL_BUCKET_CATEGORIES``.
+  Final Bucket mapping ``rca.taxonomy.approved_final`` (the approved master, case and whitespace ignored).
 
 USD and NSLA use the shared per-site rules of the dashboard (approved rule B-3, ``metrics.usd_dates`` / ``nsla_dates``)
 over the selected population, exactly as the dashboard:
@@ -411,7 +411,8 @@ def rca(params, user) -> dict:
     those match the population's sites (``scope``) of the period, as the other All KPI's figures."""
     from apps.accounts.access import pairs_for
     from apps.rca import services
-    from apps.rca.breakdown import COLUMNS, FINAL_BUCKET_CATEGORIES
+    from apps.rca import taxonomy
+    from apps.rca.breakdown import COLUMNS
     from django.db.models import Count, Sum
 
     scope = _scope(params)
@@ -431,7 +432,7 @@ def rca(params, user) -> dict:
     by_bucket, by_circle, unmapped = Counter(), {}, Counter()
     minutes = Counter()
     for r in qs.values('circle', 'final_bucket_key', 'final_bucket').annotate(n=Count('id'), m=Sum('outage_minutes')):
-        column = FINAL_BUCKET_CATEGORIES.get(r['final_bucket_key']) if r['final_bucket_key'] else None
+        column = taxonomy.approved_final(r['final_bucket_key']) if r['final_bucket_key'] else None
         if sel.final_buckets and (column or 'Not mapped') not in sel.final_buckets:
             continue
         name = column or 'Not mapped'

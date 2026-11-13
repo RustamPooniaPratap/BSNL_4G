@@ -365,7 +365,7 @@ export const createRcaCategory = (name: string, description = '') => send<{ id: 
 export const mapRcaCauses = (keys: string[], category: number) => send<RcaCauses>('/rca/causes/mappings/', { keys, category });
 export const unmapRcaCauses = (keys: string[]) => send<RcaCauses>('/rca/causes/mappings/', { keys }, 'DELETE');
 
-// --- Raw daily CSV uploads (Data Entry -> Upload CSV) ------------------------------------------
+// --- Raw daily CSV uploads (Uptime Data -> Uptime Data Upload) ------------------------------------------
 
 export const fetchRawUploadOptions = (signal?: AbortSignal) => request<RawUploadOptions>('/raw-uploads/options/', undefined, { signal });
 export const fetchRawUploads = (signal?: AbortSignal) => request<{ uploads: RawUpload[] }>('/raw-uploads/', undefined, { signal });

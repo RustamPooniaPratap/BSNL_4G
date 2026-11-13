@@ -24,8 +24,9 @@ Validation priorities (business rules of 4 Nov 2026):
    that is not an approved Sub Bucket of any Final Bucket, is a warning only; the value is kept as written.
 4. RCA description, no priority. A blank or placeholder description is a note only; descriptions are never classified
    here.
-5. Basic integrity (date, project, circle, Site ID, Outage Min., report scope) rejects the row; an outage over one day
-   is a separate warning and the value is kept.
+5. Basic integrity (date, project, circle, Site ID, Outage Min., report scope) rejects the row. Outage Min. must be a
+   finite number of 0 or more; there is no upper limit (more than 1,440 minutes for one reporting day is valid and is
+   stored and reported as submitted, never capped).
 
 The importer matches stored records by the same key (importer._identity), so preview and import apply one rule.
 ``occurrence`` ranks a site's rows of a date by Final Bucket and Sub Bucket; the importer numbers new records after the
@@ -34,6 +35,7 @@ ones already stored.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from collections import Counter
 from datetime import date, datetime, timedelta
@@ -45,7 +47,6 @@ from . import taxonomy
 
 SHEET_NAME = 'Sheet1'  # the usual data sheet; any sheet with the RCA header is accepted
 HEADER_SEARCH_ROWS = 10
-MINUTES_PER_DAY = 1440
 # Header text (case and spaces ignored) -> field.
 COLUMNS = {
     'date': 'reporting_date', 'project': 'project_raw', 'circle': 'circle_raw', 'site id': 'site_id',
@@ -120,12 +121,11 @@ def _number(value) -> tuple[float | None, bool]:
         return None, True
     if isinstance(value, bool):
         return None, False
-    if isinstance(value, (int, float)):
-        return float(value), True
     try:
-        return float(str(value).strip().replace(',', '')), True
+        number = float(value) if isinstance(value, (int, float)) else float(str(value).strip().replace(',', ''))
     except ValueError:
         return None, False
+    return (number, True) if math.isfinite(number) else (None, False)  # "nan" / "inf" are not numbers of minutes
 
 
 def _header(value) -> str:
@@ -336,8 +336,6 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
                   f'The Up-Time Report lists this site under {uptime_circle}, the file under {circle}: kept as written.')
         if outage is None:
             issue('warning', 'blank_outage', offset, site_id, 'Outage Min. is blank: kept as not recorded (not 0).')
-        elif outage > MINUTES_PER_DAY:
-            issue('warning', 'outage_over_day', offset, site_id, f'Outage Min. {outage:g} is more than one day (1,440 min).')
         om = values['om_start_raw'].casefold()
         om_start = True if om == 'yes' else False if om == 'no' else None
         if om_start is None:
@@ -431,7 +429,6 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
             },
             # 4. Valid rows whose RCA description is blank or a placeholder (never block).
             'rca_description_warnings': sum(1 for r in rows if not r['rca_key']),
-            'outage_over_day_rows': sum(1 for i in issues if i['code'] == 'outage_over_day'),
             'sites_with_several_records': sum(1 for r in rows if r['occurrence'] == 2),
             'rows_read': len(rows) + len({i['row'] for i in issues if i['severity'] == 'error'}),
             'valid_rows': len(rows),

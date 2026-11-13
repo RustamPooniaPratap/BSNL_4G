@@ -272,7 +272,6 @@ export interface RcaImportReport {
   sub_bucket_warnings?: { rows: number; missing_rows: number; not_approved_rows: number; values: (RcaValueProblem & { final_bucket: string })[] };
   /** Valid rows with a blank or placeholder RCA description: never block the import. */
   rca_description_warnings?: number;
-  outage_over_day_rows?: number;
   /** Per reporting date in the workbook: rows against stored records; earlier dates are history of a cumulative workbook. */
   by_date?: RcaDateBreakdown[];
   earlier_date_rows?: number;

@@ -48,7 +48,7 @@ export function SitedataUptimePanel({ onCommitted }: { onCommitted: () => void }
   };
   const r = batch?.report;
   return (
-    <div className="space-y-4" role="region" aria-label="Up-Time Report into the new data layer">
+    <div className="space-y-3" role="region" aria-label="Up-Time Report into the new data layer">
       <p className="text-xs text-muted-foreground">
         Adds the workbook's daily values to the new data layer, which every dashboard page reads. Sites come from the Consolidation Matrix; the workbook
         never creates sites. Values already stored, authorized corrections and higher-precedence sources are never overwritten.
@@ -83,7 +83,7 @@ export function SitedataUptimePanel({ onCommitted }: { onCommitted: () => void }
         </Alert>
       )}
       {batch && r && (
-        <section aria-label="New data layer import preview" className="space-y-3 rounded-xl border p-4">
+        <section aria-label="New data layer import preview" className="space-y-3 rounded-xl border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">Preview #{batch.id}: {batch.file} · nothing has been written yet</h2>
             <a href={sitedataUptimeIssuesUrl(batch.id)} className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline">

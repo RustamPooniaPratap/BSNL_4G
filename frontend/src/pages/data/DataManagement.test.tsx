@@ -168,13 +168,13 @@ describe('Add New Site', () => {
 });
 
 describe('Sidebar', () => {
-  it('lists the three workflows under Data Entry, opens that group and highlights the active one', () => {
+  it('lists the three workflows under Uptime Data, opens that group and highlights the active one', () => {
     renderWithWorkbook(<Sidebar />, { url: '/data/upload-csv' });
     const nav = screen.getByRole('navigation', { name: 'Main' });
-    expect(within(nav).getByRole('button', { name: 'Data Entry' })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(nav).getByRole('button', { name: 'Uptime Data' })).toHaveAttribute('aria-expanded', 'true');
     const labels = within(nav).getAllByRole('link').map((a) => a.textContent);
-    expect(labels.slice(labels.indexOf('Add Row'))).toEqual(['Add Row', 'Upload CSV', 'Add Site', 'Users & Roles', 'Organization']);
-    expect(within(nav).getByRole('link', { name: 'Upload CSV' })).toHaveAttribute('aria-current', 'page');
+    expect(labels.slice(labels.indexOf('Add Row'))).toEqual(['Add Row', 'Uptime Data Upload', 'Add Site', 'Users & Roles', 'Organization']);
+    expect(within(nav).getByRole('link', { name: 'Uptime Data Upload' })).toHaveAttribute('aria-current', 'page');
     expect(within(nav).getByRole('link', { name: 'Add Row' })).not.toHaveAttribute('aria-current');
   });
 });

@@ -88,7 +88,7 @@ export function AddRowPage() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <DataEntryHeader
         icon={<ClipboardPen />}
         accent="bg-blue-50 text-blue-700"
@@ -110,7 +110,7 @@ export function AddRowPage() {
             <CardTitle className="text-sm font-semibold">Review the record</CardTitle>
             <CardDescription className="text-xs">Check the details, then confirm. Confirming only validates in the browser.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-3">
             <ReviewList items={[
               { label: 'Report type', value: draft.reportType },
               { label: 'Circle', value: draft.circle },
@@ -135,8 +135,8 @@ export function AddRowPage() {
             <CardDescription className="text-xs">Fields marked * are required.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form noValidate onSubmit={(e) => { e.preventDefault(); review(); }} className="space-y-5">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <form noValidate onSubmit={(e) => { e.preventDefault(); review(); }} className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <Field id="row-report-type" label="Report type" required error={visible('reportType')}>
                   <SelectField id="row-report-type" value={draft.reportType} placeholder="Choose report type" error={visible('reportType')}
                     options={options.data.report_types.map((t) => ({ value: t.value, label: t.label }))}

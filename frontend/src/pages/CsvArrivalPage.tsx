@@ -136,7 +136,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
   }, [filtered, filters.card, sort]);
 
   const heading = (
-    <PageHeading title="CSV Arrival & Follow-up"
+    <PageHeading title="Data Arrival & Follow-up"
       subtitle={`${new Date(`${reportingDate}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' })}, ${formatDate(reportingDate)}${reportingDate === today ? ' (today)' : ''} · stored daily 4G and LWE data, CSV uploads and follow-ups`} />
   );
   const dateField = (
@@ -147,7 +147,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
   );
   if (tracker.error && !current) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
         {heading}
         <FilterCard label="Tracking filters">{dateField}</FilterCard>
         <Alert variant="destructive" role="alert">
@@ -162,7 +162,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
   }
   if (!current) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
         {heading}
         <FilterCard label="Tracking filters">{dateField}</FilterCard>
         <Skeleton className="h-96 w-full" aria-label="Loading CSV arrival tracking" />
@@ -209,7 +209,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
   ];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {heading}
       <FilterCard label="Tracking filters"
         actions={(
@@ -287,10 +287,10 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
           return (
             <button key={card.id} type="button" aria-pressed={active}
               onClick={() => setFilter({ card: active ? 'all' : card.id })}
-              className={cn('rounded-xl border bg-card px-4 py-3 text-left shadow-xs transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+              className={cn('rounded-xl border bg-card px-3.5 py-2.5 text-left shadow-xs transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
                 active && 'border-primary ring-2 ring-primary/20')}>
               <span className="flex items-center justify-between text-xs font-medium text-muted-foreground [&_svg]:size-3.5">{card.label}{card.icon}</span>
-              <span className={cn('mt-1 block text-2xl font-semibold tabular-nums', card.tone)}>{formatNumber(card.value)}</span>
+              <span className={cn('mt-1 block text-2xl leading-7 font-semibold tabular-nums', card.tone)}>{formatNumber(card.value)}</span>
               <span className="text-[11px] text-muted-foreground">{active ? 'Showing these · select to clear' : 'Select to filter the table'}</span>
             </button>
           );
@@ -304,7 +304,7 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
             {formatNumber(rows.length)} of {formatNumber(submissions.length)} project circles shown. Select a row for its uploads, contact and follow-up history.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4 px-0">
+        <CardContent className="space-y-3 px-0">
           {rows.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted-foreground">
               <Inbox className="size-6" aria-hidden="true" />
@@ -742,7 +742,7 @@ function Details({ s, onEditArrival, onRecordArrival, onRemoveArrival, onContact
         <SheetTitle className="flex flex-wrap items-center gap-2">{s.circle} <TypeBadge reportType={s.reportType} /> <StatusBadge status={s.status} /></SheetTitle>
         <SheetDescription>{formatDate(s.reportingDate)} · {s.deadline ? `due ${formatDateTime(s.deadline.toISOString())}` : 'no deadline configured'}</SheetDescription>
       </SheetHeader>
-      <div className="space-y-5 px-4 pb-6">
+      <div className="space-y-4 px-4 pb-6">
         <section aria-label="Stored daily data">
           <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Stored daily data (reporting data)</h3>
           <dl className="divide-y">
@@ -775,7 +775,7 @@ function Details({ s, onEditArrival, onRecordArrival, onRemoveArrival, onContact
           ) : <p className="text-sm text-muted-foreground">No CSV upload recorded for this date.</p>}
           <p className="mt-1 text-xs text-muted-foreground">
             Latest CSV received: {item.latest_upload_date ? formatDate(item.latest_upload_date) : '—'} · latest imported: {item.latest_import_date ? formatDate(item.latest_import_date) : '—'}
-            {' · '}<Link className="underline underline-offset-2" to="/data/upload-csv">Upload CSV</Link>
+            {' · '}<Link className="underline underline-offset-2" to="/data/upload-csv">Uptime Data Upload</Link>
           </p>
         </section>
         <section aria-label="Contact">

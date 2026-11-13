@@ -90,7 +90,7 @@ export function AddSitePage() {
   );
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <DataEntryHeader
         icon={<MapPinPlus />}
         accent="bg-emerald-50 text-emerald-700"
@@ -101,7 +101,7 @@ export function AddSitePage() {
 
       {step === 'done' ? (
         <ValidatedLocally message={VALIDATED_MESSAGES.site}>
-          <p className="mt-1">The site is not added to the Master workbook or the database, so Add Row and Upload CSV will still treat it as unknown.</p>
+          <p className="mt-1">The site is not added to the Master workbook or the database, so Add Row and Uptime Data Upload will still treat it as unknown.</p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={() => { setDraft(EMPTY); setShowErrors(false); setStep('edit'); }}>Prepare another site</Button>
             <Button size="sm" variant="outline" onClick={() => setStep('edit')}>Back to this site</Button>
@@ -113,7 +113,7 @@ export function AddSitePage() {
             <CardTitle className="text-sm font-semibold">Review the new site</CardTitle>
             <CardDescription className="text-xs">Confirming only validates in the browser; the site is not registered anywhere.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-3">
             <ReviewList items={[
               { label: 'Report type', value: draft.reportType },
               { label: 'Circle', value: draft.circle },
@@ -140,8 +140,8 @@ export function AddSitePage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form noValidate onSubmit={(e) => { e.preventDefault(); review(); }} className="space-y-5">
-              <fieldset className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <form noValidate onSubmit={(e) => { e.preventDefault(); review(); }} className="space-y-4">
+              <fieldset className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <legend className="mb-2 text-xs font-semibold text-muted-foreground uppercase">Identity</legend>
                 <Field id="site-report-type" label="Report type" required error={visible('reportType')}>
                   <SelectField id="site-report-type" value={draft.reportType} placeholder="Choose report type" error={visible('reportType')}
@@ -178,7 +178,7 @@ export function AddSitePage() {
                 <Alert variant="destructive"><AlertTitle>Could not check for an existing site</AlertTitle><AlertDescription>{lookup.error.message}</AlertDescription></Alert>
               )}
 
-              <fieldset className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <fieldset className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <legend className="mb-2 text-xs font-semibold text-muted-foreground uppercase">Location and status</legend>
                 <Field id="site-oa" label="OA" hint="Operating area, e.g. Bhopal.">{text('oa', 'OA', 'site-oa-options')}</Field>
                 <Field id="site-ba" label="BA (Business Area)">{text('ba', 'BA', 'site-ba-options')}</Field>
@@ -193,7 +193,7 @@ export function AddSitePage() {
                 </Field>
               </fieldset>
 
-              <fieldset className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <fieldset className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <legend className="mb-2 text-xs font-semibold text-muted-foreground uppercase">Responsibility</legend>
                 <Field id="site-ieName" label="IE Name">{text('ieName', 'Engineer', 'site-ie-options')}</Field>
                 <Field id="site-ciName" label="CI Name">{text('ciName', 'Cluster in-charge', 'site-ci-options')}</Field>

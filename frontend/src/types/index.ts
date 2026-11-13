@@ -161,8 +161,10 @@ export interface TrendResponse {
 export interface CircleBreakdown {
   report_type: string;
   circle: string;
-  /** Every site of the circle whatever the population (site status), when the API gives it. */
-  sites_total?: number;
+  /** Active O&M Head role assignments for this project/circle. */
+  om_heads?: string[];
+  /** Distinct BSNL Site IDs in the full dashboard inventory for this circle and technology. */
+  sites_total: number;
   sites_in_scope: number;
   sites_reported: number;
   daily_uptime_pct: number | null;
@@ -177,10 +179,10 @@ export interface CircleBreakdown {
   buckets: Record<BucketId, number>;
   daily_buckets: Record<BucketId, number>;
   /** Distinct CIs / IEs named on the circle's sites (case and spacing ignored), and sites with none. */
-  ci_count?: number;
-  ie_count?: number;
-  sites_without_ci?: number;
-  sites_without_ie?: number;
+  ci_count: number;
+  ie_count: number;
+  sites_without_ci: number;
+  sites_without_ie: number;
 }
 
 export interface TeamCounts {
@@ -206,7 +208,7 @@ export interface BreakdownResponse {
   comparison: SameDaysComparison;
   circles: CircleBreakdown[];
   /** Distinct people over all circles ('all') and per report type: someone in two circles counts once. */
-  team_totals?: Record<string, TeamCounts>;
+  team_totals: Record<string, TeamCounts>;
   buckets: { id: BucketId; label: string; workbook_label: string; count: number }[];
   daily_buckets: { id: BucketId; label: string; workbook_label: string; count: number }[];
   filters: AppliedFilters;

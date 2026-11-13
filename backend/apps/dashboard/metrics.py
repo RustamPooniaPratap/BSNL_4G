@@ -90,6 +90,19 @@ def base_mask(ds: Dataset, selection: Selection) -> np.ndarray:
     return mask
 
 
+def _distinct_site_count(sites: pd.DataFrame) -> int:
+    """Count inventory by BSNL Site ID, not by source rows."""
+    return int(sites['site_id'].nunique()) if 'site_id' in sites else len(sites)
+
+
+def _distinct_site_positions(ds: Dataset, positions: np.ndarray) -> np.ndarray:
+    """Keep the first source row for each site ID, preserving the dataset's positional order."""
+    if not len(positions) or 'site_id' not in ds.sites:
+        return positions
+    unique = ~ds.sites.iloc[positions]['site_id'].duplicated().to_numpy()
+    return positions[unique]
+
+
 def scope_mask(ds: Dataset, selection: Selection) -> np.ndarray:
     """The selection's sites of its population in the reporting month (population_flags); an internal scope that is not
     a population ("all") restricts nothing."""
@@ -458,12 +471,16 @@ def summary(ds: Dataset, selection: Selection, day: date) -> dict:
     mtd_outage, mtd_site_days = _window(mtd_block)
     daily_outage = float(np.nansum(daily))
     buckets = bucket_counts(bucket_ids(site_uptime(mtd_block)))
-    in_scope = len(rows)
+    in_scope = _distinct_site_count(ds.sites.iloc[rows])
     base = base_mask(ds, selection)
+    base_sites = ds.sites.iloc[np.flatnonzero(base)]
     mtd_dates = [ds.dates[c] for c in mtd_cols]
     nsla = nsla_count(*nsla_dates(ds, rows, mtd_dates, scope=selection.scope))
     usd = unique_sites_down(*usd_dates(ds, rows, mtd_dates, scope=selection.scope))
     on_air_flag, om_flag = ds.sites['on_air'].to_numpy(dtype=bool), ds.sites['om_start'].to_numpy(dtype=bool)
+    on_air_sites = ds.sites.iloc[np.flatnonzero(base & on_air_flag)]
+    om_start_sites = ds.sites.iloc[np.flatnonzero(base & om_flag)]
+    converted_sites = ds.sites.iloc[np.flatnonzero(base & on_air_flag & om_flag)]
 
     return {
         'reporting_date': day.isoformat(),
@@ -474,9 +491,9 @@ def summary(ds: Dataset, selection: Selection, day: date) -> dict:
             'days_missing': [d.isoformat() for d in mtd_missing],
         },
         'metrics': {
-            'sites_total': int(base.sum()),
+            'sites_total': _distinct_site_count(base_sites),
             # On-Air = Yes and O&M Start = Yes on the same site (blank or 0 is "not recorded", not a failure).
-            'sites_converted': int((base & ds.sites['on_air'].to_numpy(dtype=bool) & ds.sites['om_start'].to_numpy(dtype=bool)).sum()),
+            'sites_converted': _distinct_site_count(converted_sites),
             'sites_in_scope': in_scope,
             'sites_reported': int(reported.sum()),
             'sites_missing': int((~reported).sum()),
@@ -504,8 +521,8 @@ def summary(ds: Dataset, selection: Selection, day: date) -> dict:
         # the population: a status breakdown, not a population metric. sites_total / sites_converted above are the same
         # status counts (kept for compatibility); the population's site count is sites_in_scope.
         'status_counts': {'label': 'Status counts (all dashboard sites of the selection; not a population figure)',
-                          'total': int(base.sum()), 'on_air': int((base & on_air_flag).sum()), 'om_start': int((base & om_flag).sum()),
-                          'on_air_and_om_start': int((base & on_air_flag & om_flag).sum())},
+                          'total': _distinct_site_count(base_sites), 'on_air': _distinct_site_count(on_air_sites),
+                          'om_start': _distinct_site_count(om_start_sites), 'on_air_and_om_start': _distinct_site_count(converted_sites)},
         'previous_month_conversion': previous_month_conversion(ds, base),
         'outage_comparison': outage_comparison(ds, selection, day, daily_outage if reported.any() else None,
                                                outage_total(mtd_block), [ds.dates[c] for c in mtd_cols]),
@@ -674,8 +691,10 @@ def same_days_previous_month(ds: Dataset, day: date) -> tuple[dict, np.ndarray |
     return meta, entry['outage'][:, cols]
 
 
-def breakdown(ds: Dataset, selection: Selection, day: date) -> dict:
+def breakdown(ds: Dataset, selection: Selection, day: date, *, include_inventory: bool = False) -> dict:
     rows = np.flatnonzero(scope_mask(ds, selection))
+    if include_inventory:
+        rows = _distinct_site_positions(ds, rows)
     comparison, previous_block = same_days_previous_month(ds, day)
     column = ds.position(day)
     mtd_cols, _ = mtd_positions(ds, day)
@@ -685,9 +704,23 @@ def breakdown(ds: Dataset, selection: Selection, day: date) -> dict:
     day_buckets = bucket_ids(site_uptime(ds.outage[rows, column][:, None]))
 
     circles = []
-    for (report_type, circle), group in sites.groupby(['report_type', 'circle'], sort=True):
-        positions = np.searchsorted(rows, group.index.to_numpy())
-        group_rows = rows[positions]
+    inventory = ds.sites.iloc[_distinct_site_positions(ds, np.flatnonzero(base_mask(ds, selection)))]
+    inventory_counts = {
+        key: _distinct_site_count(group)
+        for key, group in inventory.groupby(['report_type', 'circle'], sort=True)
+    }
+    circle_source = inventory if include_inventory else sites
+    selected_positions = set(rows.tolist()) if include_inventory else None
+    selected_offsets = {position: offset for offset, position in enumerate(rows)} if include_inventory else None
+    for (report_type, circle), group in circle_source.groupby(['report_type', 'circle'], sort=True):
+        if include_inventory:
+            group_rows = np.fromiter((position for position in group.index if position in selected_positions), dtype=int)
+            positions = np.fromiter((selected_offsets[position] for position in group_rows), dtype=int)
+            selected_group = ds.sites.iloc[group_rows]
+        else:
+            positions = np.searchsorted(rows, group.index.to_numpy())
+            group_rows = rows[positions]
+            selected_group = group
         daily = ds.outage[group_rows, column]
         reported = int((~np.isnan(daily)).sum())
         mtd_block = ds.outage[np.ix_(group_rows, mtd_cols)]
@@ -696,8 +729,9 @@ def breakdown(ds: Dataset, selection: Selection, day: date) -> dict:
         circles.append({
             'report_type': report_type,
             'circle': circle,
-            'sites_in_scope': len(group_rows),
-            **team_counts(group),
+            'sites_total': inventory_counts[(report_type, circle)],
+            'sites_in_scope': _distinct_site_count(selected_group) if include_inventory else len(group_rows),
+            **team_counts(selected_group),
             'sites_reported': reported,
             'daily_uptime_pct': uptime_pct(float(np.nansum(daily)), reported),
             'mtd_uptime_pct': mtd,
@@ -717,10 +751,14 @@ def breakdown(ds: Dataset, selection: Selection, day: date) -> dict:
         'comparison': comparison,
         'circles': circles,
         # Distinct people over several circles: someone named in two circles counts once, so these are not sums of the rows.
-        'team_totals': {
+        'team_totals': ({
+            'all': team_counts(sites),
+            **{report_type: team_counts(sites[sites['report_type'] == report_type])
+               for report_type in sorted(inventory['report_type'].unique())},
+        } if include_inventory else {
             'all': team_counts(sites),
             **{report_type: team_counts(frame) for report_type, frame in sites.groupby('report_type', sort=True)},
-        },
+        }),
         'buckets': [
             {'id': bucket_id, 'label': label, 'workbook_label': workbook_label, 'count': count}
             for (bucket_id, label, workbook_label, _), count

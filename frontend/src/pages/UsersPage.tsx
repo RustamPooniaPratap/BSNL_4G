@@ -48,7 +48,7 @@ export function UsersPage() {
   const current = TABS.find((t) => t.path === path);
   if (!current) return <Navigate to="/admin/users" replace />;
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <PageHeading title="Users & Roles"
         subtitle="Accounts, custom roles and permissions, project/circle access assignments and their history · no self-registration" />
       <nav aria-label="Users & Roles sections" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1 shadow-xs">
@@ -113,7 +113,7 @@ function UsersTab() {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {secret && (
         <Alert className="border-amber-300 bg-amber-50/70" role="status">
           <KeyRound className="text-amber-700" />

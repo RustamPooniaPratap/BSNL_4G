@@ -49,11 +49,11 @@ export function RcaRegisterPage() {
     }
     return next;
   }, { replace });
-  const onFilter = (key: FilterKey, value: string) => update({ [key]: value, page: '', ...(key === 'project' ? { circle: '' } : {}) });
+  const onFilter = (key: FilterKey, value: string, extra: Partial<Record<FilterKey, string>> = {}) => update({ [key]: value, page: '', ...(key === 'project' ? { circle: '' } : {}), ...extra });
   const page = records.data?.page ?? 1;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="RCA Register"
         subtitle={`${options.data ? rcaCoverageText(options.data.dates) : 'Loading'} · source fields (Final Bucket, Bucket - 2, RCA) shown as written`} />
       {options.error && <Alert variant="destructive"><AlertDescription>{options.error.message}</AlertDescription></Alert>}

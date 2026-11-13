@@ -88,7 +88,7 @@ export function CiIePerformancePage() {
   const selectedMonth = month || result.data?.reporting_month || latest || '';
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <FilterBar options={options.data} filters={filters} onChange={setFilters}
         canReset={!isDefault || !!month || group !== 'ci'} onReset={reset} showTrendRange={false} showDate={false}
         title="CI & IE Performance"

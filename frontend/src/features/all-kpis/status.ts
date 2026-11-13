@@ -14,3 +14,5 @@ export const problemTone = (v: number | null | undefined, tone: Tone = 'warn'): 
 export const TONE_ACCENT: Record<Tone, string> = { good: 'bg-emerald-600', warn: 'bg-amber-500', bad: 'bg-red-600', neutral: 'bg-transparent' };
 /** Text of a table value: only attention and critical values are coloured, so tables stay calm. */
 export const TONE_TEXT: Record<Tone, string> = { good: '', warn: 'text-amber-700 font-medium', bad: 'text-red-700 font-medium', neutral: '' };
+/** Text class of a value in the page's tables (allkpis.css): only attention and critical values are coloured. */
+export const toneText = (t: Tone) => (t === 'bad' ? 't-crit' : t === 'warn' ? 't-warn' : '');

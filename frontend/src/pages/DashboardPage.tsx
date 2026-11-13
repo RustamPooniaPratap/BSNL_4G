@@ -86,11 +86,11 @@ export function DashboardPage() {
 
   if (!options.data || !filters) {
     return (
-      <div className="space-y-4" aria-busy="true" aria-label="Loading dashboard">
+      <div className="space-y-3" aria-busy="true" aria-label="Loading dashboard">
         <Skeleton className="h-10 w-80" />
         <Skeleton className="h-20 w-full" />
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
-          {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-28" />)}
+          {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-24" />)}
         </div>
         <p className="text-xs text-muted-foreground">Reading the Master workbook. The first load after a workbook change can take several seconds.</p>
       </div>
@@ -121,33 +121,36 @@ export function DashboardPage() {
     return next;
   }, { replace: true });
   const setSeries = (keys: string[]) => setParams({ series: keys.length ? keys.join(',') : 'none' });
-  const uptimeControls = (
-    <div className="mb-2 flex flex-wrap items-center gap-2">
-      <div className="inline-flex rounded-lg border p-0.5" role="group" aria-label="Uptime chart">
-        {UPTIME_VIEWS.map((v) => (
-          <button key={v.value} type="button" aria-pressed={uptimeView === v.value}
-            onClick={() => setParams({ uptime_view: v.value === 'overall' ? null : v.value })}
-            className={cn('rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
-              uptimeView === v.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
-            {v.label}
-          </button>
-        ))}
-      </div>
-      {uptimeView === 'circles' && availableCircles.length > 0 && (
-        <CircleSeriesPicker available={availableCircles} selected={selectedKeys} allKeys={allKeys} onChange={setSeries} />
-      )}
-      {uptimeView === 'circles' && !selectedKeys.length && <span className="text-xs text-muted-foreground">Choose up to four circles to draw.</span>}
+  // The chart view switch sits in the chart header, beside the period switch; the circle picker (By circle only) above the plot.
+  const uptimeViewSwitch = (
+    <div className="inline-flex rounded-lg border p-0.5" role="group" aria-label="Uptime chart">
+      {UPTIME_VIEWS.map((v) => (
+        <button key={v.value} type="button" aria-pressed={uptimeView === v.value}
+          onClick={() => setParams({ uptime_view: v.value === 'overall' ? null : v.value })}
+          className={cn('rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            uptimeView === v.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>
+          {v.label}
+        </button>
+      ))}
     </div>
   );
+  const uptimeControls = uptimeView === 'circles' ? (
+    <div className="mb-2 flex flex-wrap items-center gap-2">
+      {availableCircles.length > 0 && (
+        <CircleSeriesPicker available={availableCircles} selected={selectedKeys} allKeys={allKeys} onChange={setSeries} />
+      )}
+      {!selectedKeys.length && <span className="text-xs text-muted-foreground">Choose up to four circles to draw.</span>}
+    </div>
+  ) : null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <FilterBar options={options.data} filters={filters} onChange={setFilters} onReset={reset} canReset={!isDefault}
         title="Network uptime overview"
         description={<>{options.data.month.label} reporting month · {filterSummary(filters.reportType, filters.circle, scopeLabel)}</>} />
 
       {/* Month to date Provisional: the units still missing (the selection's own units, from the summary when loaded). */}
-      <ProvisionalBanner continuity={summary.data?.source.continuity ?? options.data.source.continuity} />
+      <ProvisionalBanner compact continuity={summary.data?.source.continuity ?? options.data.source.continuity} />
 
       {summary.error ? (
         <Alert variant="destructive"><AlertTriangle /><AlertTitle>Key indicators unavailable</AlertTitle><AlertDescription>{summary.error.message}</AlertDescription></Alert>
@@ -163,11 +166,11 @@ export function DashboardPage() {
         scopeLabel={scopeLabel} monthLabel={options.data.month.label}
         view={filters.trendView} onViewChange={(view) => setFilters({ trend: view === 'daily' ? '' : view })}
         dayList={filters.dayList} weekList={filters.weekList} monthsFiltered={filters.monthList.length > 0}
-        chartView={uptimeView} circles={uptimeView === 'circles' ? circles : null} controls={uptimeControls}
+        chartView={uptimeView} circles={uptimeView === 'circles' ? circles : null} controls={uptimeControls} viewControls={uptimeViewSwitch}
         allCircles={availableCircles} onSelectCircle={(key) => setParams({ uptime_view: 'circles', series: key })}
       />
 
-      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
         <OutageChart
           trend={pickedTrend} loading={trend.loading} error={trend.error}
           monthly={monthly.data} monthlyLoading={monthly.loading} monthlyError={monthly.error}
@@ -179,7 +182,7 @@ export function DashboardPage() {
       </div>
 
       <Link to={bucketsLink(searchParams)}
-        className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 text-sm shadow-xs transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+        className="flex items-center gap-3 rounded-xl border bg-card px-4 py-2.5 text-sm shadow-xs transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
         <Layers3 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <span className="flex-1"><span className="font-medium">Uptime buckets &amp; site details</span>
           <span className="text-muted-foreground"> · bucket chart by circle and the site-level table, for the same filters (Threshold Analysis)</span></span>

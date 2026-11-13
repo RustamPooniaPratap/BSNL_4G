@@ -68,7 +68,7 @@ describe('Global population', () => {
     expect(screen.getByTestId('population')).toHaveTextContent('om_start');
   });
 
-  it('ignores an invalid or "all" scope in the URL and replaces it with the selection', async () => {
+  it('ignores unsupported scope values in the URL and replaces them with the selection', async () => {
     window.localStorage.setItem(POPULATION_STORAGE_KEY, 'om_start');
     renderApp('/?scope=all&circle=MP');
     expect(screen.getByTestId('population')).toHaveTextContent('om_start');

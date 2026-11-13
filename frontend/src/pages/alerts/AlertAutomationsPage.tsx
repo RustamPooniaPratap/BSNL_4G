@@ -66,7 +66,7 @@ export function AlertAutomationsPage() {
       population: 'on_air' };
   };
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="Automations" subtitle="Choose a template, set when it runs, who receives it and which reports are attached, preview the email, then enable it." />
       {o && <WorkerStatus worker={o.worker} />}
       {o && !o.account_active && (
@@ -188,7 +188,7 @@ function AutomationSheet({ options, value, onClose, onSaved }: { options: AlertO
           <SheetTitle>{id ? 'Edit' : 'Configure'}: {options.kinds.find((k) => k.value === f.kind)?.label}</SheetTitle>
           <SheetDescription>{options.kinds.find((k) => k.value === f.kind)?.description}</SheetDescription>
         </SheetHeader>
-        <div className="space-y-4 px-4 pb-6">
+        <div className="space-y-3 px-4 pb-6">
           <ol className="flex flex-wrap gap-1" aria-label="Steps">
             {STEPS.map((s, i) => (
               <li key={s}><button type="button" aria-current={i === step ? 'step' : undefined} onClick={() => { void goPreview(i); }}

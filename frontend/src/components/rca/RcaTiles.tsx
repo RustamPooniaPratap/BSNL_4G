@@ -16,15 +16,15 @@ export function RcaKpiTile({ label, definition, icon, tint, value, unit, missing
   context: ReactNode; link?: To; view?: string;
 }) {
   return (
-    <Card role="group" aria-label={label} className="relative h-full gap-0 rounded-xl px-4 py-3 shadow-xs transition-shadow hover:shadow-md">
+    <Card role="group" aria-label={label} className="relative h-full gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm">
       <div className="flex items-start justify-between gap-3">
-        <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground/80">
+        <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-foreground/80">
           <span className="truncate">{label}</span><Definition label={label} text={definition} />
         </p>
-        <IconTile icon={icon} tint={tint} />
+        <IconTile size="sm" icon={icon} tint={tint} />
       </div>
-      <p className="-mt-2 flex items-baseline gap-1.5">
-        <span className={cn('text-2xl font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
+      <p className="-mt-1 flex items-baseline gap-1.5">
+        <span className={cn('text-2xl leading-7 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
           {value ?? missing ?? 'Not available'}
         </span>
         {unit && value != null && <span className="text-sm text-muted-foreground">{unit}</span>}
@@ -40,7 +40,7 @@ export function RcaAnalysisTile({ label, description, icon, tint, headline, deta
   label: string; description: string; icon: LucideIcon; tint: Tint; headline: ReactNode; detail: ReactNode; to: To;
 }) {
   return (
-    <Card role="group" aria-label={label} className="relative h-full gap-0 rounded-xl px-4 py-3 shadow-xs transition-shadow hover:shadow-md">
+    <Card role="group" aria-label={label} className="relative h-full gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm font-medium text-foreground/80">{label}</p>
         <IconTile icon={icon} tint={tint} />

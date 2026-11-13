@@ -55,3 +55,6 @@ export const UPTIME_VIEWS: { value: UptimeChartView; label: string }[] = [
   { value: 'circles', label: 'By circle' },
   { value: 'heatmap', label: 'Heatmap' },
 ];
+
+/** Main Dashboard chart cards (via ChartCard's className): 12 px card padding and a tighter header gap than the shared default. */
+export const DENSE_CARD = 'gap-2.5 [--card-spacing:--spacing(3)]';

@@ -37,11 +37,11 @@ export function PeriodKpi({ period, loading, error }: PeriodKpiProps) {
 
   return (
     <Card
-      className={cn('gap-0 border-primary/20 bg-primary/[0.03] px-4 py-3', loading && 'opacity-60')}
+      className={cn('gap-0 border-primary/20 bg-primary/[0.03] px-4 py-2.5', loading && 'opacity-60')}
       role="region"
       aria-label="Trend period indicators"
     >
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
         <div className="min-w-48">
           <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
             <CalendarRange className="size-3.5" aria-hidden="true" /> Trend period
@@ -53,12 +53,12 @@ export function PeriodKpi({ period, loading, error }: PeriodKpiProps) {
           {stats.map((stat) => (
             <div key={stat.label}>
               <dt className="text-xs text-muted-foreground">{stat.label}</dt>
-              <dd className={cn('text-lg font-semibold tabular-nums', stat.critical && 'text-destructive')}>{stat.value}</dd>
+              <dd className={cn('text-lg leading-6 font-semibold tabular-nums', stat.critical && 'text-destructive')}>{stat.value}</dd>
             </div>
           ))}
         </dl>
       </div>
-      <p className="mt-2 text-[11px] text-muted-foreground">
+      <p className="mt-1.5 text-[11px] text-muted-foreground">
         Changes with the Trend period. Each site's uptime over the whole period decides whether it is below 60% or at 98.5%;
         the cards above are for the reporting date.
       </p>

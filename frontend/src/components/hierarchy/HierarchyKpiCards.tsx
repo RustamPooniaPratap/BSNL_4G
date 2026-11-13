@@ -15,13 +15,13 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
       {/* 5 Standard KPI Cards Grid */}
       <section aria-label="Five Key Performance Indicators" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {/* 1. Availability % */}
-        <Card className="flex flex-col justify-between p-3.5 shadow-xs">
+        <Card className="flex flex-col justify-between px-3.5 py-2.5 shadow-xs">
           <div className="flex items-center justify-between text-muted-foreground">
             <span className="text-xs font-medium">Availability %</span>
             <Activity className="size-4 text-emerald-600" aria-hidden="true" />
           </div>
-          <div className="my-1.5">
-            <div className="text-2xl font-bold tracking-tight text-foreground">
+          <div className="my-1">
+            <div className="text-2xl leading-7 font-semibold tracking-tight text-foreground">
               {formatPct(kpis.availability_pct, 1)}
             </div>
             <div className="text-[11px] text-muted-foreground">
@@ -34,13 +34,13 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
         </Card>
 
         {/* 2. NSLA Sites */}
-        <Card className="flex flex-col justify-between p-3.5 shadow-xs">
+        <Card className="flex flex-col justify-between px-3.5 py-2.5 shadow-xs">
           <div className="flex items-center justify-between text-muted-foreground">
             <span className="text-xs font-medium">NSLA Sites</span>
             <ShieldAlert className="size-4 text-amber-600" aria-hidden="true" />
           </div>
-          <div className="my-1.5">
-            <div className="text-2xl font-bold tracking-tight text-foreground">
+          <div className="my-1">
+            <div className="text-2xl leading-7 font-semibold tracking-tight text-foreground">
               {formatNumber(kpis.nsla_sites)}
               <span className="ml-1.5 text-xs font-semibold text-muted-foreground">
                 ({formatPct(kpis.nsla_pct, 1)})
@@ -56,13 +56,13 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
         </Card>
 
         {/* 3. Unique Sites Down (USD) */}
-        <Card className="flex flex-col justify-between p-3.5 shadow-xs">
+        <Card className="flex flex-col justify-between px-3.5 py-2.5 shadow-xs">
           <div className="flex items-center justify-between text-muted-foreground">
             <span className="text-xs font-medium">Unique Sites Down</span>
             <WifiOff className="size-4 text-rose-600" aria-hidden="true" />
           </div>
-          <div className="my-1.5">
-            <div className="text-2xl font-bold tracking-tight text-foreground">
+          <div className="my-1">
+            <div className="text-2xl leading-7 font-semibold tracking-tight text-foreground">
               {formatNumber(kpis.usd)}
             </div>
             <div className="text-[11px] text-muted-foreground">
@@ -75,13 +75,13 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
         </Card>
 
         {/* 4. Incidents */}
-        <Card className="flex flex-col justify-between p-3.5 shadow-xs">
+        <Card className="flex flex-col justify-between px-3.5 py-2.5 shadow-xs">
           <div className="flex items-center justify-between text-muted-foreground">
             <span className="text-xs font-medium">Incidents</span>
             <AlertOctagon className="size-4 text-indigo-600" aria-hidden="true" />
           </div>
-          <div className="my-1.5">
-            <div className="text-2xl font-bold tracking-tight text-foreground">
+          <div className="my-1">
+            <div className="text-2xl leading-7 font-semibold tracking-tight text-foreground">
               {formatNumber(kpis.incidents)}
             </div>
             <div className="text-[11px] text-muted-foreground">
@@ -94,13 +94,13 @@ export function HierarchyKpiCards({ kpis, periodLabel = 'Oct-26 MTD', scopeLabel
         </Card>
 
         {/* 5. L1 */}
-        <Card className="flex flex-col justify-between border-dashed bg-muted/20 p-3.5 shadow-xs">
+        <Card className="flex flex-col justify-between border-dashed bg-muted/20 px-3.5 py-2.5 shadow-xs">
           <div className="flex items-center justify-between text-muted-foreground">
             <span className="text-xs font-medium">L1 Technician Visits</span>
             <Wrench className="size-4 text-muted-foreground/60" aria-hidden="true" />
           </div>
-          <div className="my-1.5">
-            <div className="text-2xl font-bold tracking-tight text-muted-foreground">
+          <div className="my-1">
+            <div className="text-2xl leading-7 font-semibold tracking-tight text-muted-foreground">
               N/A
             </div>
             <div className="text-[11px] text-muted-foreground">

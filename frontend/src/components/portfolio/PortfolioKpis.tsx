@@ -72,10 +72,10 @@ export function Definition({ label, text }: { label: string; text: string }) {
   );
 }
 
-export function IconTile({ icon: Icon, tint }: { icon: LucideIcon; tint: Tint }) {
+export function IconTile({ icon: Icon, tint, size = 'md' }: { icon: LucideIcon; tint: Tint; size?: 'sm' | 'md' }) {
   return (
-    <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', TINT[tint])} aria-hidden="true">
-      <Icon className="size-4" />
+    <span className={cn('flex shrink-0 items-center justify-center rounded-lg', size === 'sm' ? 'size-7 rounded-md' : 'size-9', TINT[tint])} aria-hidden="true">
+      <Icon className={size === 'sm' ? 'size-3.5' : 'size-4'} />
     </span>
   );
 }
@@ -97,24 +97,24 @@ export function KpiTile({ kpi, of, sub, compareOn, sparkline, icon, tint, view, 
   const look = LOOK[kpi.id];
   const critical = kpi.tone === 'critical' && Boolean(kpi.value);
   return (
-    <Card className={cn('relative gap-0 rounded-xl px-4 py-3 shadow-xs transition-shadow hover:shadow-md', critical && 'border-red-200', kpi.tone === 'warning' && 'border-amber-200')}>
+    <Card className={cn('relative gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm', critical && 'border-red-200', kpi.tone === 'warning' && 'border-amber-200')}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-1.5">
-          <Link to={kpi.link} className="truncate text-sm font-medium text-foreground/80 hover:text-foreground focus-visible:underline focus-visible:outline-none">
+          <Link to={kpi.link} className="truncate text-xs font-medium text-foreground/80 hover:text-foreground focus-visible:underline focus-visible:outline-none">
             {kpi.label}
           </Link>
           <Definition label={kpi.label} text={kpi.definition} />
         </div>
-        {icon !== null && <IconTile icon={icon ?? look?.icon ?? Boxes} tint={tint ?? look?.tint ?? 'slate'} />}
+        {icon !== null && <IconTile size="sm" icon={icon ?? look?.icon ?? Boxes} tint={tint ?? look?.tint ?? 'slate'} />}
       </div>
-      <p className={cn('flex items-baseline gap-1.5', icon === null ? 'mt-2' : '-mt-2')}>
-        <span className={cn('text-2xl font-semibold tracking-tight tabular-nums', kpi.value == null && 'text-lg font-medium text-muted-foreground', critical && 'text-destructive')}>
+      <p className={cn('flex flex-wrap items-baseline gap-x-1.5', icon === null ? 'mt-1.5' : '-mt-1')}>
+        <span className={cn('text-2xl leading-7 font-semibold tracking-tight tabular-nums', kpi.value == null && 'text-lg font-medium text-muted-foreground', critical && 'text-destructive')}>
           {showValue(kpi.value, kpi.unit)}
         </span>
-        {of && kpi.value != null && <span className="text-sm text-muted-foreground">{of}</span>}
+        {of && kpi.value != null && <span className="text-xs text-muted-foreground">{of}</span>}
       </p>
       <p className="mt-0.5 text-[11px] text-muted-foreground">{kpi.period}</p>
-      {sub && <p className="mt-1.5 text-xs text-muted-foreground">{sub}</p>}
+      {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
       {compareOn && kpi.delta && (
         <p className="mt-1 text-xs"><DeltaChip d={kpi.delta} higherIsBetter={kpi.higherIsBetter} /> <span className="text-muted-foreground">{vsLabel}</span></p>
       )}
@@ -125,7 +125,7 @@ export function KpiTile({ kpi, of, sub, compareOn, sparkline, icon, tint, view, 
           </ResponsiveContainer>
         </div>
       )}
-      <div className="mt-auto pt-2"><ViewLink to={kpi.link}>{view ?? look?.view ?? 'View details'}</ViewLink></div>
+      <div className="mt-auto pt-1.5"><ViewLink to={kpi.link}>{view ?? look?.view ?? 'View details'}</ViewLink></div>
     </Card>
   );
 }
@@ -173,13 +173,13 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
     // columns beside it (as in the On-Air vs O&M Start card); one bar below shows the split.
     const [hero, ...rest] = segments;
     return (
-      <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-4 py-3 shadow-xs transition-shadow hover:shadow-md md:col-span-2 xl:col-span-1">
-        <p className="flex items-center gap-1.5 text-sm font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
+      <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
+        <p className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
         <dl className="mt-2 grid divide-x" style={{ gridTemplateColumns: `minmax(0, 1.3fr) repeat(${rest.length}, minmax(0, 1fr))` }}>
           <div className="min-w-0 pr-3" title={hero.title}>
             <dt className="truncate text-[11px] font-semibold tracking-wide text-emerald-700 uppercase">{headline ?? hero.label}</dt>
             <dd className="mt-0.5 inline text-2xl font-semibold tracking-tight tabular-nums">{formatNumber(hero.value)}</dd>
-            <dd className="ml-1.5 inline text-base font-semibold text-emerald-700 tabular-nums">{formatPct(valueShare ?? share(hero.value, whole), 1)}</dd>
+            <dd className="ml-1.5 inline text-sm font-medium text-emerald-700 tabular-nums">{formatPct(valueShare ?? share(hero.value, whole), 1)}</dd>
             <dd className="text-[11px] text-muted-foreground tabular-nums">{unit}</dd>
             <dd className="text-[11px] text-muted-foreground tabular-nums"><ShareChange segment={hero} against={changeLabel} /> vs {changeLabel}</dd>
           </div>
@@ -189,7 +189,7 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
                 <span className="mt-1 size-2 shrink-0 rounded-full" style={{ background: s.color }} aria-hidden="true" />
                 <span className="min-w-0">{s.label}</span>
               </dt>
-              <dd className="mt-0.5 text-xl font-semibold tracking-tight tabular-nums">{formatNumber(s.value)}</dd>
+              <dd className="mt-0.5 text-lg leading-6 font-semibold tracking-tight tabular-nums">{formatNumber(s.value)}</dd>
               <dd className="text-[11px] text-muted-foreground tabular-nums">
                 {formatPct(share(s.value, whole), 1)} · <ShareChange segment={s} against={changeLabel} />
               </dd>
@@ -203,27 +203,27 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
           ))}
         </div>
         {note && <p className="mt-1.5 text-xs text-muted-foreground">{note}</p>}
-        {link && <div className="mt-auto pt-2"><ViewLink to={link}>{view ?? 'View details'}</ViewLink></div>}
+        {link && <div className="mt-auto pt-1.5"><ViewLink to={link}>{view ?? 'View details'}</ViewLink></div>}
       </Card>
     );
   }
   return (
-    <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-4 py-3 shadow-xs transition-shadow hover:shadow-md md:col-span-2 xl:col-span-1">
-      <div className={cn('grid grid-cols-1 gap-4 sm:items-center', icon ? 'sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)_auto]' : 'sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)]')}>
+    <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
+      <div className={cn('grid grid-cols-1 gap-3 sm:items-center', icon ? 'sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)_auto]' : 'sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)]')}>
         <div className="min-w-0">
-          <p className="flex items-center gap-1.5 text-sm font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
+          <p className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
           {headline && <p className="mt-2 text-xs font-semibold tracking-wide text-emerald-700 uppercase">{headline}</p>}
-          <p className={cn('flex flex-wrap items-baseline gap-x-1.5', headline ? 'mt-0.5' : 'mt-2')}>
-            <span className={cn('text-2xl font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
+          <p className={cn('flex flex-wrap items-baseline gap-x-1.5', headline ? 'mt-0.5' : 'mt-1.5')}>
+            <span className={cn('text-2xl leading-7 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
               {value == null ? 'Not available' : formatNumber(value)}
             </span>
-            {value != null && valueShare != null && <span className="text-lg font-semibold text-emerald-700 tabular-nums">{formatPct(valueShare, 1)}</span>}
-            {value != null && <span className="text-sm text-muted-foreground">{unit}</span>}
+            {value != null && valueShare != null && <span className="text-base font-medium text-emerald-700 tabular-nums">{formatPct(valueShare, 1)}</span>}
+            {value != null && <span className="text-xs text-muted-foreground">{unit}</span>}
           </p>
-          {sub && <p className="mt-1.5 text-xs text-muted-foreground">{sub}</p>}
-          {link && <div className="mt-3"><ViewLink to={link}>{view ?? 'View details'}</ViewLink></div>}
+          {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
+          {link && <div className="mt-2"><ViewLink to={link}>{view ?? 'View details'}</ViewLink></div>}
         </div>
-        <div className="min-w-0 space-y-2">
+        <div className="min-w-0 space-y-1.5">
           {segments && whole > 0 ? (
             <>
               <div className="flex h-2.5 w-full gap-0.5 overflow-hidden rounded-full bg-muted" role="img"
@@ -232,14 +232,14 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
                   <span key={s.label} className="h-full first:rounded-l-full last:rounded-r-full" style={{ width: `${(100 * s.value) / whole}%`, background: s.color }} />
                 ))}
               </div>
-              <dl className="space-y-1.5 text-sm">
+              <dl className="space-y-1 text-xs">
                 {segments.map((s) => (
                   <div key={s.label} className={cn('grid items-center gap-2', cols)} title={s.title}>
                     <dt className="flex min-w-0 items-center gap-2 text-foreground/80">
                       <span className="size-2.5 shrink-0 rounded-full" style={{ background: s.color }} aria-hidden="true" />
                       <span className="min-w-0 truncate">{s.label}</span>
                     </dt>
-                    <dd className="text-right font-semibold tabular-nums">{formatNumber(s.value)}</dd>
+                    <dd className="text-right font-medium tabular-nums">{formatNumber(s.value)}</dd>
                     <dd className="text-right text-xs text-muted-foreground tabular-nums">{formatPct(share(s.value, whole), 1)}</dd>
                   </div>
                 ))}
@@ -249,7 +249,7 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
                       <span className="size-2.5 shrink-0 rounded-full border border-muted-foreground/50" aria-hidden="true" />
                       <span className="truncate">{e.label}</span>
                     </dt>
-                    <dd className="text-right font-semibold tabular-nums">{e.value == null ? '—' : formatNumber(e.value)}</dd>
+                    <dd className="text-right font-medium tabular-nums">{e.value == null ? '—' : formatNumber(e.value)}</dd>
                     <dd />
                   </div>
                 ))}
@@ -258,7 +258,7 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
           ) : <p className="text-sm text-muted-foreground">{note ?? 'Not available for these filters.'}</p>}
           {segments && whole > 0 && note && <p className="text-xs text-muted-foreground">{note}</p>}
         </div>
-        {icon && <div className="hidden self-start sm:block"><IconTile icon={icon} tint={tint ?? 'slate'} /></div>}
+        {icon && <div className="hidden self-start sm:block"><IconTile size="sm" icon={icon} tint={tint ?? 'slate'} /></div>}
       </div>
     </Card>
   );
@@ -309,9 +309,9 @@ export function SummaryMetricsTile({ label, definition, metrics, links }: {
   label: string; definition: string; metrics: SummaryMetric[]; links: { to: string; view: string }[];
 }) {
   return (
-    <Card role="region" aria-label={label} className="h-full gap-0 rounded-xl px-4 py-3 shadow-xs transition-shadow hover:shadow-md md:col-span-2 xl:col-span-1">
-      <p className="flex items-center gap-1.5 text-sm font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
-      <dl className="mt-2 grid grid-cols-1 gap-y-3 sm:grid-cols-2 lg:grid-cols-4 lg:divide-x">
+    <Card role="region" aria-label={label} className="h-full gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
+      <dl className="mt-1.5 grid grid-cols-1 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-4 lg:divide-x">
         {metrics.map((m) => {
           const tone = TONES[m.tone];
           return (
@@ -332,7 +332,7 @@ export function SummaryMetricsTile({ label, definition, metrics, links }: {
                         <span className="size-1.5 shrink-0 rounded-full" style={{ background: reportTypeColor(s.project) }} aria-hidden="true" />
                         <span className="truncate">{s.project}</span>
                       </span>
-                      <span className={cn('font-semibold tabular-nums', m.tone === 'gap' ? 'text-red-600' : 'text-foreground/90')}>{formatNumber(s.value)}</span>
+                      <span className={cn('font-medium tabular-nums', m.tone === 'gap' ? 'text-red-600' : 'text-foreground/90')}>{formatNumber(s.value)}</span>
                     </div>
                   ))}
                 </dd>
@@ -353,7 +353,7 @@ export function SummaryMetricsTile({ label, definition, metrics, links }: {
         })}
       </dl>
       {links.length > 0 && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-6 gap-y-2 border-t pt-2">
+        <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1.5 border-t pt-1.5">
           {links.map((l) => <ViewLink key={l.to} to={l.to}>{l.view}</ViewLink>)}
         </div>
       )}
@@ -376,17 +376,17 @@ export function ConversionActivityTile({ total, onAir, omStart, activity, link, 
   const months = activity ? [activity.previous_month, activity.month] : [];
   const cell = (n: number | null) => (n == null ? <span className="text-muted-foreground">—</span> : formatNumber(n));
   return (
-    <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-4 py-3 shadow-xs transition-shadow hover:shadow-md md:col-span-2 xl:col-span-1">
+    <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
       <div className="flex items-baseline justify-between gap-3">
-        <p className="flex items-center gap-1.5 text-sm font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
-        <p className="text-xs text-muted-foreground">Total site scope <span className="text-base font-semibold text-foreground tabular-nums">{formatNumber(total)}</span></p>
+        <p className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
+        <p className="text-xs text-muted-foreground">Total site scope <span className="text-sm font-semibold text-foreground tabular-nums">{formatNumber(total)}</span></p>
       </div>
-      <dl className="mt-2 space-y-2">
+      <dl className="mt-1.5 space-y-1.5">
         {bars.map((b) => {
           const pct = b.value != null && total ? (100 * b.value) / total : null;
           return (
             <div key={b.name}>
-              <div className="flex items-baseline justify-between gap-2 text-sm">
+              <div className="flex items-baseline justify-between gap-2 text-[13px]">
                 <dt className="font-medium">{b.name}</dt>
                 <dd className="tabular-nums">
                   {b.value == null ? <span className="text-muted-foreground">Not available</span> : (
@@ -396,7 +396,7 @@ export function ConversionActivityTile({ total, onAir, omStart, activity, link, 
                   )}
                 </dd>
               </div>
-              <div className={cn('mt-1 h-2 w-full overflow-hidden rounded-full', pct == null ? 'bg-muted' : 'bg-red-400')} role="img" aria-label={`${b.name}: ${pct == null ? 'not available' : `${formatPct(pct, 1)} of total site scope`}`}>
+              <div className={cn('mt-1 h-1.5 w-full overflow-hidden rounded-full', pct == null ? 'bg-muted' : 'bg-red-400')} role="img" aria-label={`${b.name}: ${pct == null ? 'not available' : `${formatPct(pct, 1)} of total site scope`}`}>
                 {pct != null && <div className="h-full rounded-l-full" style={{ width: `${pct}%`, background: b.color }} />}
               </div>
             </div>
@@ -404,7 +404,7 @@ export function ConversionActivityTile({ total, onAir, omStart, activity, link, 
         })}
       </dl>
       {activity && (
-        <table className="mt-2.5 w-full border-t text-xs" aria-label="Monthly additions">
+        <table className="mt-2 w-full border-t text-xs" aria-label="Monthly additions">
           <thead>
             <tr className="text-[11px] text-muted-foreground">
               <th className="pt-1.5 text-left font-normal">Added in month</th>
@@ -415,14 +415,14 @@ export function ConversionActivityTile({ total, onAir, omStart, activity, link, 
             {([['On-Air', activity.on_air], ['O&M Start', activity.om_start]] as const).map(([name, a]) => (
               <tr key={name}>
                 <th scope="row" className="text-left font-normal text-foreground/80">{name}</th>
-                <td className="text-right font-semibold tabular-nums">{cell(a.last_month.count)}</td>
-                <td className="text-right font-semibold tabular-nums">{cell(a.this_month.count)}</td>
+                <td className="text-right font-medium tabular-nums">{cell(a.last_month.count)}</td>
+                <td className="text-right font-medium tabular-nums">{cell(a.this_month.count)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-      {link && <div className="mt-auto pt-2"><ViewLink to={link}>{view ?? 'View details'}</ViewLink></div>}
+      {link && <div className="mt-auto pt-1.5"><ViewLink to={link}>{view ?? 'View details'}</ViewLink></div>}
     </Card>
   );
 }

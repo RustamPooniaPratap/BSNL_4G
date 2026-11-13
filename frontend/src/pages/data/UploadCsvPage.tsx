@@ -61,7 +61,7 @@ function ClassificationTiles({ classification }: { classification: RawClassifica
 }
 
 /**
- * Data Entry -> Upload CSV: the raw daily CNMC availability file of one circle and date. The server validates it against
+ * Uptime Data -> Uptime Data Upload: the raw daily CNMC availability file of one circle and date. The server validates it against
  * the approved site master, calculates outage minutes and shows a preview; nothing is saved until the import is
  * confirmed, and the result shown is the server's. Committed rows are saved to the reporting data (the data layer).
  */
@@ -102,7 +102,7 @@ export function UploadCsvPage() {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="Raw Data Upload & Consolidation"
         subtitle="Upload daily CNMC availability data, validate site scope, calculate outage minutes, and update the reporting database." />
       <WorkflowSteps batch={batch} phase={phase} error={error?.phase ?? null} />
@@ -132,7 +132,7 @@ export function UploadCsvPage() {
       {error?.phase === 'import' && (
         <Alert variant="destructive" role="alert"><CircleAlert /><AlertTitle>The import did not complete</AlertTitle><AlertDescription>{error.message} Nothing was saved.</AlertDescription></Alert>
       )}
-      <div className="grid items-start gap-4 xl:grid-cols-5">
+      <div className="grid items-start gap-3 xl:grid-cols-5">
         {o && <div className="xl:col-span-2"><ReportDownloadCard options={o} /></div>}
         <Card className="gap-2 rounded-xl px-4 py-3 xl:col-span-3" aria-label="My uploads">
           <div className="flex items-center gap-2">
@@ -217,7 +217,7 @@ function UploadPanel({ options, username, form, circle, fixed, file, batch, phas
                   : { label: 'Ready to validate', tone: 'border-slate-300 bg-slate-50 text-slate-700' };
 
   return (
-    <div className="grid items-stretch gap-4 lg:grid-cols-5">
+    <div className="grid items-stretch gap-3 lg:grid-cols-5">
       <Card className="gap-3 rounded-xl px-4 py-3 lg:col-span-2" aria-label="Upload details">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold">Upload details</h2>

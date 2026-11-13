@@ -42,7 +42,7 @@ export function RcaSubmissionsPage() {
   const cycle = detail.data && detail.data.id === selected ? detail.data : null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="RCA Submissions"
         subtitle={`${list.data ? `${list.data.cycles.length} reporting period${list.data.cycles.length === 1 ? '' : 's'}` : 'Loading'} · circle submissions (confirmed circle files) are tracked apart from RCA data availability`} />
       {list.error && <Alert variant="destructive"><AlertDescription>{list.error.message}</AlertDescription></Alert>}
@@ -77,7 +77,7 @@ export function RcaSubmissionsPage() {
       {selected && !cycle && !detail.error && <Skeleton className="h-72 w-full" />}
       {cycle && <PeriodView key={cycle.id} cycle={cycle} onChanged={refresh} />}
 
-      <Card className="gap-2 rounded-xl px-5 py-4" aria-label="All uploads">
+      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="All uploads">
         <h2 className="text-base font-semibold">All uploads</h2>
         {all.data ? <UploadTable uploads={all.data.imports} showPeriod empty="No RCA data has been uploaded yet." />
           : <p className="text-sm text-muted-foreground">{all.error ? all.error.message : 'Loading…'}</p>}
@@ -89,7 +89,7 @@ export function RcaSubmissionsPage() {
 /** One row per reporting date (or period): completeness from the expected scope, and the upload outcomes beside it. */
 function DailyStatus({ cycles, selected, onOpen }: { cycles: RcaCycle[]; selected: number | null; onOpen: (id: number) => void }) {
   return (
-    <Card className="gap-2 rounded-xl px-5 py-4" aria-label="Daily reporting status">
+    <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Daily reporting status">
       <h2 className="text-base font-semibold">Daily reporting status</h2>
       <div className="overflow-x-auto">
         <Table>
@@ -204,7 +204,7 @@ function PeriodView({ cycle, onChanged }: { cycle: RcaCycleDetail; onChanged: ()
 
   return (
     <>
-      <Card className="gap-3 rounded-xl px-5 py-4" aria-label="Period status">
+      <Card className="gap-3 rounded-xl px-4 py-3" aria-label="Period status">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
             <h2 className="flex flex-wrap items-center gap-2 text-base font-semibold">
@@ -238,7 +238,7 @@ function PeriodView({ cycle, onChanged }: { cycle: RcaCycleDetail; onChanged: ()
         {done && <Alert><AlertDescription>{done}</AlertDescription></Alert>}
       </Card>
 
-      <Card className="gap-2 rounded-xl px-5 py-4" aria-label="Expected coverage">
+      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Expected coverage">
         <h2 className="text-base font-semibold">Circle submissions and RCA data</h2>
         <p className="text-xs text-muted-foreground">
           Circle submission: a confirmed Upload Circle RCA file of that project, circle and date (consolidated uploads never count). RCA data: accepted records of
@@ -290,12 +290,12 @@ function PeriodView({ cycle, onChanged }: { cycle: RcaCycleDetail; onChanged: ()
 
       <ScopeEditor cycle={cycle} onChanged={onChanged} />
 
-      <Card className="gap-2 rounded-xl px-5 py-4" aria-label="Period uploads">
+      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Period uploads">
         <h2 className="text-base font-semibold">Uploads for this period</h2>
         <UploadTable uploads={cycle.uploads} empty="No upload for this period yet." />
       </Card>
 
-      <Card className="gap-2 rounded-xl px-5 py-4" aria-label="Final reports">
+      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Final reports">
         <h2 className="text-base font-semibold">Final reports</h2>
         {cycle.reports.length ? (
           <Table>
@@ -380,7 +380,7 @@ function ScopeEditor({ cycle, onChanged }: { cycle: RcaCycleDetail; onChanged: (
     }
   };
   return (
-    <Card className="gap-2 rounded-xl px-5 py-4" aria-label="Configure expected scope">
+    <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Configure expected scope">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold">Expected projects and circles</h2>
         {cycle.locked ? <span className="text-xs text-muted-foreground">Fixed: the final report has been generated.</span>

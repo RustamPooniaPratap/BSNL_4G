@@ -95,7 +95,7 @@ export function OaPerformancePage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Top Heading */}
       <PageHeading title={`${oaName} OA Performance`} subtitle={subtitle} />
 
@@ -137,7 +137,7 @@ export function OaPerformancePage() {
       />
 
       {/* OA Information & Context Card */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card p-4 shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3 shadow-xs">
         <div>
           <span className="text-xs font-medium text-muted-foreground">Operational Area Context</span>
           <div className="mt-0.5 flex items-center gap-2">
@@ -148,7 +148,7 @@ export function OaPerformancePage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-6 text-xs">
+        <div className="flex items-center gap-4 text-xs">
           <div>
             <span className="text-muted-foreground">Sites in OA:</span>{' '}
             <span className="font-semibold text-foreground">{formatNumber(oaKpis.assigned_sites)}</span>
@@ -177,7 +177,7 @@ export function OaPerformancePage() {
 
       {/* CI-wise Performance Table Card */}
       <Card className="rounded-xl border bg-card shadow-xs">
-        <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <Users className="size-4 text-primary" aria-hidden="true" />

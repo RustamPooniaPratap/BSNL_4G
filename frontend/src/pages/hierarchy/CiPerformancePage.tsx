@@ -109,7 +109,7 @@ export function CiPerformancePage() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Top Heading */}
       <PageHeading title={`${ciName} · Cluster In-Charge Detail`} subtitle={subtitle} />
 
@@ -168,8 +168,8 @@ export function CiPerformancePage() {
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           B. Cluster In-Charge (CI) Information
         </h3>
-        <Card className="rounded-xl border bg-card p-4 shadow-xs">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 text-xs">
+        <Card className="rounded-xl border bg-card p-3 shadow-xs">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 text-xs">
             <div>
               <span className="text-muted-foreground flex items-center gap-1 font-medium">
                 <UserCheck className="size-3.5 text-primary" /> CI Full Name
@@ -232,7 +232,7 @@ export function CiPerformancePage() {
           C. Integration Engineer (IE) Performance
         </h3>
         <Card className="rounded-xl border bg-card shadow-xs">
-          <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="flex items-center gap-2">
                 <Users className="size-4 text-primary" aria-hidden="true" />

@@ -42,12 +42,12 @@ export function ArrivalForm({ initial, requirements, arrivals, editingId, fileSu
   const types = [...new Set(requirements.map((r) => r.reportType))];
 
   return (
-    <form noValidate className="space-y-4" onSubmit={(e) => {
+    <form noValidate className="space-y-3" onSubmit={(e) => {
       e.preventDefault();
       setSubmitted(true);
       if (Object.keys(errors).length === 0) onSave({ ...draft, fileName: draft.fileName.trim(), receivedBy: draft.receivedBy.trim() });
     }}>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Field id="arr-type" label="Report type" required error={show('reportType')}>
           <SelectField id="arr-type" value={draft.reportType} placeholder="Choose" error={show('reportType')}
             options={types.map((t) => ({ value: t, label: t }))}
@@ -62,7 +62,7 @@ export function ArrivalForm({ initial, requirements, arrivals, editingId, fileSu
         </Field>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Field id="arr-date" label="Actual arrival date" required error={show('arrivalDate')}>
           <Input type="date" {...fieldA11y('arr-date', show('arrivalDate'))} value={draft.arrivalDate} max={localDate(now)}
             onChange={(e) => set({ arrivalDate: e.target.value, timeIsEntryTime: false })} />
@@ -80,7 +80,7 @@ export function ArrivalForm({ initial, requirements, arrivals, editingId, fileSu
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field id="arr-file" label="CSV file name" error={show('fileName')} hint="Without it the note is flagged for review.">
           <Input {...fieldA11y('arr-file', show('fileName'))} value={draft.fileName} list="arr-file-options" maxLength={200}
             placeholder="e.g. MP_LWE_16-10-2026.csv" onChange={(e) => set({ fileName: e.target.value })} />
@@ -118,7 +118,7 @@ export function ContactForm({ title, initial, onSave, onCancel }: {
     </Field>
   );
   return (
-    <form noValidate className="space-y-4" onSubmit={(e) => {
+    <form noValidate className="space-y-3" onSubmit={(e) => {
       e.preventDefault();
       setSubmitted(true);
       if (Object.keys(errors).length === 0) {
@@ -126,7 +126,7 @@ export function ContactForm({ title, initial, onSave, onCancel }: {
       }
     }}>
       <p className="text-xs text-muted-foreground">Contact for {title}. Every field is optional; leave unknown details blank.</p>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {input('name', 'Contact person')}
         {input('designation', 'Designation')}
         {input('phone', 'Phone number', { type: 'tel', inputMode: 'tel' })}
@@ -153,7 +153,7 @@ export function FollowUpForm({ title, contactName, now, onSave, onCancel }: {
   const show = (k: keyof FollowUpDraft) => (submitted ? errors[k] : undefined);
   const set = (changes: Partial<FollowUpDraft>) => setDraft((d) => ({ ...d, ...changes }));
   return (
-    <form noValidate className="space-y-4" onSubmit={(e) => {
+    <form noValidate className="space-y-3" onSubmit={(e) => {
       e.preventDefault();
       setSubmitted(true);
       if (Object.keys(errors).length === 0) onSave({ ...draft, method: draft.method as FollowUpMethod, outcome: draft.outcome.trim(), contactPerson: draft.contactPerson.trim() });
@@ -161,7 +161,7 @@ export function FollowUpForm({ title, contactName, now, onSave, onCancel }: {
       <p className="text-xs text-muted-foreground">
         Records a follow-up you have already made for {title}. Nothing is sent from here. A contact is not required; internal notes are fine.
       </p>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field id="fu-at" label="Follow-up date and time" required error={show('at')}>
           <Input type="datetime-local" {...fieldA11y('fu-at', show('at'))} value={draft.at} onChange={(e) => set({ at: e.target.value })} />
         </Field>
@@ -193,7 +193,7 @@ export function DeadlineForm({ reportTypes, config, onSave, onCancel }: {
 }) {
   const [rows, setRows] = useState(() => Object.fromEntries(reportTypes.map((t) => [t, config[t] ?? null])) as Record<string, Deadline | null>);
   return (
-    <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); onSave(rows); }}>
+    <form noValidate className="space-y-3" onSubmit={(e) => { e.preventDefault(); onSave(rows); }}>
       <p className="text-xs text-muted-foreground">
         A submission is only marked Late once a deadline is set here and has passed. No deadline is assumed by default.
       </p>
@@ -318,7 +318,7 @@ export function ReminderSend({ reminder, label, recipient, status, statusError, 
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <EmailModeNote status={status} error={statusError} />
       <dl className="grid grid-cols-[8rem_1fr] gap-x-2 gap-y-1 text-sm">
         <dt className="text-xs text-muted-foreground">Report</dt><dd>{label}</dd>
@@ -404,7 +404,7 @@ export function ComposeEmail({ initial, reminder, status, statusError, onCancel 
 
   if (result) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
         <SendOutcome result={result} error={null} />
         <Button variant="outline" onClick={onCancel}>Close</Button>
       </div>
@@ -413,7 +413,7 @@ export function ComposeEmail({ initial, reminder, status, statusError, onCancel 
 
   if (step === 'review') {
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
         <EmailModeNote status={status} error={statusError} />
         <p className="text-sm">Check the email below. It is sent only when you select <strong>Send email</strong>.</p>
         <Preview to={splitAddresses(draft.to).join(', ')} cc={splitAddresses(draft.cc).join(', ')} subject={draft.subject.trim()} body={draft.body.trim()} />
@@ -428,7 +428,7 @@ export function ComposeEmail({ initial, reminder, status, statusError, onCancel 
   }
 
   return (
-    <form noValidate className="space-y-4" onSubmit={(e) => {
+    <form noValidate className="space-y-3" onSubmit={(e) => {
       e.preventDefault();
       setSubmitted(true);
       if (Object.keys(errors).length === 0) { setError(null); setStep('review'); }

@@ -143,7 +143,7 @@ export function RcaImportPage({ mode }: { mode: RcaUploadType }) {
                 : { label: 'Ready to validate', tone: 'border-slate-300 bg-slate-50 text-slate-700' };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title={text.title} subtitle={text.subtitle} />
       {noRight && (
         <Alert role="alert"><CircleAlert /><AlertTitle>No circle granted</AlertTitle>
@@ -156,7 +156,7 @@ export function RcaImportPage({ mode }: { mode: RcaUploadType }) {
         ['Results', committed ? 'done' : 'todo'],
       ]} />
 
-      <form aria-label="Report details" className="grid items-stretch gap-4 lg:grid-cols-5"
+      <form aria-label="Report details" className="grid items-stretch gap-3 lg:grid-cols-5"
         onSubmit={(e) => { e.preventDefault(); setTouched({ report_name: true, project: true, circle: true, period_start: true, file: true }); if (!missing.length && !noRight) void validate(); }}>
         <Card className="gap-3 rounded-xl px-4 py-3 lg:col-span-2" aria-label="Upload details">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -313,7 +313,7 @@ function UploadSummary({ batch }: { batch: RcaImportBatch }) {
         ))}
       </dl>
       {r && (
-        <div className="grid gap-4 text-sm lg:grid-cols-3">
+        <div className="grid gap-3 text-sm lg:grid-cols-3">
           <List title="Project-wise (valid rows)" items={Object.entries(byProject)} />
           <List title="Circle-wise (valid rows)" items={Object.entries(r.circles).map(([k, v]) => [k.replace('|', ' / '), v])} />
           <div>

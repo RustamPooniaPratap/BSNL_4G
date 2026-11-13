@@ -13,7 +13,7 @@ from apps.sitedata.models import Site
 from .auth_helpers import SignedInTestCase, portal_user
 
 _ids = count(1)
-LABELS = ['IaaSP Power', 'IaaSP Others', 'IaaSP Battery', 'IaaSP OFC', 'BSNL OFC',
+LABELS = ['IaasP Power', 'IaasP Others', 'IaasP Battery', 'IaasP OFC', 'BSNL OFC',
           'BSNL Media', 'Others', 'TCS', 'DMW', 'HFCL']
 
 
@@ -31,7 +31,7 @@ class MappingTests(SignedInTestCase):
         from apps.rca import taxonomy
         self.assertEqual([label for label, _ in breakdown.COLUMNS], LABELS)
         self.assertEqual([label for label, _ in breakdown.COLUMNS], list(taxonomy.APPROVED))  # the one taxonomy
-        cases = {'BSNL OFC': 'BSNL OFC', 'IaasP OFC': 'IaaSP OFC', 'HFCl': 'HFCL', ' Others ': 'Others', 'IaaSP Battery': 'IaaSP Battery'}
+        cases = {'BSNL OFC': 'BSNL OFC', 'IaasP OFC': 'IaasP OFC', 'HFCl': 'HFCL', ' Others ': 'Others', 'IaasP Battery': 'IaasP Battery'}
         self.assertEqual({raw: breakdown.category_of(raw) for raw in cases}, cases)
         # No aliases or equivalents: former legacy values and anything else are Not mapped, never put in a column.
         for unknown in ('ssa ofc', 'VSAT', 'Other Media', 'Above 98.5%', 'NC', 'BBNL Media', 'BBNL OFC', 'Iaasp Other', 'Iaasp Link',
@@ -46,8 +46,8 @@ class MappingTests(SignedInTestCase):
 class SummaryBreakdownTests(SignedInTestCase):
     def setUp(self):
         super().setUp()
-        for circle, bucket, n in (('MP', 'BSNL OFC', 3), ('MP', 'bsnl ofc', 1), ('MP', 'Others', 2), ('MP', 'IaaSP Battery', 1),
-                                  ('OD', 'TCS', 4), ('OD', 'IaaSP Others', 1), ('OD', '-', 1)):
+        for circle, bucket, n in (('MP', 'BSNL OFC', 3), ('MP', 'bsnl ofc', 1), ('MP', 'Others', 2), ('MP', 'IaasP Battery', 1),
+                                  ('OD', 'TCS', 4), ('OD', 'IaasP Others', 1), ('OD', '-', 1)):
             for _ in range(n):
                 record(circle, bucket)
         record('MP', 'TCS', day=date(2026, 10, 25), project='LWE')
@@ -61,14 +61,14 @@ class SummaryBreakdownTests(SignedInTestCase):
         b = self.get()
         self.assertEqual(b['through'], '2026-10-25')
         rows = {r['circle']: r for r in b['rows']}
-        self.assertEqual({k: v for k, v in rows['MP']['counts'].items() if v}, {'BSNL OFC': 4, 'Others': 2, 'IaaSP Battery': 1, 'TCS': 1})
-        self.assertEqual({k: v for k, v in rows['OD']['counts'].items() if v}, {'TCS': 4, 'IaaSP Others': 1})
+        self.assertEqual({k: v for k, v in rows['MP']['counts'].items() if v}, {'BSNL OFC': 4, 'Others': 2, 'IaasP Battery': 1, 'TCS': 1})
+        self.assertEqual({k: v for k, v in rows['OD']['counts'].items() if v}, {'TCS': 4, 'IaasP Others': 1})
         for r in (rows['MP'], rows['OD']):
             self.assertEqual(r['grand_total'], sum(v for v in r['counts'].values() if v))
         for label in LABELS:
             self.assertEqual(b['totals'][label], sum(r['counts'][label] or 0 for r in b['rows']), label)
         self.assertEqual(b['grand_total'], 13)
-        self.assertEqual((b['percent_of_total']['TCS'], b['percent_of_total']['BSNL OFC'], b['percent_of_total']['IaaSP OFC']), (38.46, 30.77, 0.0))
+        self.assertEqual((b['percent_of_total']['TCS'], b['percent_of_total']['BSNL OFC'], b['percent_of_total']['IaasP OFC']), (38.46, 30.77, 0.0))
         self.assertNotIn('BSNL-Link', b['totals'])
         self.assertNotIn('PTPL-Techn', [c['label'] for c in b['columns']])
         # Unmapped values stay visible and outside the Grand Total: every record is accounted for.

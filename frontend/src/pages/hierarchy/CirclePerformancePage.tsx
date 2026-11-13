@@ -91,7 +91,7 @@ export function CirclePerformancePage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Top Heading */}
       <PageHeading title={`${circleName} Performance`} subtitle={subtitle} />
 
@@ -132,7 +132,7 @@ export function CirclePerformancePage() {
       />
 
       {/* Circle Info Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card p-4 shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3 shadow-xs">
         <div>
           <span className="text-xs font-medium text-muted-foreground">O&M Manager</span>
           <div className="mt-0.5 flex items-center gap-2">
@@ -154,7 +154,7 @@ export function CirclePerformancePage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-6 text-xs">
+        <div className="flex items-center gap-4 text-xs">
           <div>
             <span className="text-muted-foreground">Total Circle Sites:</span>{' '}
             <span className="font-semibold text-foreground">{formatNumber(circleKpis.assigned_sites)}</span>
@@ -175,7 +175,7 @@ export function CirclePerformancePage() {
 
       {/* OA-wise Performance Table Card */}
       <Card className="rounded-xl border bg-card shadow-xs">
-        <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <MapPin className="size-4 text-primary" aria-hidden="true" />

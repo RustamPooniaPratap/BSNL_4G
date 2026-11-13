@@ -26,7 +26,7 @@ export function KpiCards({ summary, period, loading, onShowBelow60 }: KpiCardsPr
   if (!summary) {
     return (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5" aria-busy="true">
-        {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
+        {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
       </div>
     );
   }
@@ -77,10 +77,10 @@ function OutageKpi({ summary }: { summary: SummaryResponse }) {
   return (
     <Kpi icon={<Clock />} label="Outage minutes" value={value == null ? 'Not available' : formatMinutes(value)}
       header={(
-        <div role="group" aria-label="Outage period" className="inline-flex rounded-md border p-px text-[10px]">
+        <div role="group" aria-label="Outage period" className="inline-flex shrink-0 rounded-md border p-px text-[10px]">
           {PERIODS.map(([v, l]) => (
             <button key={v} type="button" aria-pressed={v === period} onClick={() => setPeriod(v)}
-              className={cn('rounded px-1.5 py-px font-medium', v === period ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>{l}</button>
+              className={cn('rounded px-1.5 py-px font-medium focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none', v === period ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>{l}</button>
           ))}
         </div>
       )}
@@ -111,13 +111,13 @@ interface KpiProps {
 
 function Kpi({ icon, label, value, detail, share: pct, header, emphasis, tone, action }: KpiProps) {
   return (
-    <Card role="group" aria-label={label} className={cn('gap-1.5 px-4 py-3.5', emphasis && 'ring-2 ring-primary/15')}>
+    <Card role="group" aria-label={label} className={cn('min-w-0 gap-1 px-3.5 py-2.5', emphasis && 'ring-2 ring-primary/15')}>
       <div className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground [&_svg]:size-3.5">
-        <span>{label}</span>
-        {header ?? <span aria-hidden="true" className={cn(tone === 'critical' && 'text-destructive', tone === 'warning' && 'text-amber-600')}>{icon}</span>}
+        <span className="min-w-0">{label}</span>
+        {header ?? <span aria-hidden="true" className={cn('shrink-0', tone === 'critical' && 'text-destructive', tone === 'warning' && 'text-amber-600')}>{icon}</span>}
       </div>
-      <p className="flex items-baseline gap-2">
-        <span className={cn('text-2xl font-semibold tabular-nums tracking-tight', tone === 'critical' && 'text-destructive')}>{value}</span>
+      <p className="flex flex-wrap items-baseline gap-x-2">
+        <span className={cn('text-2xl leading-7 font-semibold tabular-nums tracking-tight', tone === 'critical' && 'text-destructive')}>{value}</span>
         {pct != null && <span className="text-sm font-medium text-muted-foreground tabular-nums">{formatPct(pct, 1)}</span>}
       </p>
       <p className="text-xs leading-snug text-muted-foreground">{detail}</p>

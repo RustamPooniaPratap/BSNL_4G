@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CI_PERMISSIONS, CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
 import * as api from './api';
 import { AllKpisPage } from './AllKpisPage';
-import type { KpiFilterOptions, KpiHierarchy, KpiSummary, KpiValues } from './types';
+import type { KpiFilterOptions, KpiHierarchy, KpiSummary, KpiTrendPoint, KpiValues } from './types';
 
 vi.mock('./api', () => ({
   fetchKpiFilters: vi.fn(), fetchKpiSummary: vi.fn(), fetchKpiTrends: vi.fn(), fetchKpiHierarchy: vi.fn(), fetchKpiSites: vi.fn(), fetchKpiRca: vi.fn(),
@@ -28,17 +28,28 @@ const SUMMARY: KpiSummary = {
 const OPTIONS: KpiFilterOptions = {
   dates: ['2026-10-31', '2026-11-01'], default_period: { start: '2026-11-01', end: '2026-11-01' }, projects: ['4G Saturation', 'LWE'], circles: ['MP', 'RJ'],
   cis: [{ key: 'RJ::Guddu Singh', label: 'Guddu Singh', circle: 'RJ' }], ies: [], sites: [], site_count: 120,
-  buckets: [{ key: 'lt_60', label: 'Below 60%' }], final_buckets: ['TCS', 'Not mapped'],
+  buckets: [{ key: 'lt_60', label: 'Below 60%' }, { key: '60_90', label: '60% to 90%' }, { key: 'gte_98_5', label: '98.5% and above' }], final_buckets: ['TCS', 'Not mapped'],
 };
-const CIRCLES: KpiHierarchy = { level: 'circle', rows: [{ ...values(), key: 'RJ', project: '4G Saturation', circle: 'RJ' }] };
+const row = (circle: string, over: Partial<KpiValues> = {}) => ({ ...values(over), key: circle, project: '4G Saturation', circle });
+// Six circles, so the ranking shades the three lowest.
+const CIRCLES: KpiHierarchy = { level: 'circle', rows: [
+  row('RJ'), row('MP', { availability_pct: 99.5, outage_hours: 10 }), row('OD', { availability_pct: 97.1, outage_hours: 80 }), row('BH', { availability_pct: 95.2, outage_hours: 120 }),
+  row('UP', { availability_pct: 99.9, outage_hours: 2 }), row('KL', { availability_pct: 58.4, outage_hours: 500, below_60_sites: 9 }),
+] };
+const PREVIOUS: KpiHierarchy = { level: 'circle', rows: [row('RJ', { availability_pct: 99.9 }), row('MP', { availability_pct: 98.0 })] };
+const point = (key: string, label: string, over: Partial<KpiTrendPoint> = {}): KpiTrendPoint => ({
+  key, label, start: '2026-10-01', end: '2026-10-31', days: 31, availability_pct: 98.9, outage_minutes: 1000, outage_hours: 16.7, usd_sites: 12, nsla_sites: 4,
+  below_98_5_sites: 10, below_60_sites: 1, coverage_pct: 99, missing_site_days: 3, ...over,
+});
 const Location = () => { const l = useLocation(); return <p data-testid="location">{l.search}</p>; };
+const isPrevious = (p: URLSearchParams) => p.get('date_from') === '2026-10-31';
 
 beforeEach(() => {
   vi.clearAllMocks();
   m.fetchKpiFilters.mockResolvedValue(OPTIONS);
   m.fetchKpiSummary.mockResolvedValue(SUMMARY);
   m.fetchKpiTrends.mockResolvedValue({ granularity: 'day', points: [] });
-  m.fetchKpiHierarchy.mockResolvedValue(CIRCLES);
+  m.fetchKpiHierarchy.mockImplementation(async (p: URLSearchParams) => (isPrevious(p) ? PREVIOUS : CIRCLES));
   m.fetchKpiSites.mockResolvedValue({ total: 0, page: 1, pages: 1, rows: [] });
   m.fetchKpiRca.mockResolvedValue({ records: 0, buckets: [], ownership: { configured: false, message: 'Not configured: no approved mapping.' } });
 });
@@ -46,14 +57,127 @@ beforeEach(() => {
 describe("All KPI's", () => {
   it('shows backend KPIs and marks O&M-dependent values Not available', async () => {
     renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis' });
-    const usd = await screen.findByRole('group', { name: 'USD sites' });
+    const usd = await screen.findByRole('group', { name: 'USD Sites' });
     expect(usd).toHaveTextContent('Not available');
-    expect(screen.getByRole('group', { name: 'O&M Start sites' })).toHaveTextContent('Not available');
-    expect(screen.getByRole('status')).toHaveTextContent('O&M Start data is not available for Nov 2026');
+    expect(screen.queryByText(/O&M Start data is not available/)).not.toBeInTheDocument();  // On-Air population: nothing depends on it here
     expect(screen.queryByText(/handover/i)).not.toBeInTheDocument();  // not a project concept: no card, label or placeholder
-    expect(within(screen.getByRole('region', { name: 'Site Portfolio' })).getAllByRole('group')).toHaveLength(3);
     expect(screen.getByRole('group', { name: 'Availability (selected period)' })).toHaveTextContent('98.745%');
-    expect(screen.getByRole('group', { name: 'Missing availability (site-days)' })).toHaveTextContent('2');
+    expect(screen.getByRole('group', { name: 'Outage hours' })).toHaveTextContent('410 h');
+  });
+
+  it('shows the overview KPIs in one grid, without the banner, Site Portfolio or Data Completeness', async () => {
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis' });
+    const grid = await screen.findByRole('region', { name: 'Key indicators' });
+    const tiles = within(grid).getAllByRole('group').map((g) => g.getAttribute('aria-label'));
+    expect(tiles).toEqual(['Availability (selected period)', 'Daily availability', 'Weekly availability', 'Monthly availability', 'Outage minutes', 'Outage hours',
+      'USD Sites', 'NSLA Sites (< 98.5%)', 'Sites ≥ 98.5% (period)', 'Sites < 98.5% (period)', 'Sites < 60% (period)']);
+    expect(new Set(tiles).size).toBe(tiles.length);  // no duplicates
+    expect(screen.queryByText(/4G & LWE Site Performance/)).not.toBeInTheDocument();  // the banner
+    expect(screen.queryByRole('region', { name: 'Site Portfolio' })).not.toBeInTheDocument();
+    for (const gone of ['Total sites', 'On-Air sites', 'O&M Start sites', 'Reporting coverage', 'Missing availability (site-days)', 'Sites missing a day', 'Sites without any value'])
+      expect(screen.queryByRole('group', { name: gone })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Data Completeness/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'View title' })).not.toBeInTheDocument();  // no heading card on the overview
+    for (const gone of [/coverage/i, /missing site-days/i]) expect(screen.queryByText(gone)).not.toBeInTheDocument();
+  });
+
+  it('has no heading card on any view: the KPI views keep their definition line and the O&M Start data check', async () => {
+    for (const tab of ['trends', 'availability', 'usd', 'below_60', 'ranking', 'drilldown']) {
+      const { unmount } = renderWithWorkbook(<AllKpisPage />, { url: `/all-kpis?tab=${tab}&scope=om_start` });
+      expect(await screen.findByText(/O&M Start data is not available for Nov 2026/)).toBeInTheDocument();
+      expect(screen.queryByRole('region', { name: 'View title' })).not.toBeInTheDocument();
+      unmount();
+    }
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis?tab=availability' });
+    expect(await screen.findByLabelText('How Availability is calculated')).toHaveTextContent('Outage-weighted availability');
+  });
+
+  it('shows the overview data check without a heading card for the O&M Start population', async () => {
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis?scope=om_start' });
+    expect(await screen.findByText(/O&M Start data is not available for Nov 2026/)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'View title' })).not.toBeInTheDocument();
+  });
+
+  it('keeps every filter in the compact filter bar, with Reset at its end', async () => {
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis' });
+    const bar = await screen.findByRole('search', { name: "All KPI's filters" });
+    for (const name of ['From', 'To', 'Population']) expect(within(bar).getByLabelText(name)).toBeInTheDocument();
+    for (const name of [/^Project:/, /^Circle:/, /^CI \/ Cluster:/, /^IE:/, /^Site:/, /^Availability bucket:/]) expect(within(bar).getByRole('button', { name })).toBeInTheDocument();
+    const buttons = within(bar).getAllByRole('button');
+    expect(buttons.at(-1)).toHaveAccessibleName('Reset filters');
+  });
+
+  it('opens the overview for a link to the removed Data Completeness view', async () => {
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis?tab=completeness' });
+    expect(await screen.findByRole('region', { name: 'Key indicators' })).toBeInTheDocument();
+  });
+
+  it('labels the existing USD metric as USD Sites, never USD Events, and removes the reference report tools', async () => {
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis' });
+    const nav = await screen.findByRole('navigation', { name: "All KPI's sections" });
+    expect(within(nav).getByRole('button', { name: /^USD Sites/ })).toBeInTheDocument();
+    expect(screen.queryByText(/USD events/i)).not.toBeInTheDocument();
+    for (const tool of [/Upload Excel/i, /Sample data/i, /Input format/i, /Export to Excel/i, /Print/i, /Settings/i, /letter/i, /email/i, /MTTR/i, /score/i])
+      expect(screen.queryByRole('button', { name: tool })).not.toBeInTheDocument();
+  });
+
+  it('ranks the circles by the existing availability, with the previous rank, the total of the filters and the three lowest shaded', async () => {
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis' });
+    const table = await screen.findByRole('region', { name: 'Ranking · Circle-wise table' });
+    await waitFor(() => expect(within(table).getAllByRole('row')).toHaveLength(8));  // header, 6 circles, total
+    const names = within(table).getAllByRole('button', { name: /^Open Circle/ }).map((b) => b.textContent);
+    expect(names).toEqual(['UP', 'MP', 'RJ', 'OD', 'BH', 'KL']);  // highest availability first, as the API reports it
+    const rj = within(table).getByRole('button', { name: 'Open Circle RJ (4G)' }).closest('tr')!;
+    expect(rj).toHaveTextContent('98.745%');
+    await waitFor(() => expect(rj).toHaveTextContent('▼ 2'));  // rank 1 → 3 against the previous period
+    expect(within(table).getByRole('button', { name: 'Open Circle KL (4G)' }).closest('tr')).toHaveClass('bottom');
+    expect(within(table).getByRole('row', { name: 'Total of the selected filters' })).toHaveTextContent('98.745%');
+    // The previous ranks come from the same endpoint with the summary's comparison period.
+    expect(m.fetchKpiHierarchy.mock.calls.some(([p]) => isPrevious(p as URLSearchParams) && (p as URLSearchParams).get('date_to') === '2026-10-31')).toBe(true);
+  });
+
+  it('opens a KPI view from the menu with this period against the previous and the units ranked by it', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<><AllKpisPage /><Location /></>, { url: '/all-kpis' });
+    await user.click(within(await screen.findByRole('navigation', { name: "All KPI's sections" })).getByRole('button', { name: /^Outage Hours/ }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('tab=outage'));
+    const strip = await screen.findByRole('group', { name: 'Outage hours: this period against the previous' });
+    expect(strip).toHaveTextContent('410 h');  // the existing hours format (whole hours)
+    const table = await screen.findByRole('region', { name: 'Circle-wise · Outage hours table' });
+    await waitFor(() => expect(within(table).getAllByRole('button', { name: /^Open Circle/ }).map((b) => b.textContent)).toEqual(['UP', 'MP', 'OD', 'BH', 'RJ', 'KL']));  // lowest outage first
+    expect(screen.getByRole('img', { name: /Outage hours: weakest/ })).toBeInTheDocument();
+  });
+
+  it('lists the sites of a threshold KPI through the existing bucket filter', async () => {
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis?tab=below_60' });
+    expect(await screen.findByRole('region', { name: 'Site list – Sites < 60%' })).toBeInTheDocument();
+    await waitFor(() => expect(m.fetchKpiSites.mock.calls.some(([p]) => (p as URLSearchParams).get('bucket') === 'lt_60')).toBe(true));
+  });
+
+  it('shows the month-wise trend of every KPI from the trends endpoint', async () => {
+    m.fetchKpiTrends.mockResolvedValue({ granularity: 'month', points: [point('2026-09', 'Sep 26', { availability_pct: 98.2 }), point('2026-10', 'Oct 26', { status: 'Provisional' })] });
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis?tab=trends' });
+    const table = await screen.findByRole('region', { name: 'KPI trend table' });
+    expect(within(table).getByRole('columnheader', { name: 'Oct 26*' })).toBeInTheDocument();
+    expect(within(table).getByRole('row', { name: /^Availability/ })).toHaveTextContent('98.200%');
+    expect(within(table).getByRole('row', { name: /^USD Sites/ })).toBeInTheDocument();
+    expect(m.fetchKpiTrends.mock.calls.some(([p]) => (p as URLSearchParams).get('granularity') === 'month')).toBe(true);
+  });
+
+  it('shows every view in one horizontal tab bar under the filters, with live values and the active view marked', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<><AllKpisPage /><Location /></>, { url: '/all-kpis', auth: authValue({ user: { ...CI_USER, permissions: { ...CI_PERMISSIONS, rca_summary: ['view'] } } }) });
+    const nav = await screen.findByRole('navigation', { name: "All KPI's sections" });
+    expect(nav.closest('aside')).toBeNull();  // no left menu
+    const labels = (group: string) => within(within(nav).getByRole('group', { name: group })).getAllByRole('button').map((b) => b.firstChild?.textContent);
+    expect(labels('Overview & Reports')).toEqual(['All KPIs – Overview', 'KPI Trends (Month / Week)', 'Ranking']);
+    expect(labels('Performance KPIs')).toEqual(['Availability', 'Outage Hours', 'USD Sites', 'NSLA Sites', 'Sites < 98.5%', 'Sites < 60%']);
+    expect(labels('Analysis')).toEqual(['RCA', 'Circle / CI / IE / Site']);
+    await waitFor(() => expect(within(nav).getByRole('button', { name: /^Availability/ })).toHaveTextContent('98.745%'));  // live value from the summary
+    expect(within(nav).getByRole('button', { name: /^All KPIs – Overview/ })).toHaveAttribute('aria-current', 'page');
+    await user.click(within(nav).getByRole('button', { name: /^Circle \/ CI \/ IE \/ Site/ }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('tab=drilldown'));
+    expect(within(nav).getByRole('button', { name: /^Circle \/ CI \/ IE \/ Site/ })).toHaveAttribute('aria-current', 'page');
   });
 
   it('drills from a circle to its CIs, keeping the filters in the URL', async () => {
@@ -67,7 +191,7 @@ describe("All KPI's", () => {
     await waitFor(() => expect(screen.getByTestId('location')).not.toHaveTextContent('level='));
   });
 
-  it('shows the RCA tab only with RCA Summary View, with ownership Not Configured', async () => {
+  it('shows the RCA view only with RCA Summary View, with ownership Not Configured', async () => {
     const user = userEvent.setup();
     const { unmount } = renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis', auth: authValue({ user: CI_USER }) });
     const nav = await screen.findByRole('navigation', { name: "All KPI's sections" });

@@ -17,7 +17,7 @@ import { ACTIVE_FILTERS, matchesActive, matchesText, type ActiveFilter } from '.
 import { ActiveBadge, Chips, ConfirmAction, NoticeLine, SearchBox } from './OrgParts';
 
 function Loading({ error }: { error: Error | null }) {
-  return error ? <p className="p-4 text-sm text-destructive" role="alert">{error.message}</p> : <Skeleton className="m-4 h-40" />;
+  return error ? <p className="p-3 text-sm text-destructive" role="alert">{error.message}</p> : <Skeleton className="m-4 h-40" />;
 }
 
 // --- User access ---------------------------------------------------------------------------------
@@ -189,7 +189,7 @@ function AliasForm({ alias, sources, projects, circles, busy, onCancel, onSave }
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const submit = (e: FormEvent) => { e.preventDefault(); void onSave({ ...form, project: form.project && form.project !== 'all' ? form.project : null }); };
   return (
-    <Card className="p-4">
+    <Card className="p-3">
       <form noValidate onSubmit={submit} aria-label={alias ? `Edit mapping ${alias.raw_code}` : 'Add a mapping'} className="flex flex-wrap items-end gap-3">
         <Field id="org-alias-source" label="Source" required className="w-64">
           <SelectField id="org-alias-source" value={form.source} placeholder="Choose" disabled={!!alias} onChange={(v) => set('source', v)} options={sources} />

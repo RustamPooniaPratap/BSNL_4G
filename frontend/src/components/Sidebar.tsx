@@ -93,10 +93,10 @@ const entries: NavEntry[] = [
     items: [page('/workbook', 'Data Source', HardDrive), page('/data-source', 'Data Source & Quality', Database)],
   },
   {
-    kind: 'group', id: 'data-entry', label: 'Data Entry', icon: SquarePen,
-    items: [page('/data/add-row', 'Add Row', ClipboardPen), page('/data/upload-csv', 'Upload CSV', Sheet), page('/data/new-site', 'Add Site', MapPinPlus)],
+    kind: 'group', id: 'data-entry', label: 'Uptime Data', icon: SquarePen,
+    items: [page('/data/add-row', 'Add Row', ClipboardPen), page('/data/upload-csv', 'Uptime Data Upload', Sheet), page('/data/new-site', 'Add Site', MapPinPlus)],
   },
-  { kind: 'group', id: 'csv-arrival', label: 'CSV Arrival & Follow-up', icon: Inbox, items: [page('/daily-ingestion', 'CSV Arrival Tracking', Inbox)] },
+  { kind: 'group', id: 'csv-arrival', label: 'Data Arrival & Follow-up', icon: Inbox, items: [page('/daily-ingestion', 'CSV Arrival Tracking', Inbox)] },
   { kind: 'section', heading: 'Administration', items: [{ ...page('/admin/users', 'Users & Roles', UserCog), isActive: (p) => p === '/admin/users' || p.startsWith('/admin/users/') },
     { ...page('/admin/organization', 'Organization', Building2), isActive: (p) => p === '/admin/organization' || p.startsWith('/admin/organization/') }] },
   {

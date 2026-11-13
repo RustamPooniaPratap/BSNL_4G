@@ -85,10 +85,10 @@ class ReportingMonthTests(DashboardSourceTestCase):
         continuity = filters['source']['continuity']
         self.assertEqual((continuity['incomplete_dates'], continuity['mtd_status']), (['2026-11-01'], 'Provisional'))
         self.assertTrue({'LWE MP', 'LWE OD'} <= set(continuity['missing'][0]['units']))
-        summary = self.get('dashboard-summary', scope='all', report_type=G4)
+        summary = self.get('dashboard-summary', scope='on_air', report_type=G4)
         self.assertEqual(summary['reporting_date'], '2026-11-01')
         self.assertEqual(self.get('allkpis-summary')['period']['end'], '2026-11-01')
-        self.assertEqual(self.get('site-portfolio-summary', scope='all')['reporting_date'], '2026-11-01')
+        self.assertEqual(self.get('site-portfolio-summary', scope='on_air')['reporting_date'], '2026-11-01')
 
     def test_november_becomes_the_reporting_month_once_its_first_day_is_complete(self):
         self.load()
@@ -116,16 +116,18 @@ class WeekAndMonthRuleTests(DashboardSourceTestCase):
     def test_a_provisional_week_shows_its_figures(self):
         seven = [(p, c, sid, n, a, o, [10, 20, 30, 40, 50, 60, 70, 80]) for p, c, sid, n, a, o, _ in SITES]  # 1-8 Oct
         self.load(seven)
-        weeks = self.get('dashboard-trends', scope='all')['weeks']
-        sites = len(self.get('dashboard-records', scope='all')['records'])
+        weeks = self.get('dashboard-trends', scope='on_air')['weeks']
+        sites = len(self.get('dashboard-records', scope='on_air')['records'])
         self.assertTrue(weeks[0]['complete'])
-        self.assertEqual(weeks[0]['uptime_pct'], round(100 * (1 - (280 * sites) / (1440 * 7 * sites)), 4))
+        # UVMP002 becomes On-Air on 2 Oct, so its 1 Oct value is excluded from this population.
+        self.assertEqual(weeks[0]['uptime_pct'], round(100 * (1 - (280 * sites - 10) / (1440 * (7 * sites - 1))), 4))
+        self.assertEqual(weeks[0]['days_reported'], 7)
         # 8 Oct only: Week 2 is Provisional and shows its figures (approved rule B-4).
         self.assertEqual((weeks[1]['complete'], weeks[1]['status'], weeks[1]['uptime_pct'], weeks[1]['days_reported']),
                          (False, 'Provisional', round(100 * (1 - 80 / 1440), 4), 1))
-        periods = {p['key']: p for p in self.get('dashboard-thresholds', scope='all')['periods']}
+        periods = {p['key']: p for p in self.get('dashboard-thresholds', scope='on_air')['periods']}
         self.assertEqual((periods['w1']['days_reported'], periods['w2']['days_reported'], periods['w2']['status']), (7, 1, 'Provisional'))
-        period = self.get('dashboard-period', scope='all', period='weeks', weeks='1,2')
+        period = self.get('dashboard-period', scope='on_air', period='weeks', weeks='1,2')
         self.assertEqual((period['days_reported'], period['status']), (8, 'Provisional'))
 
     def test_history_months_exclude_missing_days(self):
@@ -158,7 +160,7 @@ class ExportTests(DashboardSourceTestCase):
 class ConsistencyTests(DashboardSourceTestCase):
     def test_the_same_filters_give_the_same_figures_on_every_page(self):
         self.load()
-        for scope in ('all', 'on_air', 'om_start'):
+        for scope in ('on_air', 'om_start'):
             for params in ({}, {'report_type': G4}, {'report_type': LWE, 'circle': 'OD'}):
                 summary = self.get('dashboard-summary', scope=scope, **params)['metrics']
                 portfolio_ = self.get('site-portfolio-summary', scope=scope, **params)['metrics']

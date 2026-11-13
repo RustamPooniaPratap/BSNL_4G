@@ -66,7 +66,7 @@ export function RcaMappingPage() {
   const unmap = () => run(() => unmapRcaCauses([...selected]), `Returned ${selected.size} description${selected.size === 1 ? '' : 's'} to the review queue.`);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PageHeading title="RCA Cause Mapping"
         subtitle="Only the selected descriptions are mapped; similar spellings are never merged automatically and the RCA text is kept unchanged" />
       {data && (
@@ -83,7 +83,7 @@ export function RcaMappingPage() {
       {loaded.error && !override && <Alert variant="destructive"><AlertDescription>{loaded.error.message}</AlertDescription></Alert>}
       {!data && !loaded.error && <Skeleton className="h-96 w-full" />}
       {data && (
-        <Card className="gap-3 rounded-xl px-5 py-4">
+        <Card className="gap-3 rounded-xl px-4 py-3">
           <div className="flex flex-wrap items-end gap-3">
             <Segmented label="List" value={tab} onChange={(t) => { setTab(t); setSelected(new Set()); }}
               options={[['queue', `Review queue (${data.queue.length})`], ['mapped', `Mapped (${data.mapped.length})`]]} />

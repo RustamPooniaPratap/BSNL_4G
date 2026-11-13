@@ -71,7 +71,7 @@ class UsdNslaIdenticalEverywhereTests(Base):
         self.assertEqual(self.get('dashboard-period', scope='on_air')['nsla_sites']['count'], 1)  # NSLA ignores the scope
         summary = self.get('dashboard-summary')['metrics']
         self.assertEqual((summary['nsla_sites_mtd'], summary['nsla_eligible_sites']), (1, 5))
-        records = self.get('dashboard-records', scope='all', below_sla='true')['records']
+        records = self.get('dashboard-records', scope='on_air', below_sla='true')['records']
         self.assertEqual([r['site_id'] for r in records], ['BELOW'])
         team = self.get('dashboard-teams-monthly', group='ci')['totals']['months']['2026-10']
         self.assertEqual((team['nsla_sites'], team['population']), (1, 5))
@@ -124,20 +124,20 @@ class WeekStatusTests(Base):
         portfolio.clear_cache()
 
     def test_dashboard_weeks_thresholds_period_and_all_kpis(self):
-        g4 = self.get('dashboard-trends', scope='all', report_type=G4)['weeks']
+        g4 = self.get('dashboard-trends', scope='on_air', report_type=G4)['weeks']
         self.assertEqual([(w['status'], w['complete']) for w in g4[:2]], [('Complete', True), ('Provisional', False)])
         self.assertEqual((g4[1]['days_reported'], g4[1]['uptime_pct']), (2, round(100 * (1 - 20 / (1440 * 4)), 4)))
         self.assertEqual(g4[1]['missing'], [])  # not ended yet; no missing day so far
-        lwe = self.get('dashboard-trends', scope='all', report_type=LWE)['weeks']
+        lwe = self.get('dashboard-trends', scope='on_air', report_type=LWE)['weeks']
         self.assertEqual([w['status'] for w in lwe[:2]], ['Provisional', 'Provisional'])
         self.assertEqual(lwe[0]['missing'], [{'date': '2026-10-05', 'units': ['LWE MP']}])
         self.assertEqual(lwe[1]['missing'], [{'date': '2026-10-09', 'units': ['LWE MP']}])
-        periods = {p['key']: p for p in self.get('dashboard-thresholds', scope='all', report_type=G4)['periods']}
+        periods = {p['key']: p for p in self.get('dashboard-thresholds', scope='on_air', report_type=G4)['periods']}
         self.assertEqual((periods['w1']['status'], periods['w2']['status'], periods['w2']['days_reported']), ('Complete', 'Provisional', 2))
-        self.assertEqual(self.get('dashboard-period', scope='all', report_type=G4, period='weeks', weeks='1')['status'], 'Complete')
-        week2 = self.get('dashboard-period', scope='all', report_type=G4, period='weeks', weeks='2')
+        self.assertEqual(self.get('dashboard-period', scope='on_air', report_type=G4, period='weeks', weeks='1')['status'], 'Complete')
+        week2 = self.get('dashboard-period', scope='on_air', report_type=G4, period='weeks', weeks='2')
         self.assertEqual((week2['status'], week2['days_reported']), ('Provisional', 2))
-        self.assertEqual(self.get('site-portfolio-period', scope='all', report_type=G4, period='weeks', weeks='1')['status'], 'Complete')
+        self.assertEqual(self.get('site-portfolio-period', scope='on_air', report_type=G4, period='weeks', weeks='1')['status'], 'Complete')
         points = self.get('allkpis-trends', project=G4, granularity='week', date_from='2026-10-01', date_to='2026-10-09')['points']
         self.assertEqual([(p['label'], p['status']) for p in points], [('Week 1 Oct 2026', 'Complete'), ('Week 2 Oct 2026', 'Provisional')])
         self.assertIsNotNone(points[1]['availability_pct'])
@@ -149,12 +149,12 @@ class WeekStatusTests(Base):
         user = portal_user('ci-4g', 'ci')
         set_pairs(user, [(G4, 'MP')])
         self.client.force_login(user)
-        weeks = self.get('dashboard-trends', scope='all')['weeks']
+        weeks = self.get('dashboard-trends', scope='on_air')['weeks']
         self.assertEqual([w['status'] for w in weeks[:2]], ['Complete', 'Provisional'])
         user = portal_user('ci-lwe', 'ci')
         set_pairs(user, [(LWE, 'MP')])
         self.client.force_login(user)
-        weeks = self.get('dashboard-trends', scope='all')['weeks']
+        weeks = self.get('dashboard-trends', scope='on_air')['weeks']
         self.assertEqual([w['status'] for w in weeks[:2]], ['Provisional', 'Provisional'])
 
     def test_export_headers_label_provisional_weeks(self):
@@ -176,7 +176,7 @@ class WeekStatusTests(Base):
                          [('Missing CSV: LWE MP 2026-10-09', 'warning', '/daily-ingestion')])
 
     def test_month_status_is_provisional_until_the_month_ends(self):
-        months = self.get('dashboard-monthly', scope='all', report_type=G4)['months']
+        months = self.get('dashboard-monthly', scope='on_air', report_type=G4)['months']
         self.assertEqual((months[-1]['status'], months[-1]['finalization_status']), ('Provisional', None))
 
 
