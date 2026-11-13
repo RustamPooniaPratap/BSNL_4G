@@ -123,6 +123,28 @@ describe('Site Portfolio', () => {
     expect(screen.queryByLabelText('Reporting periods')).not.toBeInTheDocument();  // the period summary box was removed
   });
 
+  it('sums the lower MTD buckets for Sites Not Meeting SLA and places it first', async () => {
+    const bucketValues = { lt_60: 1, '60_90': 2, '90_97': 3, '97_98_5': 4, gte_98_5: 5 };
+    m.fetchBreakdowns.mockResolvedValue({
+      ...breakdown,
+      buckets: breakdown.buckets.map((bucket) => ({ ...bucket, count: bucketValues[bucket.id] })),
+    });
+    renderPage('/portfolio?scope=om_start');
+
+    const section = await screen.findByRole('region', { name: 'Uptime buckets (MTD) · Population: O&M Start sites' });
+    const grid = section.querySelector(':scope > div')!;
+    const cards = [...grid.querySelectorAll<HTMLElement>(':scope > [data-slot="card"]')];
+    expect(cards.map((card) =>
+      card.getAttribute('aria-label') ?? card.querySelector('a')?.textContent?.trim(),
+    )).toEqual([
+      'Sites Not Meeting SLA',
+      'Sites at 98.5% or above',
+      'Sites below 60%',
+      'Uptime bucket mix',
+    ]);
+    expect(within(cards[0]).getByText('10', { exact: true })).toBeInTheDocument();
+  });
+
   it('shows the portfolio KPIs first: total sites, On-Air and O&M Start in one card, then conversion progress', async () => {
     // Circle-wise breakdowns per scope that add up to the summary totals (700 / 650 / 620).
     // Every circle carries its total sites (site status, whatever the population): 400 + 300 = 700.

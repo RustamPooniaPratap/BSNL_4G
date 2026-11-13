@@ -109,7 +109,7 @@ export function KpiTile({ kpi, of, sub, compareOn, sparkline, icon, tint, view, 
         {icon !== null && <IconTile size="sm" icon={icon ?? look?.icon ?? Boxes} tint={tint ?? look?.tint ?? 'slate'} />}
       </div>
       <p className={cn('flex flex-wrap items-baseline gap-x-1.5', icon === null ? 'mt-1.5' : '-mt-1')}>
-        <span className={cn('text-[20px] leading-5 font-semibold tracking-tight tabular-nums', kpi.value == null && 'text-lg font-medium text-muted-foreground', critical && 'text-destructive')}>
+        <span className={cn('text-[18px] leading-5 font-semibold tracking-tight tabular-nums', kpi.value == null && 'text-lg font-medium text-muted-foreground', critical && 'text-destructive')}>
           {showValue(kpi.value, kpi.unit)}
         </span>
         {of && kpi.value != null && <span className="text-[11px] text-muted-foreground">{of}</span>}
@@ -179,7 +179,7 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
         <dl className="mt-1.5 grid divide-x" style={{ gridTemplateColumns: `minmax(0, 1.3fr) repeat(${rest.length}, minmax(0, 1fr))` }}>
           <div className="min-w-0 pr-3" title={hero.title}>
             <dt className="truncate text-[11px] font-semibold tracking-wide text-emerald-700 uppercase">{headline ?? hero.label}</dt>
-            <dd className="mt-0.5 inline text-[20px] font-semibold tracking-tight tabular-nums">{formatNumber(hero.value)}</dd>
+            <dd className="mt-0.5 inline text-[18px] leading-[30px] font-semibold tracking-tight tabular-nums">{formatNumber(hero.value)}</dd>
             <dd className="ml-1.5 inline text-[13px] font-medium text-emerald-700 tabular-nums">{formatPct(valueShare ?? share(hero.value, whole), 1)}</dd>
             <dd className="text-[11px] text-muted-foreground tabular-nums">{unit}</dd>
             <dd className="text-[11px] text-muted-foreground tabular-nums"><ShareChange segment={hero} against={changeLabel} /> vs {changeLabel}</dd>
@@ -215,7 +215,7 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
           <p className="flex items-center gap-1.5 text-[11px] font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
           {headline && <p className="mt-1.5 text-[11px] font-semibold tracking-wide text-emerald-700 uppercase">{headline}</p>}
           <p className={cn('flex flex-wrap items-baseline gap-x-1.5', headline ? 'mt-0.5' : 'mt-1.5')}>
-            <span className={cn('text-[20px] leading-5 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
+            <span className={cn('text-[18px] leading-5 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
               {value == null ? 'Not available' : formatNumber(value)}
             </span>
             {value != null && valueShare != null && <span className="text-[15px] font-medium text-emerald-700 tabular-nums">{formatPct(valueShare, 1)}</span>}
@@ -266,13 +266,15 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
 }
 
 /** Section heading in small spaced capitals, as in the reference design. */
-export function KpiSection({ label, columns = 'wide', children }: { label: string; columns?: 'wide' | 'four' | 'portfolio'; children: ReactNode }) {
+export function KpiSection({ label, columns = 'wide', children }: { label: string; columns?: 'wide' | 'four' | 'portfolio' | 'uptime'; children: ReactNode }) {
   return (
     <section aria-label={label} className="space-y-2">
       <h2 className="text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">{label}</h2>
       <div className={cn('grid grid-cols-1 gap-2.5 md:grid-cols-2', columns === 'portfolio' && 'items-stretch',
         columns === 'wide' ? 'xl:grid-cols-[repeat(2,minmax(0,1fr))_minmax(0,1.6fr)]'
-          : columns === 'portfolio' ? 'xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]' : 'xl:grid-cols-4')}>
+          : columns === 'portfolio' ? 'xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]'
+            : columns === 'uptime' ? 'xl:grid-cols-[minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,2fr)]'
+              : 'xl:grid-cols-4')}>
         {children}
       </div>
     </section>
@@ -321,7 +323,7 @@ export function SummaryMetricsTile({ label, definition, metrics }: {
                 <span className={cn('size-2 shrink-0 rounded-full', tone.dot)} aria-hidden="true" />
                 <span className="truncate" title={m.label}>{m.label}</span>
               </dt>
-              <dd className={cn('mt-0.5 text-[20px] leading-none font-semibold tracking-tight tabular-nums', tone.value,
+              <dd className={cn('mt-0.5 text-[18px] leading-[20px] font-semibold tracking-tight tabular-nums', tone.value,
                 m.value == null && 'text-base font-medium text-muted-foreground')}>
                 {m.value == null ? (m.missing ?? 'Not available') : formatNumber(m.value)}
               </dd>

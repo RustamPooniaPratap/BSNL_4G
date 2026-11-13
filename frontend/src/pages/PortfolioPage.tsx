@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CircleAlert, Database, RotateCcw, Layers3 } from 'lucide-react';
+import { CircleAlert, Database, RotateCcw, Layers3, ShieldAlert } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SelectField } from '../components/data/DataEntry';
@@ -177,6 +177,21 @@ export function PortfolioPage() {
     label: bucketCounts.get(id)?.label ?? id, value: bucketCounts.get(id)?.count ?? 0, color: BUCKET_COLORS[id],
   })) : null;
   const bucketed = (bucketSegments ?? []).reduce((sum, x) => sum + x.value, 0);
+  const belowSla = breakdown.data
+    ? BUCKET_ORDER.slice(0, -1).reduce((sum, id) => sum + (bucketCounts.get(id)?.count ?? 0), 0)
+    : null;
+  const belowSlaKpi: Kpi = {
+    ...byId.gte_98_5,
+    id: 'below_98_5',
+    label: 'Sites Not Meeting SLA',
+    value: belowSla,
+    period: mtdLabel,
+    definition: `${sitesLabel} with MTD availability below 98.5%, summed across all lower uptime buckets.`,
+    delta: null,
+    higherIsBetter: false,
+    link: detailLink('/thresholds', f),
+    tone: belowSla ? 'critical' : undefined,
+  };
   const scopeText = [f.circle ? `Circle ${f.circle}` : 'All circles', f.reportType || 'All projects'].join(' · ');
   const periodBucketSegments: Segment[] | null = periodData?.buckets ? [...BUCKET_ORDER].reverse().map((id) => ({
     label: bucketCounts.get(id)?.label ?? options.data!.buckets.find((b) => b.id === id)?.label ?? id, value: periodData.buckets![id], color: BUCKET_COLORS[id],
@@ -258,7 +273,10 @@ export function PortfolioPage() {
 
       {daily ? (
       <>
-      <KpiSection label={`Uptime buckets (MTD) · Population: ${sitesLabel}`}>
+      <KpiSection label={`Uptime buckets (MTD) · Population: ${sitesLabel}`} columns="uptime">
+        <KpiTile kpi={belowSlaKpi} of={`of ${formatNumber(bucketed)} sites with a value`} compareOn={false}
+          icon={ShieldAlert} tint="red" view="Open Threshold Analysis"
+          sub={`${belowSla == null ? '—' : pctOf(belowSla, bucketed)} of sites with a value`} />
         <KpiTile kpi={byId.gte_98_5} of={`of ${formatNumber(populationSites)}`} compareOn={compareOn} vsLabel={vsLabel}
           sub={`${pctOf(summary.metrics.sites_at_or_above_98_5_mtd, populationSites)} of ${sitesLabel}`} />
         <KpiTile kpi={byId.lt_60} of={`of ${formatNumber(populationSites)}`} compareOn={compareOn} vsLabel={vsLabel}
