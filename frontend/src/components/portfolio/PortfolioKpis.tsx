@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { formatMinutes, formatNumber, formatPct } from '../../lib/format';
+import { monthLabel, shiftMonth } from '../../lib/periods';
 import type { Delta, Kpi } from '../../lib/portfolio';
 import type { ConversionActivity } from '../../types';
 import { reportTypeColor } from '../dashboard/constants';
@@ -53,7 +54,7 @@ export function DeltaChip({ d, higherIsBetter }: { d: Delta | null; higherIsBett
     ? `${d.absolute > 0 ? '+' : ''}${d.absolute.toFixed(2)} pts`
     : `${d.absolute > 0 ? '+' : ''}${formatNumber(d.absolute)}${d.relativePct != null ? ` (${d.relativePct > 0 ? '+' : ''}${d.relativePct}%)` : ''}`;
   return (
-    <span className={cn('inline-flex items-center gap-0.5 text-xs font-medium', good === true && 'text-emerald-700', good === false && 'text-destructive', good == null && 'text-muted-foreground')}>
+    <span className={cn('inline-flex items-center gap-0.5 text-[11px] font-medium', good === true && 'text-emerald-700', good === false && 'text-destructive', good == null && 'text-muted-foreground')}>
       <Icon className="size-3.5" aria-hidden="true" />{text}
     </span>
   );
@@ -74,7 +75,7 @@ export function Definition({ label, text }: { label: string; text: string }) {
 
 export function IconTile({ icon: Icon, tint, size = 'md' }: { icon: LucideIcon; tint: Tint; size?: 'sm' | 'md' }) {
   return (
-    <span className={cn('flex shrink-0 items-center justify-center rounded-lg', size === 'sm' ? 'size-7 rounded-md' : 'size-9', TINT[tint])} aria-hidden="true">
+    <span className={cn('flex shrink-0 items-center justify-center rounded-lg', size === 'sm' ? 'size-[26px] rounded-md' : 'size-8', TINT[tint])} aria-hidden="true">
       <Icon className={size === 'sm' ? 'size-3.5' : 'size-4'} />
     </span>
   );
@@ -82,7 +83,7 @@ export function IconTile({ icon: Icon, tint, size = 'md' }: { icon: LucideIcon; 
 
 export function ViewLink({ to, children }: { to: string | { pathname: string; search: string }; children: ReactNode }) {
   return (
-    <Link to={to} className="relative z-10 inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline focus-visible:underline focus-visible:outline-none">
+    <Link to={to} className="relative z-10 inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline focus-visible:underline focus-visible:outline-none">
       {children} <ArrowRight className="size-3.5" aria-hidden="true" />
     </Link>
   );
@@ -97,10 +98,10 @@ export function KpiTile({ kpi, of, sub, compareOn, sparkline, icon, tint, view, 
   const look = LOOK[kpi.id];
   const critical = kpi.tone === 'critical' && Boolean(kpi.value);
   return (
-    <Card className={cn('relative gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm', critical && 'border-red-200', kpi.tone === 'warning' && 'border-amber-200')}>
-      <div className="flex items-start justify-between gap-3">
+    <Card className={cn('relative gap-0 rounded-xl px-2.5 py-1.5 shadow-xs transition-shadow hover:shadow-sm', critical && 'border-red-200', kpi.tone === 'warning' && 'border-amber-200')}>
+      <div className="flex items-start justify-between gap-2.5">
         <div className="flex min-w-0 items-center gap-1.5">
-          <Link to={kpi.link} className="truncate text-xs font-medium text-foreground/80 hover:text-foreground focus-visible:underline focus-visible:outline-none">
+          <Link to={kpi.link} className="truncate text-[11px] font-medium text-foreground/80 hover:text-foreground focus-visible:underline focus-visible:outline-none">
             {kpi.label}
           </Link>
           <Definition label={kpi.label} text={kpi.definition} />
@@ -108,13 +109,13 @@ export function KpiTile({ kpi, of, sub, compareOn, sparkline, icon, tint, view, 
         {icon !== null && <IconTile size="sm" icon={icon ?? look?.icon ?? Boxes} tint={tint ?? look?.tint ?? 'slate'} />}
       </div>
       <p className={cn('flex flex-wrap items-baseline gap-x-1.5', icon === null ? 'mt-1.5' : '-mt-1')}>
-        <span className={cn('text-2xl leading-7 font-semibold tracking-tight tabular-nums', kpi.value == null && 'text-lg font-medium text-muted-foreground', critical && 'text-destructive')}>
+        <span className={cn('text-[20px] leading-5 font-semibold tracking-tight tabular-nums', kpi.value == null && 'text-lg font-medium text-muted-foreground', critical && 'text-destructive')}>
           {showValue(kpi.value, kpi.unit)}
         </span>
-        {of && kpi.value != null && <span className="text-xs text-muted-foreground">{of}</span>}
+        {of && kpi.value != null && <span className="text-[11px] text-muted-foreground">{of}</span>}
       </p>
       <p className="mt-0.5 text-[11px] text-muted-foreground">{kpi.period}</p>
-      {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
+      {sub && <p className="mt-1 text-[11px] text-muted-foreground">{sub}</p>}
       {compareOn && kpi.delta && (
         <p className="mt-1 text-xs"><DeltaChip d={kpi.delta} higherIsBetter={kpi.higherIsBetter} /> <span className="text-muted-foreground">{vsLabel}</span></p>
       )}
@@ -173,23 +174,23 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
     // columns beside it (as in the On-Air vs O&M Start card); one bar below shows the split.
     const [hero, ...rest] = segments;
     return (
-      <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
-        <p className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
-        <dl className="mt-2 grid divide-x" style={{ gridTemplateColumns: `minmax(0, 1.3fr) repeat(${rest.length}, minmax(0, 1fr))` }}>
+      <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-2.5 py-1.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
+        <p className="flex items-center gap-1.5 text-[11px] font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
+        <dl className="mt-1.5 grid divide-x" style={{ gridTemplateColumns: `minmax(0, 1.3fr) repeat(${rest.length}, minmax(0, 1fr))` }}>
           <div className="min-w-0 pr-3" title={hero.title}>
             <dt className="truncate text-[11px] font-semibold tracking-wide text-emerald-700 uppercase">{headline ?? hero.label}</dt>
-            <dd className="mt-0.5 inline text-2xl font-semibold tracking-tight tabular-nums">{formatNumber(hero.value)}</dd>
-            <dd className="ml-1.5 inline text-sm font-medium text-emerald-700 tabular-nums">{formatPct(valueShare ?? share(hero.value, whole), 1)}</dd>
+            <dd className="mt-0.5 inline text-[20px] font-semibold tracking-tight tabular-nums">{formatNumber(hero.value)}</dd>
+            <dd className="ml-1.5 inline text-[13px] font-medium text-emerald-700 tabular-nums">{formatPct(valueShare ?? share(hero.value, whole), 1)}</dd>
             <dd className="text-[11px] text-muted-foreground tabular-nums">{unit}</dd>
             <dd className="text-[11px] text-muted-foreground tabular-nums"><ShareChange segment={hero} against={changeLabel} /> vs {changeLabel}</dd>
           </div>
           {rest.map((s) => (
             <div key={s.label} className="min-w-0 px-3 last:pr-0" title={s.title}>
-              <dt className="flex min-w-0 items-start gap-1.5 text-xs leading-tight text-muted-foreground">
+              <dt className="flex min-w-0 items-start gap-1.5 text-[11px] leading-tight text-muted-foreground">
                 <span className="mt-1 size-2 shrink-0 rounded-full" style={{ background: s.color }} aria-hidden="true" />
                 <span className="min-w-0">{s.label}</span>
               </dt>
-              <dd className="mt-0.5 text-lg leading-6 font-semibold tracking-tight tabular-nums">{formatNumber(s.value)}</dd>
+              <dd className="mt-0.5 text-[17px] leading-5 font-semibold tracking-tight tabular-nums">{formatNumber(s.value)}</dd>
               <dd className="text-[11px] text-muted-foreground tabular-nums">
                 {formatPct(share(s.value, whole), 1)} · <ShareChange segment={s} against={changeLabel} />
               </dd>
@@ -208,19 +209,19 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
     );
   }
   return (
-    <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
-      <div className={cn('grid grid-cols-1 gap-3 sm:items-center', icon ? 'sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)_auto]' : 'sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)]')}>
+    <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-2.5 py-1.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
+      <div className={cn('grid grid-cols-1 gap-2.5 sm:items-center', icon ? 'sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)_auto]' : 'sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)]')}>
         <div className="min-w-0">
-          <p className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
-          {headline && <p className="mt-2 text-xs font-semibold tracking-wide text-emerald-700 uppercase">{headline}</p>}
+          <p className="flex items-center gap-1.5 text-[11px] font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
+          {headline && <p className="mt-1.5 text-[11px] font-semibold tracking-wide text-emerald-700 uppercase">{headline}</p>}
           <p className={cn('flex flex-wrap items-baseline gap-x-1.5', headline ? 'mt-0.5' : 'mt-1.5')}>
-            <span className={cn('text-2xl leading-7 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
+            <span className={cn('text-[20px] leading-5 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
               {value == null ? 'Not available' : formatNumber(value)}
             </span>
-            {value != null && valueShare != null && <span className="text-base font-medium text-emerald-700 tabular-nums">{formatPct(valueShare, 1)}</span>}
-            {value != null && <span className="text-xs text-muted-foreground">{unit}</span>}
+            {value != null && valueShare != null && <span className="text-[15px] font-medium text-emerald-700 tabular-nums">{formatPct(valueShare, 1)}</span>}
+            {value != null && <span className="text-[11px] text-muted-foreground">{unit}</span>}
           </p>
-          {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
+          {sub && <p className="mt-1 text-[11px] text-muted-foreground">{sub}</p>}
           {link && <div className="mt-2"><ViewLink to={link}>{view ?? 'View details'}</ViewLink></div>}
         </div>
         <div className="min-w-0 space-y-1.5">
@@ -232,7 +233,7 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
                   <span key={s.label} className="h-full first:rounded-l-full last:rounded-r-full" style={{ width: `${(100 * s.value) / whole}%`, background: s.color }} />
                 ))}
               </div>
-              <dl className="space-y-1 text-xs">
+              <dl className="space-y-1 text-[11px]">
                 {segments.map((s) => (
                   <div key={s.label} className={cn('grid items-center gap-2', cols)} title={s.title}>
                     <dt className="flex min-w-0 items-center gap-2 text-foreground/80">
@@ -240,7 +241,7 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
                       <span className="min-w-0 truncate">{s.label}</span>
                     </dt>
                     <dd className="text-right font-medium tabular-nums">{formatNumber(s.value)}</dd>
-                    <dd className="text-right text-xs text-muted-foreground tabular-nums">{formatPct(share(s.value, whole), 1)}</dd>
+                    <dd className="text-right text-[11px] text-muted-foreground tabular-nums">{formatPct(share(s.value, whole), 1)}</dd>
                   </div>
                 ))}
                 {extra?.map((e) => (
@@ -256,7 +257,7 @@ export function CompositeTile({ label, definition, icon, tint, headline, value, 
               </dl>
             </>
           ) : <p className="text-sm text-muted-foreground">{note ?? 'Not available for these filters.'}</p>}
-          {segments && whole > 0 && note && <p className="text-xs text-muted-foreground">{note}</p>}
+          {segments && whole > 0 && note && <p className="text-[11px] text-muted-foreground">{note}</p>}
         </div>
         {icon && <div className="hidden self-start sm:block"><IconTile size="sm" icon={icon} tint={tint ?? 'slate'} /></div>}
       </div>
@@ -269,7 +270,7 @@ export function KpiSection({ label, columns = 'wide', children }: { label: strin
   return (
     <section aria-label={label} className="space-y-2">
       <h2 className="text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">{label}</h2>
-      <div className={cn('grid grid-cols-1 gap-3 md:grid-cols-2',
+      <div className={cn('grid grid-cols-1 gap-2.5 md:grid-cols-2', columns === 'portfolio' && 'items-stretch',
         columns === 'wide' ? 'xl:grid-cols-[repeat(2,minmax(0,1fr))_minmax(0,1.6fr)]'
           : columns === 'portfolio' ? 'xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]' : 'xl:grid-cols-4')}>
         {children}
@@ -303,29 +304,29 @@ export interface SummaryMetric {
 
 /**
  * Compact summary of related counts (e.g. Total sites, On-Air, O&M Start, Difference): four columns on desktop,
- * two by two on medium screens, stacked on mobile, with the links in a footer right under the metrics.
+ * two by two on medium screens, stacked on mobile.
  */
-export function SummaryMetricsTile({ label, definition, metrics, links }: {
-  label: string; definition: string; metrics: SummaryMetric[]; links: { to: string; view: string }[];
+export function SummaryMetricsTile({ label, definition, metrics }: {
+  label: string; definition: string; metrics: SummaryMetric[];
 }) {
   return (
-    <Card role="region" aria-label={label} className="h-full gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
-      <p className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
-      <dl className="mt-1.5 grid grid-cols-1 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-4 lg:divide-x">
+    <Card role="region" aria-label={label} className="h-full gap-0 rounded-xl px-2.5 py-1.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
+      <p className="flex items-center gap-1.5 text-[11px] font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
+      <dl className="mt-1 grid grid-cols-1 gap-y-2 sm:grid-cols-2 lg:grid-cols-4 lg:divide-x">
         {metrics.map((m) => {
           const tone = TONES[m.tone];
           return (
             <div key={m.label} className="min-w-0 sm:pr-3 lg:px-3 lg:first:pl-0 lg:last:pr-0">
-              <dt className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <dt className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
                 <span className={cn('size-2 shrink-0 rounded-full', tone.dot)} aria-hidden="true" />
                 <span className="truncate" title={m.label}>{m.label}</span>
               </dt>
-              <dd className={cn('mt-0.5 text-2xl leading-none font-semibold tracking-tight tabular-nums', tone.value,
+              <dd className={cn('mt-0.5 text-[20px] leading-none font-semibold tracking-tight tabular-nums', tone.value,
                 m.value == null && 'text-base font-medium text-muted-foreground')}>
                 {m.value == null ? (m.missing ?? 'Not available') : formatNumber(m.value)}
               </dd>
               {m.split && m.split.length > 0 && (
-                <dd className="mt-1 space-y-px text-xs" aria-label={`${m.label} by project`}>
+                <dd className="mt-1 space-y-px text-[11px]" aria-label={`${m.label} by project`}>
                   {m.split.map((s) => (
                     <div key={s.project} className="flex items-center justify-between gap-2">
                       <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
@@ -343,7 +344,7 @@ export function SummaryMetricsTile({ label, definition, metrics, links }: {
                 </dd>
               )}
               {(m.note || m.pct != null) && (
-                <dd className="mt-1 text-xs leading-snug text-muted-foreground">
+                <dd className="mt-1 text-[11px] leading-snug text-muted-foreground">
                   {m.pct != null && <span className={cn('font-semibold', tone.pct)}>{formatPct(m.pct, 1)}</span>}
                   {m.pct != null && m.note ? ' ' : ''}{m.note}
                 </dd>
@@ -352,11 +353,6 @@ export function SummaryMetricsTile({ label, definition, metrics, links }: {
           );
         })}
       </dl>
-      {links.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1.5 border-t pt-1.5">
-          {links.map((l) => <ViewLink key={l.to} to={l.to}>{l.view}</ViewLink>)}
-        </div>
-      )}
     </Card>
   );
 }
@@ -364,35 +360,54 @@ export function SummaryMetricsTile({ label, definition, metrics, links }: {
 const ON_AIR_COLOR = '#0284c7';
 const OM_START_COLOR = '#059669';
 
-export function ConversionActivityTile({ total, onAir, omStart, activity, link, view, definition }: {
+export function ConversionActivityTile({ total, onAir, omStart, activity, earlierActivity, earlierActivityLoading, earlierActivityError, definition }: {
   total: number; onAir: number; omStart: number | null; activity: ConversionActivity | null;
-  link?: string; view?: string; definition: string;
+  earlierActivity: ConversionActivity | null; earlierActivityLoading: boolean; earlierActivityError: Error | null;
+  definition: string;
 }) {
   const label = 'Site Conversion Progress';
   const bars: { name: string; value: number | null; gapLabel: string; color: string }[] = [
     { name: 'On-Air', value: onAir, gapLabel: 'not On-Air', color: ON_AIR_COLOR },
     { name: 'O&M Start', value: omStart, gapLabel: 'remaining', color: OM_START_COLOR },
   ];
-  const months = activity ? [activity.previous_month, activity.month] : [];
+  const earlierKey = activity ? shiftMonth(activity.previous_month.key, -1) : '';
+  const earlierMatches = Boolean(earlierActivity && earlierActivity.month.key === activity?.previous_month.key);
+  const earlierError = earlierActivityError?.message
+    ?? (!earlierActivityLoading && earlierActivity && !earlierMatches ? 'Earlier month response did not match the selected reporting month.' : null);
+  const earlierLoading = earlierActivityLoading || (!earlierActivity && !earlierError);
+  const months = activity ? [
+    { key: earlierKey, label: monthLabel(earlierKey) },
+    activity.previous_month,
+    activity.month,
+  ] : [];
   const cell = (n: number | null) => (n == null ? <span className="text-muted-foreground">—</span> : formatNumber(n));
+  const earlierCell = (n: number | null) => earlierLoading
+    ? <span className="text-muted-foreground">Loading…</span>
+    : earlierError
+      ? <span className="text-destructive" title={earlierError}>Unavailable</span>
+      : cell(n);
+  const additions = activity ? [
+    { name: 'On-Air', values: [earlierActivity?.on_air.last_month.count ?? null, activity.on_air.last_month.count, activity.on_air.this_month.count] },
+    { name: 'O&M Start', values: [earlierActivity?.om_start.last_month.count ?? null, activity.om_start.last_month.count, activity.om_start.this_month.count] },
+  ] : [];
   return (
-    <Card role="region" aria-label={label} className="relative gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="flex items-center gap-1.5 text-xs font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
-        <p className="text-xs text-muted-foreground">Total site scope <span className="text-sm font-semibold text-foreground tabular-nums">{formatNumber(total)}</span></p>
+    <Card role="region" aria-label={label} className="relative h-full gap-0 rounded-xl px-2.5 py-1.5 shadow-xs transition-shadow hover:shadow-sm md:col-span-2 xl:col-span-1">
+      <div className="flex items-baseline justify-between gap-2.5">
+        <p className="flex items-center gap-1.5 text-[11px] font-medium text-foreground/80">{label} <Definition label={label} text={definition} /></p>
+        <p className="text-[11px] text-muted-foreground">Total site scope <span className="text-[13px] font-semibold text-foreground tabular-nums">{formatNumber(total)}</span></p>
       </div>
-      <dl className="mt-1.5 space-y-1.5">
+      <dl className="mt-1 space-y-1">
         {bars.map((b) => {
           const pct = b.value != null && total ? (100 * b.value) / total : null;
           return (
             <div key={b.name}>
-              <div className="flex items-baseline justify-between gap-2 text-[13px]">
+              <div className="flex items-baseline justify-between gap-2 text-xs">
                 <dt className="font-medium">{b.name}</dt>
                 <dd className="tabular-nums">
                   {b.value == null ? <span className="text-muted-foreground">Not available</span> : (
                     <><span className="font-semibold">{formatNumber(b.value)}</span>
                       <span className="ml-1.5 font-semibold" style={{ color: b.color }}>{formatPct(pct, 1)}</span>
-                      <span className="ml-1.5 text-xs text-muted-foreground">· <span className="text-red-600"><span className="font-semibold">{formatNumber(total - b.value)}</span> {b.gapLabel}</span></span></>
+                      <span className="ml-1.5 text-[11px] text-muted-foreground">· <span className="text-red-600"><span className="font-semibold">{formatNumber(total - b.value)}</span> {b.gapLabel}</span></span></>
                   )}
                 </dd>
               </div>
@@ -404,25 +419,27 @@ export function ConversionActivityTile({ total, onAir, omStart, activity, link, 
         })}
       </dl>
       {activity && (
-        <table className="mt-2 w-full border-t text-xs" aria-label="Monthly additions">
+        <table className="mt-2 w-full table-fixed border-t text-xs" aria-label="Monthly additions" aria-busy={earlierLoading || undefined}>
           <thead>
             <tr className="text-[11px] text-muted-foreground">
-              <th className="pt-1.5 text-left font-normal">Added in month</th>
-              {months.map((m) => <th key={m.key} className="pt-1.5 text-right font-normal">{m.label}</th>)}
+              <th className="w-[40%] pt-1.5 text-left font-normal">Added in month</th>
+              {months.map((m) => <th key={m.key} className="w-[20%] px-1 pt-1.5 text-right font-normal">{m.label}</th>)}
             </tr>
           </thead>
           <tbody>
-            {([['On-Air', activity.on_air], ['O&M Start', activity.om_start]] as const).map(([name, a]) => (
+            {additions.map(({ name, values }) => (
               <tr key={name}>
                 <th scope="row" className="text-left font-normal text-foreground/80">{name}</th>
-                <td className="text-right font-medium tabular-nums">{cell(a.last_month.count)}</td>
-                <td className="text-right font-medium tabular-nums">{cell(a.this_month.count)}</td>
+                {values.map((value, index) => (
+                  <td key={months[index].key} className="px-1 text-right font-medium tabular-nums">
+                    {index === 0 ? earlierCell(value) : cell(value)}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
         </table>
       )}
-      {link && <div className="mt-auto pt-1.5"><ViewLink to={link}>{view ?? 'View details'}</ViewLink></div>}
     </Card>
   );
 }

@@ -24,6 +24,7 @@ export function RcaImportPreview({ batch, busy, onCommit, onDiscard }: {
   const [conflicts, setConflicts] = useState<ConflictAction>('skip');
   const [missing, setMissing] = useState<MissingAction>('keep');
   const [acceptRejected, setAcceptRejected] = useState(false);
+  const [expandedCircle, setExpandedCircle] = useState<string | null>(null);
   const r = batch.report;
   if (!r) return null;
   const rejected = batch.status === 'rejected';
@@ -113,6 +114,13 @@ export function RcaImportPreview({ batch, busy, onCommit, onDiscard }: {
         </p>
       )}
       <ValidationGroups r={r} />
+      {batch.upload_type === 'consolidated' && r.circle_error_accountability && (
+        <CircleErrorAccountability
+          data={r.circle_error_accountability}
+          expandedCircle={expandedCircle}
+          onToggle={(circle) => setExpandedCircle((current) => current === circle ? null : circle)}
+        />
+      )}
       <div className="space-y-1 text-sm">
         <h3 className="font-semibold">Validation</h3>
         <p className="text-xs text-muted-foreground">
@@ -220,6 +228,62 @@ function ValidationGroups({ r }: { r: NonNullable<RcaImportBatch['report']> }) {
 
 function show(value: unknown) {
   return value == null || value === '' ? 'blank' : String(value);
+}
+
+function CircleErrorAccountability({ data, expandedCircle, onToggle }: {
+  data: NonNullable<NonNullable<RcaImportBatch['report']>['circle_error_accountability']>;
+  expandedCircle: string | null;
+  onToggle: (circle: string) => void;
+}) {
+  return (
+    <section className="space-y-2" aria-label="Circle-wise Error Accountability">
+      <div>
+        <h3 className="text-sm font-semibold">Circle-wise Error Accountability</h3>
+        <p className="text-xs text-muted-foreground">
+          {formatNumber(data.total_rejected_rows)} rejected rows, counted once each. Warnings are excluded. Select a circle to inspect its rejected records.
+        </p>
+      </div>
+      {data.circles.map((group) => {
+        const expanded = expandedCircle === group.circle;
+        const categories = group.error_categories.map(({ field, rows }) => `${field} (${formatNumber(rows)})`).join(', ') || '—';
+        return (
+          <div key={group.circle} className="rounded-lg border">
+            <div className="grid gap-1 px-3 py-2 sm:grid-cols-[minmax(8rem,1fr)_auto_minmax(12rem,2fr)] sm:items-center sm:gap-3">
+              <button type="button" className="w-fit text-left text-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-expanded={expanded} onClick={() => onToggle(group.circle)}>
+                {group.circle}
+              </button>
+              <span className="text-xs tabular-nums">{formatNumber(group.rejected_rows)} rejected rows</span>
+              <span className="text-xs text-muted-foreground">{categories}</span>
+            </div>
+            {expanded && (
+              <div className="overflow-x-auto border-t px-3 py-2">
+                <table className="w-full min-w-[700px] text-xs" aria-label={`${group.circle} rejected records`}>
+                  <thead><tr className="border-b text-left text-muted-foreground">
+                    {['Site ID', 'Site name', 'Reporting date', 'Excel row', 'Incorrect field', 'Validation reason'].map((heading) => (
+                      <th key={heading} className="px-2 py-1 font-medium">{heading}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {group.records.flatMap((record) => record.errors.map((error, index) => (
+                      <tr key={`${record.excel_row}-${error.code}-${index}`} className="border-b last:border-0">
+                        <td className="px-2 py-1 whitespace-nowrap">{record.site_id || '—'}</td>
+                        <td className="px-2 py-1">{record.site_name || '—'}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">{record.reporting_date || '—'}</td>
+                        <td className="px-2 py-1 tabular-nums">{record.excel_row}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">{error.field}</td>
+                        <td className="px-2 py-1">{error.message}</td>
+                      </tr>
+                    )))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </section>
+  );
 }
 
 function Counts({ title, items }: { title: string; items: [string, number][] }) {

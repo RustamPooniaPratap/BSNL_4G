@@ -23,7 +23,7 @@ import {
   buildKpis, buildPeriodKpis, circleBreakdown, detailLink, type Kpi, type PortfolioFilters,
 } from '../lib/portfolio';
 import {
-  applyChange, availability, monthPeriod, periodQuery, resolveSelection, type Period,
+  applyChange, availability, monthPeriod, periodQuery, resolveSelection, shiftMonth, type Period,
 } from '../lib/periods';
 import {
   fetchPortfolioActivity, fetchPortfolioBreakdowns, fetchPortfolioFilters, fetchPortfolioPeriod, fetchPortfolioSummary,
@@ -91,6 +91,10 @@ export function PortfolioPage() {
   if (f.circle) activityParams.set('circle', f.circle);
   if (f.date) activityParams.set('month', f.date.slice(0, 7));
   const activity = useApiQuery(options.data ? `portfolio-activity|${activityParams}` : null, (s) => fetchPortfolioActivity(activityParams, s));
+  const earlierActivityParams = new URLSearchParams(activityParams);
+  if (f.date) earlierActivityParams.set('month', shiftMonth(f.date.slice(0, 7), -1));
+  const earlierActivity = useApiQuery(ready ? `portfolio-activity-earlier|${earlierActivityParams}` : null,
+    (s) => fetchPortfolioActivity(earlierActivityParams, s));
 
   // No fallback: if the new data layer cannot serve the page, its error is shown and no figures.
   const fatal = options.error ?? statusOnAir.error ?? selected.error;
@@ -108,7 +112,7 @@ export function PortfolioPage() {
       <div className="space-y-3" aria-busy="true" aria-label="Loading site portfolio">
         <Skeleton className="h-10 w-72" />
         <Skeleton className="h-20 w-full" />
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-24" />)}</div>
+        <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-20" />)}</div>
       </div>
     );
   }
@@ -246,11 +250,10 @@ export function PortfolioPage() {
             { label: 'O&M Start sites', value: omSites, tone: 'omStart', missing: 'No O&M Start column', split: split(omBy, omSites),
               pct: omSites != null && total ? (100 * omSites) / total : null, note: omSites == null ? undefined : `${month} status` },
             { label: 'Difference', value: omDifference, tone: 'gap', split: split(omDiffBy, omDifference), note: 'On-Air, not yet O&M Start' },
-          ]}
-          links={[{ to: detailLink('/', f), view: `View ${sitesLabel}` }]} />
+          ]} />
         <ConversionActivityTile total={total} onAir={onAirSites} omStart={omSites} activity={activity.data}
-          definition={`Site status, shown whatever the population. Achievement against total site scope (${formatNumber(total)} sites in the filter, Consolidation Matrix): Site On-Air Date and O&M Start Date on or before the end of ${month}; the gap is total scope minus that count (a site without a date is not counted). Monthly additions count sites by their Site On-Air Date and O&M Start Date in the Consolidation Matrix; a month later than the latest date in the matrix shows "—", not 0.`}
-          link={detailLink('/', f)} view={`View ${sitesLabel}`} />
+          earlierActivity={earlierActivity.data} earlierActivityLoading={earlierActivity.loading} earlierActivityError={earlierActivity.error}
+          definition={`Site status, shown whatever the population. Achievement against total site scope (${formatNumber(total)} sites in the filter, Consolidation Matrix): Site On-Air Date and O&M Start Date on or before the end of ${month}; the gap is total scope minus that count (a site without a date is not counted). Monthly additions count sites by their Site On-Air Date and O&M Start Date in the Consolidation Matrix; a month later than the latest date in the matrix shows "—", not 0.`} />
       </KpiSection>
 
       {daily ? (
@@ -273,7 +276,7 @@ export function PortfolioPage() {
       ) : periodError ? (
         <Alert variant="destructive"><Database /><AlertTitle>Period figures unavailable</AlertTitle><AlertDescription>{periodError.message}</AlertDescription></Alert>
       ) : !periodKpis || !periodData ? (
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-busy="true" aria-label="Loading period figures">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-32" />)}</div>
+        <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4" aria-busy="true" aria-label="Loading period figures">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-28" />)}</div>
       ) : (
       <>
       <KpiSection label={`Uptime buckets · ${shortLabel}${daysUsed} · Population: ${sitesLabel}`}>

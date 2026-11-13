@@ -154,7 +154,7 @@ function TeamKpis({ data, loading, group, onSelectTeam }: {
   data: TeamsResponse | null; loading: boolean; group: TeamGroup; onSelectTeam: (name: string) => void;
 }) {
   if (loading && !data) {
-    return <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-24" />)}</div>;
+    return <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-5">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-20" />)}</div>;
   }
   if (!data) return null;
   const labels = GROUP_LABELS[group];
@@ -163,7 +163,7 @@ function TeamKpis({ data, loading, group, onSelectTeam }: {
   const worst = ranked[0];
   const share = t.sites_in_scope ? (100 * t.sites_below_60_mtd) / t.sites_in_scope : 0;
   return (
-    <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+    <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-5">
       <Kpi label={labels.many} value={formatNumber(t.teams)} detail={`${formatNumber(t.sites_in_scope)} sites in scope`} />
       <Kpi label={`${labels.many} with sites below 60%`} value={formatNumber(t.teams_with_sites_below_60)}
         detail={t.teams ? `${((100 * t.teams_with_sites_below_60) / t.teams).toFixed(0)}% of ${labels.many}` : '—'} tone={t.teams_with_sites_below_60 ? 'bad' : undefined} />
@@ -179,13 +179,13 @@ function TeamKpis({ data, loading, group, onSelectTeam }: {
 function Kpi({ label, value, detail, tone, onClick }: { label: string; value: string; detail: string; tone?: 'bad'; onClick?: () => void }) {
   const body = (
     <>
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className={cn('mt-1 text-2xl leading-7 font-semibold tabular-nums', tone === 'bad' && 'text-destructive')}>{value}</p>
-      <p className="mt-0.5 truncate text-xs text-muted-foreground" title={detail}>{detail}</p>
+      <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
+      <p className={cn('mt-0.5 text-[22px] leading-6 font-semibold tabular-nums', tone === 'bad' && 'text-destructive')}>{value}</p>
+      <p className="truncate text-[11px] text-muted-foreground" title={detail}>{detail}</p>
     </>
   );
   return (
-    <Card className="gap-0 px-3.5 py-2.5">
+    <Card className="gap-0 px-3 py-2">
       {onClick ? (
         <button type="button" onClick={onClick} className="rounded text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">{body}</button>
       ) : body}

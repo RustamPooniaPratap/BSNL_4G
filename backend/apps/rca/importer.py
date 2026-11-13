@@ -36,6 +36,7 @@ Outage minutes are stored as the RCA workbook gives them; the Up-Time Report's f
 from __future__ import annotations
 
 import shutil
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
@@ -125,6 +126,52 @@ def _known_sites() -> dict[tuple[str, str], str]:
     return {(t, k): c for t, k, c in Site.objects.filter(reporting_scope=Site.Scope.DASHBOARD).values_list('technology', 'site_key', 'circle')}
 
 
+def _circle_error_accountability(issues: list[dict]) -> dict:
+    """Count each rejected Excel row once and group it under the most reliable circle identity."""
+    from apps.sitedata.models import Site
+
+    rejected: dict[int, dict] = {}
+    for issue in issues:
+        if issue['severity'] != 'error' or issue['row'] is None:
+            continue
+        record = rejected.setdefault(issue['row'], {
+            'excel_row': issue['row'], 'site_id': issue['site_id'], 'site_name': issue.get('site_name', ''),
+            'reporting_date': issue.get('reporting_date', ''), 'circle': issue.get('circle', ''), 'errors': {},
+        })
+        record['errors'].setdefault((issue['code'], issue['message']), {
+            'code': issue['code'], 'field': issue.get('field', 'Validation'), 'message': issue['message'],
+        })
+
+    site_keys = {parser.site_key(row['site_id']) for row in rejected.values() if row['site_id']}
+    sites = {site.site_key: site for site in Site.objects.filter(site_key__in=site_keys)}
+    circles: dict[str, dict] = {}
+    for row in sorted(rejected.values(), key=lambda item: item['excel_row']):
+        site = sites.get(parser.site_key(row['site_id'])) if row['site_id'] else None
+        circle = (site.circle if site and site.circle else row['circle'])
+        circle = circle or 'Unattributed'
+        group = circles.setdefault(circle, {
+            'circle': circle, 'rejected_rows': 0, 'error_categories': defaultdict(int), 'records': [],
+        })
+        record_errors = list(row['errors'].values())
+        group['rejected_rows'] += 1
+        for field in {error['field'] for error in record_errors}:
+            group['error_categories'][field] += 1
+        group['records'].append({
+            'site_id': row['site_id'], 'site_name': row['site_name'], 'reporting_date': row['reporting_date'],
+            'excel_row': row['excel_row'], 'errors': record_errors,
+        })
+
+    result = sorted(circles.values(), key=lambda group: (group['circle'] == 'Unattributed', group['circle']))
+    for group in result:
+        group['error_categories'] = [
+            {'field': field, 'rows': count} for field, count in sorted(group['error_categories'].items())
+        ]
+        group['records'].sort(key=lambda record: record['excel_row'])
+    if sum(group['rejected_rows'] for group in result) != len(rejected):
+        raise ValueError('Circle-wise RCA error accountability does not reconcile with rejected Excel rows.')
+    return {'total_rejected_rows': len(rejected), 'circles': result}
+
+
 def _store(path: Path, batch: RcaImportBatch) -> None:
     """Keep a copy of the uploaded workbook for audit (never modified). The stored name is generated, not the upload's."""
     folder = Path(settings.DATA_DIR) / 'processed' / 'rca_uploads' / f'{batch.period_start.isoformat()}_{batch.period_end.isoformat()}'
@@ -183,6 +230,11 @@ def preview(path: Path, filename: str, *, user=None, details: dict | None = None
             _store(path, batch)
         raise ImportRejected(str(exc)) from exc
     rows, report = parsed['rows'], parsed['report']
+    if kind == RcaImportBatch.UploadType.CONSOLIDATED:
+        accountability = _circle_error_accountability(report.get('all_issues', []))
+        if accountability['total_rejected_rows'] != report['rejected_rows']:
+            raise ValueError('Circle-wise RCA error accountability does not reconcile with the validation rejected-row total.')
+        report['circle_error_accountability'] = accountability
     # Final Bucket has the highest priority: a file with any missing or unapproved Final Bucket is not imported at all.
     final_bucket_error = parser.final_bucket_file_error(report)
     if final_bucket_error and not details:

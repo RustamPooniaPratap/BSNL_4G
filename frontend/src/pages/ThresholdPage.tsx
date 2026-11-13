@@ -181,7 +181,7 @@ export function ThresholdPage() {
         <Alert variant="destructive"><Database /><AlertTitle>Threshold analysis unavailable</AlertTitle><AlertDescription>{result.error.message}</AlertDescription></Alert>
       ) : !data ? (
         <div className="space-y-3" aria-busy="true">
-          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-24 w-full" />
           <Skeleton className="h-72 w-full" />
         </div>
       ) : !period ? (
@@ -247,25 +247,25 @@ function PenaltyExposure({ data, period, currentLabel, scopeLabel, onSelect }: {
         : 'All sites classified';
   const buckets = data.buckets.filter((b) => data.penalty.buckets.includes(b.id));
   return (
-    <section aria-label="Uptime threshold summary" className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,2fr)]">
-      <Card className="gap-2 rounded-xl border-l-4 border-l-emerald-600 px-4 py-2.5 shadow-xs" role="group" aria-label="Uptime Threshold Summary">
+    <section aria-label="Uptime threshold summary" className="grid gap-2.5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,2fr)]">
+      <Card className="gap-1.5 rounded-xl border-l-4 border-l-emerald-600 px-3.5 py-2 shadow-xs" role="group" aria-label="Uptime Threshold Summary">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-semibold text-foreground/80">Uptime Threshold Summary</p>
+          <p className="text-[11px] font-semibold text-foreground/80">Uptime Threshold Summary</p>
           <p className="truncate text-[10px] text-muted-foreground" title={currentLabel}>{currentLabel}</p>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2.5">
           <div className="min-w-0">
             <p className="truncate text-[11px] font-medium text-emerald-700">Meeting Threshold — ≥{data.penalty.threshold}%</p>
             <p className="mt-0.5 flex items-baseline gap-2">
-              <span className="text-xl leading-none font-semibold tracking-tight text-emerald-700 tabular-nums">{meetingCount == null ? '—' : formatNumber(meetingCount)}</span>
-              <span className="text-xs font-semibold text-emerald-700 tabular-nums">{formatPct(meetingPct, 1)}</span>
+              <span className="text-[19px] leading-none font-semibold tracking-tight text-emerald-700 tabular-nums">{meetingCount == null ? '—' : formatNumber(meetingCount)}</span>
+              <span className="text-[11px] font-semibold text-emerald-700 tabular-nums">{formatPct(meetingPct, 1)}</span>
             </p>
           </div>
           <div className="min-w-0 border-l pl-3">
             <p className="truncate text-[11px] font-medium text-red-700">Below Threshold — &lt;{data.penalty.threshold}%</p>
             <p className="mt-0.5 flex items-baseline gap-2">
-              <span className="text-xl leading-none font-semibold tracking-tight text-red-700 tabular-nums">{belowCount == null ? '—' : formatNumber(belowCount)}</span>
-              <span className="text-xs font-semibold text-red-700 tabular-nums">{formatPct(belowPct, 1)}</span>
+              <span className="text-[19px] leading-none font-semibold tracking-tight text-red-700 tabular-nums">{belowCount == null ? '—' : formatNumber(belowCount)}</span>
+              <span className="text-[11px] font-semibold text-red-700 tabular-nums">{formatPct(belowPct, 1)}</span>
             </p>
           </div>
         </div>
@@ -282,20 +282,20 @@ function PenaltyExposure({ data, period, currentLabel, scopeLabel, onSelect }: {
           <span className="text-right">{completenessLabel}</span>
         </div>
       </Card>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" role="group" aria-label="Below 98.5% by bucket">
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4" role="group" aria-label="Below 98.5% by bucket">
         {buckets.map((b) => {
           const n = now ? now[b.id].count : null;
           const share = now ? now[b.id].pct : null;
           const critical = b.id === 'lt_60';
           return (
             <button key={b.id} type="button" onClick={() => onSelect(b.id)} aria-label={`${b.label}: ${n == null ? 'no data' : formatNumber(n)} sites, open analysis`}
-              className={cn('rounded-xl border bg-card px-3 py-2.5 text-left shadow-xs transition-shadow hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+              className={cn('rounded-xl border bg-card px-2.5 py-2 text-left shadow-xs transition-shadow hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
                 critical && 'border-red-300 bg-red-50/60')}>
-              <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
                 <span className="size-2.5 shrink-0 rounded-full" style={{ background: BUCKET_COLORS[b.id] }} aria-hidden="true" />{b.label}
               </span>
-              <span className={cn('mt-1 block text-2xl leading-none font-semibold tabular-nums', critical ? 'text-red-600' : 'text-foreground')}>{n == null ? '—' : formatNumber(n)}</span>
-              <span className="mt-1 block text-xs text-muted-foreground tabular-nums">{formatPct(share, 1)} of sites</span>
+              <span className={cn('mt-0.5 block text-[22px] leading-6 font-semibold tabular-nums', critical ? 'text-red-600' : 'text-foreground')}>{n == null ? '—' : formatNumber(n)}</span>
+              <span className="mt-0.5 block text-[11px] text-muted-foreground tabular-nums">{formatPct(share, 1)} of sites</span>
             </button>
           );
         })}
@@ -360,7 +360,7 @@ function BucketDetail({ bucket, data, mode, filters, loading, period, currentLab
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" role="region" aria-label="Bucket summary">
+      <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4" role="region" aria-label="Bucket summary">
         <SummaryCard label={`Sites · ${currentLabel}`} value={count == null ? 'No data' : formatNumber(count)} tone={critical && count ? 'critical' : undefined}
           detail={pct == null ? 'Not reported' : `${formatPct(pct, 2)} of sites in scope`} />
         <SummaryCard label={comparison ? `Sites · ${comparison.label}` : 'Comparison period'} value={prevCount == null ? '—' : formatNumber(prevCount)}
@@ -392,10 +392,10 @@ function BucketDetail({ bucket, data, mode, filters, loading, period, currentLab
 
 function SummaryCard({ label, value, detail, tone }: { label: string; value: React.ReactNode; detail: string; tone?: 'critical' }) {
   return (
-    <Card className="gap-0 px-3.5 py-2.5">
-      <p className="truncate text-xs font-medium text-muted-foreground" title={label}>{label}</p>
-      <p className={cn('mt-1 text-2xl leading-7 font-semibold tabular-nums', tone === 'critical' && 'text-destructive')}>{value}</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+    <Card className="gap-0 px-3 py-2">
+      <p className="truncate text-[11px] font-medium text-muted-foreground" title={label}>{label}</p>
+      <p className={cn('mt-0.5 text-[22px] leading-6 font-semibold tabular-nums', tone === 'critical' && 'text-destructive')}>{value}</p>
+      <p className="text-[11px] text-muted-foreground">{detail}</p>
     </Card>
   );
 }
@@ -480,7 +480,7 @@ function ThresholdKpis({ data, id, mode }: { data: ThresholdResponse; id: Thresh
     { label: month ? `${month.label} (full month)` : 'Last full month', period: month, previous: months.at(-2), previousLabel: 'previous month' },
   ];
   return (
-    <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4">
       {cards.map((card) => {
         const value = card.period ? data.total.values[card.period.key] : null;
         const other: Mode = mode === 'count' ? 'pct' : 'count';
@@ -488,13 +488,13 @@ function ThresholdKpis({ data, id, mode }: { data: ThresholdResponse; id: Thresh
         const before = card.previous ? pick(data.total.values[card.previous.key], id, mode) : null;
         const delta = current != null && before != null ? current - before : null;
         return (
-          <Card key={card.label} className="gap-0 px-3.5 py-2.5">
+          <Card key={card.label} className="gap-0 px-3 py-2">
             <div className="flex items-center gap-1.5">
-              <p className="truncate text-xs font-medium text-muted-foreground" title={card.label}>{card.label}</p>
+              <p className="truncate text-[11px] font-medium text-muted-foreground" title={card.label}>{card.label}</p>
               {card.period?.kind !== 'day' && <PeriodStatusBadge status={card.period?.status} missing={card.period?.missing} />}
             </div>
-            <p className="mt-1 text-2xl leading-7 font-semibold tabular-nums">{value ? show(current, mode) : 'No data'}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
+            <p className="mt-0.5 text-[22px] leading-6 font-semibold tabular-nums">{value ? show(current, mode) : 'No data'}</p>
+            <p className="text-[11px] text-muted-foreground">
               {value ? `${show(pick(value, id, other), other)} ${other === 'pct' ? 'of sites' : 'sites'}` : 'Not reported for this period'}
               {delta != null && ` · ${delta > 0 ? '+' : ''}${mode === 'count' ? formatNumber(delta) : `${delta.toFixed(1)} pts`} vs ${card.previousLabel}`}
             </p>

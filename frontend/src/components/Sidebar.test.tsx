@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, useLocation } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
@@ -20,8 +20,10 @@ describe('Sidebar order and groups', () => {
     await user.click(within(nav()).getByRole('button', { name: 'Uptime Data' }));
     await user.click(within(nav()).getByRole('button', { name: 'Data Arrival & Follow-up' }));
     await user.click(within(nav()).getByRole('button', { name: 'Alert' }));
-    expect(links()).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance', "All KPI's",
-      'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload Circle RCA',
+    await user.click(within(nav()).getByRole('button', { name: "All KPI's" }));
+    expect(links()).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance',
+      'All KPIs – Overview', 'KPI Trends (Month / Week)', 'Ranking', 'Availability', 'Outage Hours', 'USD Sites', 'NSLA Sites', 'Sites Below 98.5%',
+      'Sites Below 60%', 'RCA', 'Circle / CI / IE / Site', 'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload Circle RCA',
       'Data Source', 'Data Source & Quality', 'Add Row', 'Uptime Data Upload', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles', 'Organization',
       'Email Setup', 'Automations', 'Email History']);
     expect(within(nav()).getByText('Data')).toBeInTheDocument();
@@ -88,6 +90,52 @@ describe('Sidebar order and groups', () => {
     expect(within(nav()).getByRole('button', { name: 'Data Management' })).toHaveAttribute('aria-expanded', 'true');
     expect(within(nav()).getByRole('link', { name: 'Data Source & Quality' })).toHaveAttribute('aria-current', 'page');
     expect(within(nav()).getByRole('button', { name: 'Uptime Data' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('nests KPI sections, preserves filters on tab navigation, and expands the active route on refresh', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<><Sidebar /><Location /></>, { url: '/all-kpis?tab=availability&project=4G%20Saturation&circle=MP' });
+    const group = within(nav()).getByRole('button', { name: "All KPI's" });
+    expect(group).toHaveAttribute('aria-expanded', 'true');
+    expect(within(nav()).getByRole('link', { name: 'Availability' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav()).getByText('Overview & Reports')).toBeInTheDocument();
+    expect(within(nav()).getByText('Performance KPIs')).toBeInTheDocument();
+    expect(within(nav()).getByText('Analysis')).toBeInTheDocument();
+
+    await user.click(group);
+    expect(within(nav()).queryByRole('link', { name: 'Availability' })).not.toBeInTheDocument();
+    await user.click(group);
+    await user.click(within(nav()).getByRole('link', { name: 'Outage Hours' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('tab=outage');
+    expect(screen.getByTestId('location')).toHaveTextContent(/project=4G(?:%20|\+)Saturation/);
+    expect(screen.getByTestId('location')).toHaveTextContent('circle=MP');
+    expect(within(nav()).getByRole('link', { name: 'Outage Hours' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('navigates each existing KPI section to its matching tab query', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<><Sidebar /><Location /></>, { url: '/portfolio' });
+    await user.click(within(nav()).getByRole('button', { name: "All KPI's" }));
+    const destinations = [
+      ['All KPIs – Overview', '/all-kpis'],
+      ['KPI Trends (Month / Week)', '/all-kpis?tab=trends'],
+      ['Ranking', '/all-kpis?tab=ranking'],
+      ['Availability', '/all-kpis?tab=availability'],
+      ['Outage Hours', '/all-kpis?tab=outage'],
+      ['USD Sites', '/all-kpis?tab=usd'],
+      ['NSLA Sites', '/all-kpis?tab=nsla'],
+      ['Sites Below 98.5%', '/all-kpis?tab=below_98_5'],
+      ['Sites Below 60%', '/all-kpis?tab=below_60'],
+      ['RCA', '/all-kpis?tab=rca'],
+      ['Circle / CI / IE / Site', '/all-kpis?tab=drilldown'],
+    ];
+    for (const [label, href] of destinations) {
+      const link = within(nav()).getByRole('link', { name: label });
+      expect(link).toHaveAttribute('href', href);
+      await user.click(link);
+      await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(href));
+      expect(within(nav()).getByRole('link', { name: label })).toHaveAttribute('aria-current', 'page');
+    }
   });
 
   it('highlights 4G Saturation and LWE by their query parameter, and reopens Overview when one is reached', async () => {

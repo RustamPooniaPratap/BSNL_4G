@@ -1,4 +1,3 @@
-import { useCallback, useRef, useState, type CSSProperties } from 'react';
 import { ArrowRight, Info, TriangleAlert } from 'lucide-react';
 import { hasPermission, useAuth } from '../../context/auth';
 import { PageHeading } from '../../context/pageHeader';
@@ -10,7 +9,6 @@ import { ComparisonTable } from './components/ComparisonTable';
 import { DrillDown } from './components/DrillDown';
 import { KpiFilters } from './components/KpiFilters';
 import { KpiCard, type KpiCardSpec } from './components/KpiCards';
-import { KpiNav, type NavItem } from './components/KpiNav';
 import { KpiView, LevelCard } from './components/KpiView';
 import { RcaPanel } from './components/RcaPanel';
 import { TrendPanel } from './components/TrendPanel';
@@ -26,23 +24,9 @@ const VIEW_TITLES: Record<KpiTab, string> = {
   overview: 'All KPIs – overview', trends: 'KPI trends', availability: 'Availability', outage: 'Outage hours', usd: 'USD Sites', nsla: 'NSLA Sites',
   below_98_5: 'Sites < 98.5%', below_60: 'Sites < 60%', ranking: 'Ranking', rca: 'Root cause analysis', drilldown: 'Circle / CI / IE / Site',
 };
-const NAV_LABELS: Partial<Record<KpiTab, string>> = { overview: 'All KPIs – Overview', trends: 'KPI Trends (Month / Week)', outage: 'Outage Hours', rca: 'RCA', drilldown: 'Circle / CI / IE / Site' };
-/** Height of the sticky filter bar, so the KPI tab bar sticks right below it. */
-function useHeight() {
-  const [height, setHeight] = useState(0);
-  const observer = useRef<ResizeObserver | null>(null);
-  const ref = useCallback((el: HTMLDivElement | null) => {
-    observer.current?.disconnect();
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    observer.current = new ResizeObserver(() => setHeight(el.offsetHeight));
-    observer.current.observe(el);
-  }, []);
-  return [ref, height] as const;
-}
-
 /**
  * All KPI's: an optional, self-contained module (src/features/all-kpis, backend apps/allkpis; see README.md), laid out
- * as the reference report (sticky filters, a horizontal KPI tab bar in three groups, KPI views without heading cards). Every figure comes from
+ * as the reference report (sticky filters and KPI views without heading cards). Every figure comes from
  * /api/all-kpis/, computed on the server from the canonical daily records and the Site Master.
  */
 export function AllKpisPage() {
@@ -54,7 +38,6 @@ export function AllKpisPage() {
   const options = useApiQuery(`allkpis-filters-${f.query}`, (signal) => fetchKpiFilters(f.query, signal));
   const summary = useApiQuery(`allkpis-summary-${f.query}`, (signal) => fetchKpiSummary(f.query, signal));
   const s = summary.data;
-  const [fbarRef, fbarHeight] = useHeight();
   const tabs = TABS.filter((t) => t !== 'rca' || canRca);
   const tab = tabs.includes(f.tab) ? f.tab : 'overview';
   const open = (t: KpiTab) => f.update({ tab: t === 'overview' ? null : t });
@@ -63,29 +46,16 @@ export function AllKpisPage() {
   if (tab !== 'rca') query.delete('final_bucket');
   const kpi = isKpiId(tab) ? KPI_BY_ID[tab] : null;
 
-  const navItems: NavItem[] = tabs.map((t) => {
-    const k = isKpiId(t) ? KPI_BY_ID[t] : null;
-    const v = k && s?.current ? (s.current[k.key] as number | null) : null;
-    return {
-      id: t, label: NAV_LABELS[t] ?? VIEW_TITLES[t],
-      group: t === 'rca' || t === 'drilldown' ? 'analysis' : t === 'overview' || t === 'trends' || t === 'ranking' ? 'reports' : 'kpi',
-      value: k && s?.current ? (v == null ? 'N/A' : k.format(v)) : undefined,
-      tone: k ? k.tone(v) : undefined,
-    };
-  });
-
   return (
-    <div className="akp" style={{ '--akp-fbar-h': `${fbarHeight}px` } as CSSProperties}>
+    <div className="akp">
       <PageHeading title="All KPI's" subtitle={`Consolidated 4G & LWE Performance Overview · Population: ${sitesLabel}`} />
-      <div className="akp-fbar" ref={fbarRef}>
+      <div className="akp-fbar">
         {options.data
           ? <KpiFilters f={f} options={options.data} showFinalBucket={tab === 'rca'} />
           : options.error
             ? <p role="alert" className="akp-fbar-in t-crit"><TriangleAlert className="size-4" aria-hidden="true" />{options.error.message}</p>
             : <div className="akp-fbar-in"><div className="akp-skel h-[58px] w-full" /></div>}
       </div>
-
-      <KpiNav items={navItems} active={tab} onOpen={open} />
 
       <div className="akp-layout">
         <main className="akp-main" aria-label={VIEW_TITLES[tab]}>
@@ -94,7 +64,7 @@ export function AllKpisPage() {
           {summary.error && <div role="alert" className="akp-card akp-pad t-crit flex items-center gap-2"><TriangleAlert className="size-4" aria-hidden="true" />{summary.error.message}</div>}
           {!s && !summary.error && (
             <div aria-label="Loading KPIs" aria-busy="true" className="akp-tiles">
-              {Array.from({ length: 8 }, (_, i) => <div key={i} className="akp-skel h-28" />)}
+              {Array.from({ length: 8 }, (_, i) => <div key={i} className="akp-skel h-24" />)}
             </div>
           )}
           {s && !s.current && <div className="akp-card akp-pad akp-note flex items-start gap-2"><Info className="mt-px size-4 shrink-0" aria-hidden="true" />{s.notes?.join(' ') ?? 'No data for these filters.'}</div>}

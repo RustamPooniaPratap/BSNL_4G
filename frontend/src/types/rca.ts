@@ -221,7 +221,26 @@ export interface RcaCauses {
   stats: { descriptions: number; mapped_descriptions: number; records: number; mapped_records: number; no_description_records: number };
 }
 
-export interface RcaIssue { severity: 'error' | 'warning' | 'info'; code: string; row: number | null; site_id: string; message: string }
+export interface RcaIssue {
+  severity: 'error' | 'warning' | 'info'; code: string; row: number | null; site_id: string; message: string;
+  field?: string; site_name?: string; reporting_date?: string; circle?: string;
+}
+
+export interface RcaErrorAccountability {
+  total_rejected_rows: number;
+  circles: {
+    circle: string;
+    rejected_rows: number;
+    error_categories: { field: string; rows: number }[];
+    records: {
+      site_id: string;
+      site_name: string;
+      reporting_date: string;
+      excel_row: number;
+      errors: { code: string; field: string; message: string }[];
+    }[];
+  }[];
+}
 
 export interface RcaImportReport {
   filename: string;
@@ -245,6 +264,7 @@ export interface RcaImportReport {
   severity_counts: { error: number; warning: number; info: number };
   issue_counts: Record<string, number>;
   issues: RcaIssue[];
+  circle_error_accountability?: RcaErrorAccountability;
   new_rows: number;
   unchanged_rows: number;
   conflict_rows: number;

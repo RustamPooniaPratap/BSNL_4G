@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { RcaImportBatch, RcaImportReport } from '../../types/rca';
 import { RcaImportPreview } from './RcaImportPreview';
@@ -16,14 +16,51 @@ const REPORT: RcaImportReport = {
   final_bucket_problems: [{ value: 'Vsat', code: 'final_bucket_not_approved', rows: 1, example_rows: [9] }], final_bucket_error_rows: 1,
   sub_bucket_warnings: { rows: 2, missing_rows: 1, not_approved_rows: 1, values: [{ final_bucket: 'IaasP Others', value: 'Natural Clamity', code: 'sub_bucket_not_approved', rows: 1, example_rows: [4] }] },
   rca_description_warnings: 1,
+  circle_error_accountability: {
+    total_rejected_rows: 4,
+    circles: [
+      {
+        circle: 'OD', rejected_rows: 3, error_categories: [{ field: 'Final Bucket', rows: 3 }],
+        records: [
+          { site_id: 'OD0001', site_name: 'Bravo', reporting_date: '2026-10-21', excel_row: 5,
+            errors: [{ code: 'final_bucket_not_approved', field: 'Final Bucket', message: 'Final Bucket “Vsat” is not approved.' }] },
+          { site_id: 'OD0002', site_name: 'Echo', reporting_date: '2026-10-21', excel_row: 6,
+            errors: [{ code: 'final_bucket_not_approved', field: 'Final Bucket', message: 'Final Bucket “Vsat” is not approved.' }] },
+          { site_id: 'OD0003', site_name: 'Foxtrot', reporting_date: '2026-10-21', excel_row: 7,
+            errors: [{ code: 'final_bucket_not_approved', field: 'Final Bucket', message: 'Final Bucket “Vsat” is not approved.' }] },
+        ],
+      },
+      {
+        circle: 'Unattributed', rejected_rows: 1, error_categories: [{ field: 'Site ID', rows: 1 }],
+        records: [{ site_id: 'UNKNOWN', site_name: 'Unknown site', reporting_date: '2026-10-21', excel_row: 8,
+          errors: [{ code: 'unknown_site', field: 'Site ID', message: 'Site ID is not in the approved site master.' }] }],
+      },
+    ],
+  },
 };
 const BATCH: RcaImportBatch = {
-  id: 22, status: 'previewed', status_label: 'Validated — awaiting confirmation', file: 'Oct.xlsx', checksum: 'x', sheet: 'Sheet1', uploaded_at: '2026-11-04T10:00:00Z',
+  id: 22, status: 'previewed', upload_type: 'consolidated', status_label: 'Validated — awaiting confirmation', file: 'Oct.xlsx', checksum: 'x', sheet: 'Sheet1', uploaded_at: '2026-11-04T10:00:00Z',
   committed_at: null, imported_by: 'admin', report_name: 'October', project_scope: 'both', remarks: null, period_start: '2026-10-31', period_end: '2026-10-31',
   cycle: null, units: [], counts: { total: 10, valid: 6, rejected: 4 }, correction: false, conflict_action: null, missing_action: null, error: null, file_kept: true, report: REPORT,
 };
 
 describe('RcaImportPreview validation priorities', () => {
+  it('shows circle totals and opens exact rejected-row details without naming personnel', () => {
+    render(<RcaImportPreview batch={BATCH} busy={false} onCommit={vi.fn()} onDiscard={vi.fn()} />);
+    const section = screen.getByLabelText('Circle-wise Error Accountability');
+    expect(section).toHaveTextContent('4 rejected rows, counted once each. Warnings are excluded.');
+    expect(section).toHaveTextContent('OD');
+    expect(section).toHaveTextContent('Unattributed');
+    fireEvent.click(within(section).getByRole('button', { name: 'OD' }));
+    const records = screen.getByRole('table', { name: 'OD rejected records' });
+    expect(records).toHaveTextContent('OD0001');
+    expect(records).toHaveTextContent('Bravo');
+    expect(records).toHaveTextContent('2026-10-21');
+    expect(records).toHaveTextContent('5');
+    expect(records).toHaveTextContent('Final Bucket');
+    expect(records).toHaveTextContent('Final Bucket “Vsat” is not approved.');
+  });
+
   it('lists duplicates by the four-field key, Final Bucket errors and the non-blocking Sub Bucket and description warnings', () => {
     render(<RcaImportPreview batch={BATCH} busy={false} onCommit={vi.fn()} onDiscard={vi.fn()} />);
     const groups = screen.getByLabelText('Validation priorities');

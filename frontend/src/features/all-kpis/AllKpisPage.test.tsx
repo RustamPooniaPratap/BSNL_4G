@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CI_PERMISSIONS, CI_USER, authValue, renderWithWorkbook } from '../../test/renderWithWorkbook';
+import { Sidebar } from '../../components/Sidebar';
 import * as api from './api';
 import { AllKpisPage } from './AllKpisPage';
 import type { KpiFilterOptions, KpiHierarchy, KpiSummary, KpiTrendPoint, KpiValues } from './types';
@@ -114,8 +115,8 @@ describe("All KPI's", () => {
 
   it('labels the existing USD metric as USD Sites, never USD Events, and removes the reference report tools', async () => {
     renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis' });
-    const nav = await screen.findByRole('navigation', { name: "All KPI's sections" });
-    expect(within(nav).getByRole('button', { name: /^USD Sites/ })).toBeInTheDocument();
+    expect(await screen.findByRole('group', { name: 'USD Sites' })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: "All KPI's sections" })).not.toBeInTheDocument();
     expect(screen.queryByText(/USD events/i)).not.toBeInTheDocument();
     for (const tool of [/Upload Excel/i, /Sample data/i, /Input format/i, /Export to Excel/i, /Print/i, /Settings/i, /letter/i, /email/i, /MTTR/i, /score/i])
       expect(screen.queryByRole('button', { name: tool })).not.toBeInTheDocument();
@@ -138,8 +139,8 @@ describe("All KPI's", () => {
 
   it('opens a KPI view from the menu with this period against the previous and the units ranked by it', async () => {
     const user = userEvent.setup();
-    renderWithWorkbook(<><AllKpisPage /><Location /></>, { url: '/all-kpis' });
-    await user.click(within(await screen.findByRole('navigation', { name: "All KPI's sections" })).getByRole('button', { name: /^Outage Hours/ }));
+    renderWithWorkbook(<><Sidebar /><AllKpisPage /><Location /></>, { url: '/all-kpis' });
+    await user.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Outage Hours' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('tab=outage'));
     const strip = await screen.findByRole('group', { name: 'Outage hours: this period against the previous' });
     expect(strip).toHaveTextContent('410 h');  // the existing hours format (whole hours)
@@ -164,20 +165,11 @@ describe("All KPI's", () => {
     expect(m.fetchKpiTrends.mock.calls.some(([p]) => (p as URLSearchParams).get('granularity') === 'month')).toBe(true);
   });
 
-  it('shows every view in one horizontal tab bar under the filters, with live values and the active view marked', async () => {
-    const user = userEvent.setup();
-    renderWithWorkbook(<><AllKpisPage /><Location /></>, { url: '/all-kpis', auth: authValue({ user: { ...CI_USER, permissions: { ...CI_PERMISSIONS, rca_summary: ['view'] } } }) });
-    const nav = await screen.findByRole('navigation', { name: "All KPI's sections" });
-    expect(nav.closest('aside')).toBeNull();  // no left menu
-    const labels = (group: string) => within(within(nav).getByRole('group', { name: group })).getAllByRole('button').map((b) => b.firstChild?.textContent);
-    expect(labels('Overview & Reports')).toEqual(['All KPIs – Overview', 'KPI Trends (Month / Week)', 'Ranking']);
-    expect(labels('Performance KPIs')).toEqual(['Availability', 'Outage Hours', 'USD Sites', 'NSLA Sites', 'Sites < 98.5%', 'Sites < 60%']);
-    expect(labels('Analysis')).toEqual(['RCA', 'Circle / CI / IE / Site']);
-    await waitFor(() => expect(within(nav).getByRole('button', { name: /^Availability/ })).toHaveTextContent('98.745%'));  // live value from the summary
-    expect(within(nav).getByRole('button', { name: /^All KPIs – Overview/ })).toHaveAttribute('aria-current', 'page');
-    await user.click(within(nav).getByRole('button', { name: /^Circle \/ CI \/ IE \/ Site/ }));
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('tab=drilldown'));
-    expect(within(nav).getByRole('button', { name: /^Circle \/ CI \/ IE \/ Site/ })).toHaveAttribute('aria-current', 'page');
+  it('removes the horizontal KPI navigation without changing the displayed section data', async () => {
+    renderWithWorkbook(<><Sidebar /><AllKpisPage /></>, { url: '/all-kpis?tab=availability' });
+    expect(screen.queryByRole('navigation', { name: "All KPI's sections" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Availability' })).toHaveAttribute('aria-current', 'page');
+    expect(await screen.findByRole('group', { name: 'Availability: this period against the previous' })).toHaveTextContent('98.745%');
   });
 
   it('drills from a circle to its CIs, keeping the filters in the URL', async () => {
@@ -193,12 +185,12 @@ describe("All KPI's", () => {
 
   it('shows the RCA view only with RCA Summary View, with ownership Not Configured', async () => {
     const user = userEvent.setup();
-    const { unmount } = renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis', auth: authValue({ user: CI_USER }) });
-    const nav = await screen.findByRole('navigation', { name: "All KPI's sections" });
-    expect(within(nav).queryByRole('button', { name: 'RCA' })).not.toBeInTheDocument();
+    const { unmount } = renderWithWorkbook(<><Sidebar /><AllKpisPage /></>, { url: '/all-kpis', auth: authValue({ user: CI_USER }) });
+    const nav = await screen.findByRole('navigation', { name: 'Main' });
+    expect(within(nav).queryByRole('link', { name: 'RCA' })).not.toBeInTheDocument();
     unmount();
-    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis', auth: authValue({ user: { ...CI_USER, permissions: { ...CI_PERMISSIONS, rca_summary: ['view'] } } }) });
-    await user.click(within(await screen.findByRole('navigation', { name: "All KPI's sections" })).getByRole('button', { name: 'RCA' }));
+    renderWithWorkbook(<><Sidebar /><AllKpisPage /></>, { url: '/all-kpis', auth: authValue({ user: { ...CI_USER, permissions: { ...CI_PERMISSIONS, rca_summary: ['view'] } } }) });
+    await user.click(within(await screen.findByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'RCA' }));
     for (const g of ['Own', 'Customer', 'Third Party', 'Pending']) expect(await screen.findByRole('group', { name: g })).toHaveTextContent('Not Configured');
   });
 });

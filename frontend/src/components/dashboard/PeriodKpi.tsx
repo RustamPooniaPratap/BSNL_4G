@@ -21,7 +21,7 @@ export function PeriodKpi({ period, loading, error }: PeriodKpiProps) {
       </Card>
     );
   }
-  if (!period) return <Skeleton className="h-20 w-full rounded-xl" aria-label="Loading trend period figures" />;
+  if (!period) return <Skeleton className="h-16 w-full rounded-xl" aria-label="Loading trend period figures" />;
 
   const covered = period.kind === 'months'
     ? `${period.months} month${period.months === 1 ? '' : 's'} with data${period.days_reported ? `, incl. ${period.days_reported} days of the current month` : ''}`
@@ -37,23 +37,23 @@ export function PeriodKpi({ period, loading, error }: PeriodKpiProps) {
 
   return (
     <Card
-      className={cn('gap-0 border-primary/20 bg-primary/[0.03] px-4 py-2.5', loading && 'opacity-60')}
+      className={cn('gap-0 border-primary/20 bg-primary/[0.03] px-3.5 py-2', loading && 'opacity-60')}
       role="region"
       aria-label="Trend period indicators"
     >
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <div className="min-w-48">
-          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+        <div className="min-w-44">
+          <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
             <CalendarRange className="size-3.5" aria-hidden="true" /> Trend period
           </p>
-          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-sm font-semibold">{period.label} <PeriodStatusBadge status={period.status} missing={period.missing} /></p>
-          <p className="text-xs text-muted-foreground">{covered}</p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[13px] font-semibold">{period.label} <PeriodStatusBadge status={period.status} missing={period.missing} /></p>
+          <p className="text-[11px] text-muted-foreground">{covered}</p>
         </div>
-        <dl className="grid flex-1 grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+        <dl className="grid flex-1 grid-cols-2 gap-x-5 gap-y-1.5 sm:grid-cols-4">
           {stats.map((stat) => (
             <div key={stat.label}>
-              <dt className="text-xs text-muted-foreground">{stat.label}</dt>
-              <dd className={cn('text-lg leading-6 font-semibold tabular-nums', stat.critical && 'text-destructive')}>{stat.value}</dd>
+              <dt className="text-[11px] text-muted-foreground">{stat.label}</dt>
+              <dd className={cn('text-[17px] leading-5 font-semibold tabular-nums', stat.critical && 'text-destructive')}>{stat.value}</dd>
             </div>
           ))}
         </dl>

@@ -63,6 +63,16 @@ PLACEHOLDERS = {'', '-', '--', 'na', 'n/a', '#n/a', 'nil', 'null', 'none', '0'}
 MAX_EXAMPLES = 20
 EXAMPLE_ROWS = 5  # Excel rows listed per reported value
 FINAL_BUCKET_ERRORS = ('missing_final_bucket', 'final_bucket_not_approved')
+ISSUE_FIELDS = {
+    'invalid_date': 'Reporting date', 'after_reporting_period': 'Reporting date', 'other_date': 'Reporting date',
+    'missing_site_id': 'Site ID', 'unknown_site': 'Site ID', 'site_of_other_circle': 'Site ID / Circle',
+    'unknown_project': 'Project', 'outside_project_scope': 'Project',
+    'unknown_circle': 'Circle', 'outside_circle': 'Circle',
+    'invalid_outage': 'Outage Min.', 'negative_outage': 'Outage Min.', 'blank_outage': 'Outage Min.',
+    'missing_final_bucket': 'Final Bucket', 'final_bucket_not_approved': 'Final Bucket',
+    'sub_bucket_classification_mismatch': 'Bucket - 2', 'sub_bucket_missing': 'Bucket - 2', 'sub_bucket_not_approved': 'Bucket - 2',
+    'duplicate_record': 'Duplicate record', 'om_start_unrecognised': 'O&M Start (Yes/No)', 'unclassified_rca_text': 'RCA',
+}
 
 
 class ParseError(ValueError):
@@ -231,7 +241,15 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
     classified: Counter = Counter()  # rows per classification status (taxonomy.STATUS_LABELS)
 
     def issue(severity, code, row, site_id, message):
-        issues.append({'severity': severity, 'code': code, 'row': row, 'site_id': site_id, 'message': message})
+        item = {'severity': severity, 'code': code, 'row': row, 'site_id': site_id, 'message': message}
+        if row is not None:
+            item.update({
+                'field': ISSUE_FIELDS.get(code, 'Validation'),
+                'site_name': values['site_name'],
+                'reporting_date': day.isoformat() if day else _text(cell('reporting_date')),
+                'circle': circle or '',
+            })
+        issues.append(item)
 
     for offset, raw in enumerate(raw_rows[header_at + 1:], start=header_at + 2):
         if raw is None or all(v is None or _text(v) == '' for v in raw):

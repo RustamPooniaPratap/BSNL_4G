@@ -25,8 +25,8 @@ const share = (count: number | undefined, of: number | undefined) => (count != n
 export function KpiCards({ summary, period, loading, onShowBelow60 }: KpiCardsProps) {
   if (!summary) {
     return (
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5" aria-busy="true">
-        {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5" aria-busy="true">
+        {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
       </div>
     );
   }
@@ -38,7 +38,7 @@ export function KpiCards({ summary, period, loading, onShowBelow60 }: KpiCardsPr
   const sitesLabel = populationSites(summary.filters.scope);
 
   return (
-    <section aria-label="Key indicators" className={cn('grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5', loading && 'opacity-60')}>
+    <section aria-label="Key indicators" className={cn('grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5', loading && 'opacity-60')}>
       <Kpi
         icon={<CalendarRange />}
         label="MTD uptime"
@@ -111,19 +111,19 @@ interface KpiProps {
 
 function Kpi({ icon, label, value, detail, share: pct, header, emphasis, tone, action }: KpiProps) {
   return (
-    <Card role="group" aria-label={label} className={cn('min-w-0 gap-1 px-3.5 py-2.5', emphasis && 'ring-2 ring-primary/15')}>
-      <div className="flex items-center justify-between gap-2 text-xs font-medium text-muted-foreground [&_svg]:size-3.5">
+    <Card role="group" aria-label={label} className={cn('min-w-0 gap-0.5 px-3 py-2', emphasis && 'ring-2 ring-primary/15')}>
+      <div className="flex items-center justify-between gap-2 text-[11px] font-medium text-muted-foreground [&_svg]:size-3.5">
         <span className="min-w-0">{label}</span>
         {header ?? <span aria-hidden="true" className={cn('shrink-0', tone === 'critical' && 'text-destructive', tone === 'warning' && 'text-amber-600')}>{icon}</span>}
       </div>
       <p className="flex flex-wrap items-baseline gap-x-2">
-        <span className={cn('text-2xl leading-7 font-semibold tabular-nums tracking-tight', tone === 'critical' && 'text-destructive')}>{value}</span>
-        {pct != null && <span className="text-sm font-medium text-muted-foreground tabular-nums">{formatPct(pct, 1)}</span>}
+        <span className={cn('text-[22px] leading-6 font-semibold tabular-nums tracking-tight', tone === 'critical' && 'text-destructive')}>{value}</span>
+        {pct != null && <span className="text-[13px] font-medium text-muted-foreground tabular-nums">{formatPct(pct, 1)}</span>}
       </p>
-      <p className="text-xs leading-snug text-muted-foreground">{detail}</p>
+      <p className="text-[11px] leading-snug text-muted-foreground">{detail}</p>
       {action && (
         <button type="button" onClick={action.onClick}
-          className="mt-0.5 self-start rounded text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+          className="mt-0.5 self-start rounded text-[11px] font-medium text-primary underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
           {action.label}
         </button>
       )}

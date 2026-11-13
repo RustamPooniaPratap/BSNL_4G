@@ -8,7 +8,7 @@ import { landsOnPortfolio } from '../lib/portfolio';
 import * as api from '../services/api';
 import { breakdown, filterOptions, period, source, summary, trend } from '../test/fixtures';
 import { renderWithWorkbook, workbookValue } from '../test/renderWithWorkbook';
-import type { PeriodSummary, SummaryResponse } from '../types';
+import type { ConversionActivity, PeriodSummary, SummaryResponse } from '../types';
 import { PortfolioPage } from './PortfolioPage';
 
 vi.mock('../services/api', async (importOriginal) => ({
@@ -29,6 +29,22 @@ vi.mock('../services/sitePortfolioApi', async () => {
   };
 });
 const m = vi.mocked(api);
+
+function activityFor(monthKey: string, lastOnAir: number | null, lastOmStart: number | null,
+  thisOnAir: number | null, thisOmStart: number | null): ConversionActivity {
+  const [year, month] = monthKey.split('-').map(Number);
+  const current = new Date(year, month - 1, 1);
+  const previous = new Date(year, month - 2, 1);
+  const label = (d: Date) => `${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
+  const period = (count: number | null) => ({ count, covered_to: null, complete: false });
+  return {
+    source: 'matrix.xlsx', sites: 6724,
+    month: { key: monthKey, label: label(current) },
+    previous_month: { key: `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, '0')}`, label: label(previous) },
+    on_air: { this_month: period(thisOnAir), last_month: period(lastOnAir), change: null, latest_date: null },
+    om_start: { this_month: period(thisOmStart), last_month: period(lastOmStart), change: null, latest_date: null },
+  };
+}
 
 /** Each scope / date / report type gets distinguishable figures, so the page must use the right one. */
 function fakeSummary(params: URLSearchParams): SummaryResponse {
@@ -75,12 +91,12 @@ beforeEach(() => {
   m.fetchTrends.mockResolvedValue(trend);
   m.fetchAlerts.mockResolvedValue({ alerts: [], counts: { critical: 0, warning: 0, info: 0 }, source });
   m.fetchPeriod.mockImplementation(async (params) => fakePeriod(params));
-  // Oct-26 not in the escalation file yet; Sep-26 vs Aug-26 known.
-  fetchActivity.mockResolvedValue({
-    source: "Consolidated Escalation Matrix _Oct'26.xlsx", sites: 6724,
-    month: { key: '2026-10', label: 'Oct-26' }, previous_month: { key: '2026-09', label: 'Sep-26' },
-    on_air: { this_month: { count: null, covered_to: null, complete: false }, last_month: { count: 27, covered_to: '2026-09-25', complete: false }, change: null, latest_date: '2026-09-25' },
-    om_start: { this_month: { count: 12, covered_to: '2026-10-05', complete: false }, last_month: { count: 54, covered_to: '2026-09-30', complete: true }, change: -42, latest_date: '2026-10-05' },
+  // The endpoint returns the requested month and its previous month.
+  fetchActivity.mockImplementation(async (params) => {
+    const month = (params as URLSearchParams).get('month');
+    if (month === '2026-09') return activityFor(month, 18, 36, 27, 54);
+    if (month === '2026-11') return activityFor(month, 17, 100, null, null);
+    return activityFor('2026-10', 27, 54, null, 12);
   });
 });
 
@@ -125,10 +141,12 @@ describe('Site Portfolio', () => {
     const top = screen.getByRole('region', { name: 'Site status (not filtered by population)' });
     const cards = [...top.querySelectorAll(':scope > div > [data-slot="card"]')];
     expect(cards.map((c) => c.getAttribute('aria-label'))).toEqual(['Site status: total, On-Air & O&M Start', 'Site Conversion Progress']);
+    expect(top.querySelector(':scope > div')).toHaveClass('items-stretch');
+    expect(cards.every((card) => card.classList.contains('h-full'))).toBe(true);
     // 1. One status card: total sites with the split by network, On-Air 650, O&M Start 620, difference 650 − 620 = 30.
     const merged = screen.getByRole('region', { name: 'Site status: total, On-Air & O&M Start' });
     expect([...within(merged).getAllByRole('term')].map((t) => t.textContent)).toEqual(['Total sites', 'On-Air sites', 'O&M Start sites', 'Difference']);
-    expect([...merged.querySelectorAll('dd.text-2xl')].map((d) => d.textContent)).toEqual(['700', '650', '620', '30']);
+    expect([...merged.querySelectorAll('dd[class~="text-[22px]"]')].map((d) => d.textContent)).toEqual(['700', '650', '620', '30']);
     // Achievement against total scope: On-Air 650 / 700, O&M Start 620 / 700.
     expect(within(merged).getByText('92.9%')).toHaveClass('text-sky-700');
     expect(within(merged).getByText('88.6%')).toHaveClass('text-emerald-700');
@@ -145,9 +163,7 @@ describe('Site Portfolio', () => {
     expect(await splitOf('O&M Start sites')).toEqual(['4G Saturation340', 'LWE280']);
     expect(await splitOf('Difference')).toEqual(['4G Saturation20', 'LWE10']);
     expect(within(within(merged).getByLabelText('Difference by project')).getByText('20')).toHaveClass('text-red-600');
-    // No link forces a population: it opens the dashboard for the global selection.
-    expect(within(merged).getAllByRole('link').map((a) => a.textContent?.trim())).toEqual(['View On-Air sites']);
-    expect(within(merged).getByRole('link', { name: /View On-Air sites/ }).getAttribute('href')).not.toContain('scope=');
+    expect(within(merged).queryByRole('link')).not.toBeInTheDocument();
     // 2. Conversion progress against total scope (700): On-Air 650 (92.9%, 50 not On-Air), O&M Start 620 (88.6%, 80 remaining).
     const conversion = screen.getByRole('region', { name: 'Site Conversion Progress' });
     expect(within(conversion).getByText('700')).toBeInTheDocument();
@@ -155,12 +171,15 @@ describe('Site Portfolio', () => {
     expect(within(conversion).getByRole('img', { name: 'O&M Start: 88.6% of total site scope' })).toBeInTheDocument();
     expect(within(conversion).getByText((_, el) => el?.textContent === '· 50 not On-Air')).toBeInTheDocument();
     expect(within(conversion).getByText((_, el) => el?.textContent === '· 80 remaining')).toBeInTheDocument();
-    // Monthly additions: Sep-26 and Oct-26 from the dated file; a month without dates is "—", not 0.
+    expect(within(conversion).queryByRole('link')).not.toBeInTheDocument();
+    // Monthly additions remain chronological; a month without dates is "—", not 0.
     const table = await within(conversion).findByRole('table', { name: 'Monthly additions' });
     const cells = within(table).getAllByRole('row').map((r) => [...r.querySelectorAll('th,td')].map((c) => c.textContent));
-    expect(cells).toEqual([['Added in month', 'Sep-26', 'Oct-26'], ['On-Air', '27', '—'], ['O&M Start', '54', '12']]);
+    expect(cells).toEqual([['Added in month', 'Aug-26', 'Sep-26', 'Oct-26'], ['On-Air', '18', '27', '—'], ['O&M Start', '36', '54', '12']]);
     expect(within(conversion).queryByText(/dates in the escalation matrix/)).not.toBeInTheDocument();
-    expect(Object.fromEntries(fetchActivity.mock.calls.at(-1)![0] as URLSearchParams)).toEqual({ month: '2026-10' });
+    expect(fetchActivity.mock.calls.map((c) => Object.fromEntries(c[0] as URLSearchParams))).toEqual([
+      { month: '2026-10' }, { month: '2026-09' },
+    ]);
     expect(screen.queryByText(/handover/i)).not.toBeInTheDocument();
     // Removed from this page, with no image content.
     for (const removed of ['Circles / States', 'Sites not yet On-Air', 'Network scope', 'Handover & O&M']) {
@@ -168,6 +187,34 @@ describe('Site Portfolio', () => {
     }
     expect(document.querySelector('main img, [role="region"] img, img')).toBeNull();
     expect(screen.queryByText(/Data as of/)).not.toBeInTheDocument();
+  });
+
+  it('uses the selected reporting month to load three consecutive activity months', async () => {
+    const novemberOptions = {
+      ...filterOptions,
+      reporting_dates: [...filterOptions.reporting_dates, '2026-11-02'],
+      default_date: '2026-11-02',
+      months: [...filterOptions.months, { key: '2026-11', label: 'Nov-26 MTD' }],
+      month: { label: 'Nov-26', start: '2026-11-01', end: '2026-11-30' },
+    };
+    m.fetchFilterOptions.mockResolvedValue(novemberOptions);
+    renderPage('/portfolio?date=2026-11-02&report_type=LWE&circle=MP');
+
+    await screen.findByText('Site Portfolio — Summary');
+    const conversion = screen.getByRole('region', { name: 'Site Conversion Progress' });
+    const table = await within(conversion).findByRole('table', { name: 'Monthly additions' });
+    await waitFor(() => expect(within(table).getAllByRole('columnheader').map((h) => h.textContent))
+      .toEqual(['Added in month', 'Sep-26', 'Oct-26', 'Nov-26']));
+    expect(fetchActivity.mock.calls.map((c) => Object.fromEntries(c[0] as URLSearchParams)).sort((a, b) => String(a.month).localeCompare(String(b.month))))
+      .toEqual([
+        { month: '2026-10', report_type: 'LWE', circle: 'MP' },
+        { month: '2026-11', report_type: 'LWE', circle: 'MP' },
+      ]);
+    await waitFor(() => expect(within(table).getAllByRole('row').map((r) => [...r.querySelectorAll('th,td')].map((c) => c.textContent))).toEqual([
+      ['Added in month', 'Sep-26', 'Oct-26', 'Nov-26'],
+      ['On-Air', '27', '17', '—'],
+      ['O&M Start', '54', '100', '—'],
+    ]));
   });
 
   it('shows its title and reporting context in the top bar, with the filters first on the page', async () => {

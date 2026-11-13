@@ -281,17 +281,17 @@ export function CsvArrivalPage({ now: fixedNow }: { now?: Date }) {
         </Alert>
       )}
 
-      <section aria-label="Arrival summary" className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+      <section aria-label="Arrival summary" className="grid grid-cols-2 gap-2.5 md:grid-cols-4 xl:grid-cols-7">
         {cards.map((card) => {
           const active = filters.card === card.id && card.id !== 'all';
           return (
             <button key={card.id} type="button" aria-pressed={active}
               onClick={() => setFilter({ card: active ? 'all' : card.id })}
-              className={cn('rounded-xl border bg-card px-3.5 py-2.5 text-left shadow-xs transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+              className={cn('rounded-xl border bg-card px-3 py-2 text-left shadow-xs transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
                 active && 'border-primary ring-2 ring-primary/20')}>
-              <span className="flex items-center justify-between text-xs font-medium text-muted-foreground [&_svg]:size-3.5">{card.label}{card.icon}</span>
-              <span className={cn('mt-1 block text-2xl leading-7 font-semibold tabular-nums', card.tone)}>{formatNumber(card.value)}</span>
-              <span className="text-[11px] text-muted-foreground">{active ? 'Showing these · select to clear' : 'Select to filter the table'}</span>
+              <span className="flex items-center justify-between text-[11px] font-medium text-muted-foreground [&_svg]:size-3.5">{card.label}{card.icon}</span>
+              <span className={cn('mt-0.5 block text-[22px] leading-6 font-semibold tabular-nums', card.tone)}>{formatNumber(card.value)}</span>
+              <span className="text-[10.5px] text-muted-foreground">{active ? 'Showing these · select to clear' : 'Select to filter the table'}</span>
             </button>
           );
         })}

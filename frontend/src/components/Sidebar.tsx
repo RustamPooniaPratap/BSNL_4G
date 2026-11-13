@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  BriefcaseBusiness, ChevronRight, LayoutGrid, ClipboardPen, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
+  Activity, BriefcaseBusiness, ChevronRight, LayoutGrid, ClipboardPen, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
   LayoutDashboard, MapPinPlus, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy, Table2, ListTree, MapPinned, ChartLine, Building2, TableProperties, BellRing, Mail, Workflow, History,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { canOpen, useAuth } from '../context/auth';
+import { canOpen, hasPermission, useAuth } from '../context/auth';
+import type { KpiTab } from '../features/all-kpis/useKpiFilters';
 import type { AuthUser } from '../types';
 
 type Icon = React.ComponentType<{ className?: string }>;
@@ -18,6 +19,10 @@ interface NavItem {
   isActive: IsActive;
   /** While the current page is under this path, the link keeps the current query (e.g. the RCA Summary filters). */
   keepQueryWithin?: string;
+  /** Query parameters to set or remove while preserving other parameters within keepQueryWithin. */
+  queryChanges?: Record<string, string | null>;
+  /** Optional nested heading, used to retain the All KPI's existing section groups. */
+  section?: string;
   /** Shown only when this holds for the signed-in user (beyond the role's pages); the server checks again. */
   show?: (user: AuthUser | null) => boolean;
 }
@@ -36,6 +41,16 @@ type NavEntry =
   | { kind: 'heading'; heading: string };
 
 const page = (to: string, label: string, icon: Icon): NavItem => ({ to, label, icon, isActive: (p) => p === to });
+const kpiPage = (tab: KpiTab, label: string, icon: Icon, section: string, show?: NavItem['show']): NavItem => ({
+  to: '/all-kpis',
+  label,
+  icon,
+  section,
+  keepQueryWithin: '/all-kpis',
+  queryChanges: { tab: tab === 'overview' ? null : tab },
+  isActive: (p, q) => p === '/all-kpis' && (q.get('tab') ?? 'overview') === tab,
+  show,
+});
 
 const entries: NavEntry[] = [
   { kind: 'link', item: page('/portfolio', 'Site Portfolio', BriefcaseBusiness) },
@@ -64,7 +79,22 @@ const entries: NavEntry[] = [
       { ...page('/teams/top', 'Circle-wise Top Performers', Trophy), isActive: (p) => p === '/teams/top' || p.startsWith('/teams/top/') || p.startsWith('/teams/circle/') || p.startsWith('/team-performance/circle/') },
     ],
   },
-  { kind: 'link', item: page('/all-kpis', "All KPI's", LayoutGrid) },  // optional module: features/all-kpis/README.md
+  {
+    kind: 'group', id: 'all-kpis', label: "All KPI's", icon: LayoutGrid,
+    items: [
+      kpiPage('overview', 'All KPIs – Overview', LayoutDashboard, 'Overview & Reports'),
+      kpiPage('trends', 'KPI Trends (Month / Week)', ChartLine, 'Overview & Reports'),
+      kpiPage('ranking', 'Ranking', Trophy, 'Overview & Reports'),
+      kpiPage('availability', 'Availability', Activity, 'Performance KPIs'),
+      kpiPage('outage', 'Outage Hours', Gauge, 'Performance KPIs'),
+      kpiPage('usd', 'USD Sites', Radio, 'Performance KPIs'),
+      kpiPage('nsla', 'NSLA Sites', ClipboardCheck, 'Performance KPIs'),
+      kpiPage('below_98_5', 'Sites Below 98.5%', Layers3, 'Performance KPIs'),
+      kpiPage('below_60', 'Sites Below 60%', Activity, 'Performance KPIs'),
+      kpiPage('rca', 'RCA', ChartBar, 'Analysis', (u) => hasPermission(u, 'rca_summary.view')),
+      kpiPage('drilldown', 'Circle / CI / IE / Site', MapPinned, 'Analysis'),
+    ],
+  },
   { kind: 'heading', heading: 'RCA' },
   { kind: 'link', item: page('/rca', 'RCA Register', ClipboardList) },
   {
@@ -147,9 +177,18 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const renderLink = (item: NavItem, nested = false) => {
     const active = item.isActive(location.pathname, params);
     const ItemIcon = item.icon;
+    const preservingQuery = item.keepQueryWithin && location.pathname.startsWith(item.keepQueryWithin);
+    const query = new URLSearchParams(preservingQuery ? location.search : '');
+    Object.entries(item.queryChanges ?? {}).forEach(([key, value]) => {
+      if (value) query.set(key, value); else query.delete(key);
+    });
+    const search = query.toString();
+    const to = item.queryChanges
+      ? `${item.to}${search ? `?${search}` : ''}`
+      : preservingQuery ? `${item.to}${location.search}` : item.to;
     return (
       <Link
-        to={item.keepQueryWithin && location.pathname.startsWith(item.keepQueryWithin) ? `${item.to}${location.search}` : item.to}
+        to={to}
         onClick={onNavigate}
         aria-current={active ? 'page' : undefined}
         className={cn(
@@ -244,7 +283,16 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                     isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0')}
                 >
                   <ul className="ml-[1.375rem] min-h-0 space-y-0.5 overflow-hidden border-l pt-0.5 pl-2">
-                    {entry.items.map((item) => <li key={item.to} className="flex">{renderLink(item, true)}</li>)}
+                    {entry.items.map((item, index) => (
+                      <Fragment key={item.label}>
+                        {item.section && item.section !== entry.items[index - 1]?.section && (
+                          <li className="pt-2 first:pt-1">
+                            <p className="truncate px-3 pb-0.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{item.section}</p>
+                          </li>
+                        )}
+                        <li className="flex">{renderLink(item, true)}</li>
+                      </Fragment>
+                    ))}
                   </ul>
                 </div>
               </li>

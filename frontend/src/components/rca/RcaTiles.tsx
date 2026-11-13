@@ -16,20 +16,20 @@ export function RcaKpiTile({ label, definition, icon, tint, value, unit, missing
   context: ReactNode; link?: To; view?: string;
 }) {
   return (
-    <Card role="group" aria-label={label} className="relative h-full gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <p className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-foreground/80">
+    <Card role="group" aria-label={label} className="relative h-full gap-0 rounded-xl px-3 py-2 shadow-xs transition-shadow hover:shadow-sm">
+      <div className="flex items-start justify-between gap-2.5">
+        <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-foreground/80">
           <span className="truncate">{label}</span><Definition label={label} text={definition} />
         </p>
         <IconTile size="sm" icon={icon} tint={tint} />
       </div>
       <p className="-mt-1 flex items-baseline gap-1.5">
-        <span className={cn('text-2xl leading-7 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
+        <span className={cn('text-[22px] leading-6 font-semibold tracking-tight tabular-nums', value == null && 'text-lg font-medium text-muted-foreground')}>
           {value ?? missing ?? 'Not available'}
         </span>
-        {unit && value != null && <span className="text-sm text-muted-foreground">{unit}</span>}
+        {unit && value != null && <span className="text-[13px] text-muted-foreground">{unit}</span>}
       </p>
-      <p className="mt-0.5 text-[11px] text-muted-foreground">{context}</p>
+      <p className="mt-0.5 text-[10.5px] text-muted-foreground">{context}</p>
       {link && <div className="mt-auto pt-2"><ViewLink to={link}>{view ?? 'View details'}</ViewLink></div>}
     </Card>
   );
@@ -40,14 +40,14 @@ export function RcaAnalysisTile({ label, description, icon, tint, headline, deta
   label: string; description: string; icon: LucideIcon; tint: Tint; headline: ReactNode; detail: ReactNode; to: To;
 }) {
   return (
-    <Card role="group" aria-label={label} className="relative h-full gap-0 rounded-xl px-3.5 py-2.5 shadow-xs transition-shadow hover:shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-sm font-medium text-foreground/80">{label}</p>
+    <Card role="group" aria-label={label} className="relative h-full gap-0 rounded-xl px-3 py-2 shadow-xs transition-shadow hover:shadow-sm">
+      <div className="flex items-start justify-between gap-2.5">
+        <p className="text-[13px] font-medium text-foreground/80">{label}</p>
         <IconTile icon={icon} tint={tint} />
       </div>
-      <p className="-mt-2 truncate text-xl font-semibold tracking-tight tabular-nums">{headline}</p>
+      <p className="-mt-2 truncate text-[19px] font-semibold tracking-tight tabular-nums">{headline}</p>
       <p className="mt-0.5 text-[11px] text-muted-foreground">{detail}</p>
-      <p className="mt-1.5 text-xs text-muted-foreground">{description}</p>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">{description}</p>
       <div className="mt-auto pt-2"><ViewLink to={to}>Open {label}</ViewLink></div>
     </Card>
   );
@@ -58,7 +58,7 @@ export function RcaSection({ heading, label, columns, children }: { heading: str
   return (
     <section aria-label={label} className="space-y-2">
       <h2 className="text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">{heading}</h2>
-      <div className={cn('grid grid-cols-1 gap-3', columns === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}>{children}</div>
+      <div className={cn('grid grid-cols-1 gap-2.5', columns === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}>{children}</div>
     </section>
   );
 }

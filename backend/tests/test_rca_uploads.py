@@ -67,6 +67,33 @@ class UploadCase(RcaTestCase):
         self.assertEqual(response.status_code, 200, response.content)
 
 
+class CircleErrorAccountabilityTests(UploadCase):
+    def test_consolidated_validation_groups_rejected_rows_once_by_circle(self):
+        rows = [
+            [D21, '4G Satu', 'Rajasthan', 'OD0001', 'Bravo', '', '', 'Yes', 90, 'Vsat', 'Nokia mini link', 'Wrong circle and bucket'],
+            [D21, '4G Satu', 'Odisha', 'OD0002', 'Echo', '', '', 'Yes', 30, 'Vsat', 'Fiber', 'Unapproved bucket'],
+            [D21, '4G Satu', 'Odisha', 'UNKNOWN', 'Unknown site', '', '', 'Yes', 5, 'Vsat', 'Fiber', 'Unknown site'],
+            [D21, '4G Satu', 'Mystery', 'UNKNOWN2', 'Unknown site', '', '', 'Yes', 5, 'Vsat', 'Fiber', 'Unknown circle'],
+            [D21, '4G Satu', 'Odisha', 'OD0002', 'Echo', '', '', 'Yes', 0, 'Others', '', 'Warning only'],
+        ]
+        response = self.consolidated(rows).json()
+        report = response['report']
+        accountability = report['circle_error_accountability']
+
+        self.assertEqual(report['rejected_rows'], 4)
+        self.assertEqual(accountability['total_rejected_rows'], 4)
+        self.assertEqual(sum(group['rejected_rows'] for group in accountability['circles']), report['rejected_rows'])
+        circles = {group['circle']: group for group in accountability['circles']}
+        self.assertEqual(circles['OD']['rejected_rows'], 3)
+        self.assertEqual(circles['Unattributed']['rejected_rows'], 1)
+        self.assertEqual(max(len(record['errors']) for record in circles['OD']['records']), 2)  # multiple errors count as one rejected row
+        self.assertEqual({record['excel_row'] for record in circles['OD']['records']}, {2, 3, 4})
+        self.assertEqual({record['excel_row'] for record in circles['Unattributed']['records']}, {5})
+        self.assertNotIn(6, {record['excel_row'] for group in accountability['circles'] for record in group['records']})
+        repeated = self.consolidated(rows, name='repeat.xlsx').json()['report']['circle_error_accountability']
+        self.assertEqual(repeated, accountability)
+
+
 class BothTypesTests(UploadCase):
     def test_both_types_save_into_the_same_table_and_feed_the_same_summary(self):
         circle = self.imported(self.circle(OD_21))
