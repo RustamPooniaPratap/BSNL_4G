@@ -29,17 +29,17 @@ import re
 from dataclasses import dataclass
 
 APPROVED: dict[str, tuple[str, ...]] = {
-    'IaasP Power': ('CCU fault', 'EB power cut', 'Solar Panel fault', 'RM fail', 'MPPT Issue', 'Contactor faulty', 'Power cable faulty',
-                    'LVD issue', 'Backplane faulty', 'High V & Low V', 'SMPS Issue', 'Others'),
-    'IaasP Others': ('Shadow issue', 'EB Cable fault', 'EB tx. Faulty', 'EB Bill not paid', 'IaasP Theft', 'CT payment Issue', 'Owner issue',
-                     'Natural Clamity', 'Tech Delay', 'IaasP Link', 'Meter Faulty'),
+    'IaasP Power': ('Shadow issue','Low solar generation', 'EB power cut', 'Solar Panel fault','CCU fault', 'RM fail', 'MPPT Issue', 'Contactor faulty', 'Power cable faulty',
+                    'LVD issue','Meter Faulty', 'Backplane faulty', 'High V & Low V', 'SMPS Issue','EB Cable fault','EB Bill not paid','EB tx. Faulty','EB Disconnect','EB LT Cable Fault'),
+    'IaasP Others': ('IaasP Theft', 'CT payment Issue', 'Owner issue',
+                     'Natural Clamity', 'Tech Delay', 'IaasP Link'),
     'IaasP Battery': ('Battery issue', 'BB Theft', 'Low back Up', 'BMS faulty'),
-    'IaasP OFC': ('Incremental Fibre',),
+    'IaasP OFC': ('Incremental Fiber',),
     'BSNL OFC': ('SSA OFC', 'BSNL OFC', 'ETR OFC', 'BBNL OFC', 'WTR OFC', 'NTR', 'CNTX', 'JCNL', 'Maha IT', 'Pace OFC'),
     'BSNL Media': ('Nokia mini link', 'NEC Mini link', 'CPAN issue', 'Maan Media issue', 'BSNL Link', 'Vsat Media', 'BSNL Hub', 'BSNL Others',
                    'Fluctuation'),
     'Others': ('4G Sat. link site', 'IP site link', 'Others site link', 'ATC site link', 'Non IaasP Theft', 'Fire Incident'),
-    'TCS': ('RAC Card', 'CEF Card', 'CEF12 Card', 'FTU', 'RRH Hardware', 'RRH Cable', 'RRH Cipri Cable', 'BBU', 'Partial band', 'S1 Link'),
+    'TCS': ('RAC Card', 'CEF Card', 'CEF12 Card', 'FTU', 'RRH Hardware', 'RRH Cable', 'RRH Cipri Cable', 'BBU', 'Partial band', 'S1 Link','Fluctuation'),
     'DMW': ('Ceragoan Radio', 'DMW Cipri Cable', 'DMW Power cable', 'DMW RSL Issue', 'DMW pole mount Issue', 'Fluctuation', 'Cascading Cable'),
     'HFCL': ('HFCL Radio', 'HFCL Switch', 'HFCL POE', 'HFCL Power cable', 'HFCL RSL Issue', 'HFCL Pole mount Issue', 'HFCL Port', 'HFCL MCX0',
              'Fluctuation'),
@@ -53,7 +53,6 @@ BLANK = {'', '-', '--', 'na', 'n/a', '#n/a', 'nil', 'null', 'none', '0'}
 ALIASES: dict[tuple[str, str], str] = {
     ('BSNL Media', 'Flactuation'): 'Fluctuation',
     ('HFCL', 'Flactuation'): 'Fluctuation',
-    ('IaasP Power', 'Other'): 'Others',
     # High V, Low V and High V & Low V are one Sub Bucket of IaasP Power (12 Nov 2026).
     ('IaasP Power', 'High V'): 'High V & Low V',
     ('IaasP Power', 'Low V'): 'High V & Low V',
