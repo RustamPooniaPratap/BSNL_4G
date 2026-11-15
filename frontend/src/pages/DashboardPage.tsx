@@ -22,6 +22,7 @@ import { selectDays, useDashboardFilters } from '../hooks/useDashboardFilters';
 import { fetchBreakdowns, fetchMonthly, fetchPeriod, fetchSummary, fetchTrends } from '../services/api';
 import { allCircleKeys, lowestCircles, parseSelection, selectedSeries } from '../lib/circleSeries';
 import { populationSites } from '../lib/population';
+import { withHistory } from '../lib/monthlyHistory';
 
 /** Threshold Analysis › Uptime Buckets & Site Details (the bucket chart and site table moved there). */
 const BUCKETS_PATH = '/thresholds/buckets';
@@ -101,6 +102,8 @@ export function DashboardPage() {
   const pickedTrend = trend.data && filters.dayList.length
     ? { ...trend.data, series: selectDays(trend.data.series, filters.dayList) } : trend.data;
   const scopeLabel = populationSites(filters.scope);
+  // Monthly trend: imported historical months (Excel source) before the months calculated from daily records.
+  const trendMonthly = withHistory(monthly.data, filters.selectedMonths);
   // Chart views live in the URL (?uptime_view=circles&series=…&outage_view=circles), so links keep them.
   const allKeys = allCircleKeys(options.data.circles);
   // The circles in the current data (only LWE circles on the LWE page), in a stable order (4G first).
@@ -162,10 +165,10 @@ export function DashboardPage() {
 
       <TrendChart
         trend={trend.data} loading={trend.loading} error={trend.error}
-        monthly={monthly.data} monthlyLoading={monthly.loading} monthlyError={monthly.error}
+        monthly={trendMonthly} monthlyLoading={monthly.loading} monthlyError={monthly.error}
         scopeLabel={scopeLabel} monthLabel={options.data.month.label}
         view={filters.trendView} onViewChange={(view) => setFilters({ trend: view === 'daily' ? '' : view })}
-        dayList={filters.dayList} weekList={filters.weekList} monthsFiltered={filters.monthList.length > 0}
+        dayList={filters.dayList} weekList={filters.weekList} monthsFiltered={filters.selectedMonths.length > 0}
         chartView={uptimeView} circles={uptimeView === 'circles' ? circles : null} controls={uptimeControls} viewControls={uptimeViewSwitch}
         allCircles={availableCircles} onSelectCircle={(key) => setParams({ uptime_view: 'circles', series: key })}
       />
@@ -173,7 +176,7 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
         <OutageChart
           trend={pickedTrend} loading={trend.loading} error={trend.error}
-          monthly={monthly.data} monthlyLoading={monthly.loading} monthlyError={monthly.error}
+          monthly={trendMonthly} monthlyLoading={monthly.loading} monthlyError={monthly.error}
           view={filters.trendView} onViewChange={(view) => setFilters({ trend: view === 'daily' ? '' : view })}
           weekList={filters.weekList} picked={filters.dayList.length > 0} scopeLabel={scopeLabel}
           outageView={outageView} onOutageViewChange={(v) => setParams({ outage_view: v === 'overall' ? null : v })}

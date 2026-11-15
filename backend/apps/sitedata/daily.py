@@ -62,7 +62,7 @@ def finalized_months(dates) -> list:
     months = {d.replace(day=1) for d in dates}
     if not months:
         return []
-    return sorted(set(MonthlySitePerformance.objects.filter(month__in=months, is_current=True, finalized_at__isnull=False)
+    return sorted(set(MonthlySitePerformance.objects.filter(month__in=months, is_current=True, finalized_at__isnull=False, calculation_category__in=MonthlySitePerformance.DAILY_CATEGORIES)
                       .values_list('month', flat=True)))
 
 

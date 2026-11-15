@@ -98,7 +98,7 @@ function GroupTable({ level, query, onOpen }: { level: HierarchyLevel; query: UR
               </TableCell>
               {level !== 'circle' && <TableCell>{r.circle}</TableCell>}
               <TableCell>{project(r.project)}</TableCell>
-              <TableCell className={cn('r', toneText(availabilityTone(r.availability_pct)))}>{pct(r.availability_pct, 3)}</TableCell>
+              <TableCell className={cn('r', toneText(availabilityTone(r.availability_pct)))}>{pct(r.availability_pct)}</TableCell>
               <TableCell className="r">{hours(r.outage_hours)}</TableCell>
               <TableCell className="r">{count(r.usd_sites)}</TableCell>
               <TableCell className="r">{count(r.nsla_sites)}</TableCell>
@@ -165,7 +165,7 @@ export function SitesTable({ query, defaultSort = 'availability', title = 'Site-
               <TableCell>{r.circle} <span className="muted">· {project(r.project)}</span></TableCell>
               <TableCell className="max-w-40 truncate" title={r.ci}>{r.ci}</TableCell>
               <TableCell className="max-w-40 truncate" title={r.ie}>{r.ie}</TableCell>
-              <TableCell className={cn('r', toneText(availabilityTone(r.availability_pct)))}>{r.availability_pct == null ? <span className="muted">No value</span> : pct(r.availability_pct, 3)}</TableCell>
+              <TableCell className={cn('r', toneText(availabilityTone(r.availability_pct)))}>{r.availability_pct == null ? <span className="muted">No value</span> : pct(r.availability_pct)}</TableCell>
               <TableCell className="r">{hours(r.outage_hours)}</TableCell>
               <TableCell>{r.bucket_label ?? <span className="muted">No value</span>}</TableCell>
               <TableCell>{yesNo(r.usd, 't-warn')}</TableCell>

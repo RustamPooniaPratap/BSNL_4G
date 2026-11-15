@@ -39,6 +39,17 @@ def workbook(path: Path, rows=None, headers=HEADERS, sheet='Sheet1') -> Path:
     return path
 
 
+def active_scope(units) -> None:
+    """Keeps exactly these (project, circle) associations active in the Organization; the RCA expected scope follows them."""
+    from apps.organization.models import ProjectCircle
+    keep = {tuple(u) for u in units}
+    for pc in ProjectCircle.objects.select_related('project', 'circle'):
+        active = (pc.project.key, pc.circle.code) in keep
+        if pc.is_active != active:
+            pc.is_active = active
+            pc.save(update_fields=['is_active'])
+
+
 def uptime_sites(*sites) -> None:
     """Site master (sitedata, dashboard scope) sites (project, circle, site ID): an upload with report details accepts only these."""
     for project, circle, site in sites:

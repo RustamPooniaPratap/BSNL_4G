@@ -65,11 +65,11 @@ export function RcaImportPreview({ batch, busy, onCommit, onDiscard }: {
       {r.coverage && r.coverage.missing.length > 0 && (
         <Alert className="border-amber-300 bg-amber-50"><AlertDescription>
           No rows for the reporting date from {r.coverage.missing.map(([p, c]) => `${c} ${p === '4G Saturation' ? '4G' : p}`).join(', ')}
-          {' '}(expected by the {r.coverage.source === 'period' ? 'reporting period' : 'previous period’s'} scope). They stay pending until data for them is imported.
+          {' '}(expected by {r.coverage.source === 'period' ? 'the finalized period’s fixed scope' : 'the Organization’s active projects and circles'}). They stay pending until data for them is imported.
         </AlertDescription></Alert>
       )}
       {r.coverage && !r.coverage.expected.length && (
-        <p className="text-xs text-muted-foreground">No expected projects / circles are configured yet, so coverage is not checked; an Admin sets them on RCA Submissions.</p>
+        <p className="text-xs text-muted-foreground">No active project and circle is associated in the Organization, so coverage is not checked.</p>
       )}
       <dl className="grid gap-3 sm:grid-cols-4 lg:grid-cols-7">
         {tiles.map(([label, value, warn]) => (

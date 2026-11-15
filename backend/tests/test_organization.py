@@ -469,7 +469,6 @@ class ImportAndRcaTests(OrgTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('not an active circle of 4G Saturation', str(response.json()))
         self.assertEqual(RcaRecord.objects.count(), 0)
-        from apps.rca.cycles import CycleError, validate_units
-        self.assertEqual(validate_units([['LWE', 'bh']]), [('LWE', 'BH')])
-        with self.assertRaises(CycleError):
-            validate_units([['4G Saturation', 'BH']])
+        from apps.rca.cycles import expected_units
+        self.assertIn(('LWE', 'BH'), expected_units())
+        self.assertNotIn(('4G Saturation', 'BH'), expected_units())  # not associated: never expected

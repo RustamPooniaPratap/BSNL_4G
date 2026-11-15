@@ -60,7 +60,7 @@ export function UnitTable({ level, query, previous, kpi, total, onOpen, title, n
   const prevRank = ranks([...prevRows.values()], rankKey, better, level);
   const [sort, setSort] = useState<{ id: string; desc: boolean }>({ id: 'rank', desc: false });
 
-  const fmt = kpi?.format ?? ((v: number | null | undefined) => pct(v, 3));
+  const fmt = kpi?.format ?? pct;
   const nameCell = (r: KpiGroupRow) => (
     <>
       <button type="button" className="akp-link" aria-label={`Open ${NAMES[level]} ${nameOf(level, r)} (${project(r.project)})`} onClick={() => onOpen(r)}>{nameOf(level, r)}</button>
@@ -88,7 +88,7 @@ export function UnitTable({ level, query, previous, kpi, total, onOpen, title, n
     } },
     { id: 'name', head: NAMES[level], sort: (r) => nameOf(level, r), cell: nameCell },
     { id: 'sites', head: 'Sites', num: true, sort: (r) => r.total_sites, cell: (r) => count(r.total_sites) },
-    { id: 'availability', head: 'Availability', num: true, sort: (r) => r.availability_pct, cell: (r) => <span className={cn('font-semibold', toneText(availabilityTone(r.availability_pct)))}>{pct(r.availability_pct, 3)}</span> },
+    { id: 'availability', head: 'Availability', num: true, sort: (r) => r.availability_pct, cell: (r) => <span className={cn('font-semibold', toneText(availabilityTone(r.availability_pct)))}>{pct(r.availability_pct)}</span> },
     { id: 'status', head: 'Status', cell: (r) => { const t = availabilityTone(r.availability_pct); return <StatusPill tone={t}>{AVAILABILITY_STATUS[t]}</StatusPill>; } },
     { id: 'nsla', head: 'NSLA Sites', num: true, sort: (r) => r.nsla_sites, cell: (r) => count(r.nsla_sites) },
     { id: 'usd', head: 'USD Sites', num: true, sort: (r) => r.usd_sites, cell: (r) => count(r.usd_sites) },
@@ -119,7 +119,7 @@ export function UnitTable({ level, query, previous, kpi, total, onOpen, title, n
         <TableCell key="c" className="r"><ChangeText current={a} previous={b} unit={kpi.unit} higherIsBetter={kpi.higherIsBetter} /></TableCell>,
         ...(kpi.id === 'availability' ? [<TableCell key="st"><StatusPill tone={availabilityTone(a)}>{AVAILABILITY_STATUS[availabilityTone(a)]}</StatusPill></TableCell>] : [])];
     }
-    return [<TableCell key="s" className="r">{count(t.total_sites)}</TableCell>, <TableCell key="a" className="r">{pct(t.availability_pct, 3)}</TableCell>,
+    return [<TableCell key="s" className="r">{count(t.total_sites)}</TableCell>, <TableCell key="a" className="r">{pct(t.availability_pct)}</TableCell>,
       <TableCell key="st"><StatusPill tone={availabilityTone(t.availability_pct)}>{AVAILABILITY_STATUS[availabilityTone(t.availability_pct)]}</StatusPill></TableCell>,
       <TableCell key="n" className="r">{count(t.nsla_sites)}</TableCell>, <TableCell key="u" className="r">{count(t.usd_sites)}</TableCell>,
       <TableCell key="o" className="r">{hours(t.outage_hours)}</TableCell>, <TableCell key="b" className="r">{count(t.below_98_5_sites)}</TableCell>,

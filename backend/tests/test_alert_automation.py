@@ -26,6 +26,7 @@ from apps.rca.models import RcaImportBatch
 from apps.sitedata.models import Site
 from tests.sitedata_factory import make_daily, make_site
 from tests.auth_helpers import portal_user
+from tests.test_rca import active_scope
 
 IST = ZoneInfo('Asia/Kolkata')
 
@@ -158,7 +159,7 @@ class ReminderTests(AlertTestCase):
 
     def test_rca_reminder_counts_circle_uploads_only(self):
         cycle = cycles.cycle_for_date(self.day)
-        cycles.set_required(cycle, [('4G Saturation', 'OD'), ('4G Saturation', 'MP')])
+        active_scope([('4G Saturation', 'OD'), ('4G Saturation', 'MP')])  # the expected scope is the Organization's
         RcaImportBatch.objects.create(original_filename='mp.xlsx', checksum_sha256='c', sheet_name='Sheet1', status='committed', upload_type='circle',
                                       project_scope='4G Saturation', circle='MP', period_start=self.day, period_end=self.day, committed_at=timezone.now())
         RcaImportBatch.objects.create(original_filename='all.xlsx', checksum_sha256='d', sheet_name='Sheet1', status='committed', upload_type='consolidated',

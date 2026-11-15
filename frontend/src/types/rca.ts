@@ -296,7 +296,7 @@ export interface RcaImportReport {
   by_date?: RcaDateBreakdown[];
   earlier_date_rows?: number;
   /** Expected projects / circles of the reporting date against those the workbook has rows for on it. */
-  coverage?: { source: 'period' | 'previous period' | null; expected: [string, string][]; present: [string, string][]; missing: [string, string][] } | null;
+  coverage?: { source: 'period' | 'organization' | null; expected: [string, string][]; present: [string, string][]; missing: [string, string][] } | null;
   earlier_uploads_for_period?: number;
   /** Stored records of the submission's units that a corrected file no longer lists (cycle submissions). */
   missing_rows?: number;
@@ -376,6 +376,8 @@ export interface RcaUnitState {
   records_in_scope?: number;
   outage_minutes_in_scope?: number | null;
   source_files: string[];
+  /** The period's uploads for this unit (ids into the period's `uploads`), latest first. */
+  upload_ids?: number[];
   /** RCA data availability (records of the unit in the period, from any upload): "Data available" / "No data". */
   data_label?: string;
   /** Circle submission: a committed circle upload of the unit and date (never a consolidated or legacy upload). */
@@ -392,6 +394,8 @@ export interface RcaCycleStatus {
   received: number;
   complete: boolean;
   outstanding: { project: string; circle: string; status: RcaUnitCode; status_label: string }[];
+  /** Expected units with a committed circle file for the period (separate from data availability). */
+  circle_submissions?: number;
   final_version: number | null;
   upload_awaiting_confirmation: boolean;
   can_finalize: boolean;
@@ -433,14 +437,14 @@ export interface RcaCycleDetail extends RcaCycle {
   unexpected: { project: string; circle: string; records: number }[];
   uploads: RcaImportBatch[];
   reports: RcaReportVersion[];
-  available_units: [string, string][];
+  /** A final report exists: the expected scope is fixed to the one it was built on. */
   locked: boolean;
 }
 
 export interface RcaCycleList {
   cycles: RcaCycle[];
-  default_units: [string, string][];
-  available_units: [string, string][];
+  /** Every period stored; more than `cycles` when only the latest are listed. */
+  total?: number;
 }
 
 /** Upload Circle RCA (one project, circle and date) or Upload Consolidated RCA (several circles and dates). */

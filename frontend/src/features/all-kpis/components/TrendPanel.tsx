@@ -20,7 +20,7 @@ const SLA = 98.5;
 function formatSeries(key: string, value: unknown) {
   if (value == null) return NA;
   const v = Number(value);
-  if (key === 'availability_pct') return pct(v, 3);
+  if (key === 'availability_pct') return pct(v);
   if (key === 'outage_hours') return hours(v);
   return `${count(v)} sites`;
 }
@@ -105,7 +105,7 @@ function TrendTable({ points, kind }: { points: KpiTrendPoint[]; kind: 'availabi
               <span className="inline-flex flex-wrap items-center gap-1.5">{p.label} <PeriodStatusBadge status={p.status} missing={p.missing} /></span>
             </TableCell><TableCell className="r">{p.days}</TableCell>
             {kind === 'availability' ? (
-              <TableCell className={cn('r', toneText(availabilityTone(p.availability_pct)))}>{pct(p.availability_pct, 3)}</TableCell>
+              <TableCell className={cn('r', toneText(availabilityTone(p.availability_pct)))}>{pct(p.availability_pct)}</TableCell>
             ) : (
               <>
                 <TableCell className="r">{hours(p.outage_hours)}</TableCell><TableCell className="r">{count(p.usd_sites)}</TableCell>

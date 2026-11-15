@@ -24,7 +24,7 @@ describe('Sidebar order and groups', () => {
     expect(links()).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance',
       'All KPIs – Overview', 'KPI Trends (Month / Week)', 'Ranking', 'Availability', 'Outage Hours', 'USD Sites', 'NSLA Sites', 'Sites Below 98.5%',
       'Sites Below 60%', 'RCA', 'Circle / CI / IE / Site', 'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload Circle RCA',
-      'Data Source', 'Data Source & Quality', 'Add Row', 'Uptime Data Upload', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles', 'Organization',
+      'Data Source', 'Data Source & Quality', 'Uptime Data Upload', 'CSV Arrival Tracking', 'Users & Roles', 'Organization',
       'Email Setup', 'Automations', 'Email History']);
     expect(within(nav()).getByText('Data')).toBeInTheDocument();
     expect(within(nav()).getByText('Administration')).toBeInTheDocument();
@@ -66,7 +66,7 @@ describe('Sidebar order and groups', () => {
   it('keeps closed groups out of the tab order and the accessibility tree', () => {
     renderWithWorkbook(<Sidebar />, { url: '/portfolio' });
     expect(within(nav()).getByRole('button', { name: 'Uptime Data' })).toHaveAttribute('aria-expanded', 'false');
-    expect(within(nav()).queryByRole('link', { name: 'Add Row' })).not.toBeInTheDocument();
+    expect(within(nav()).queryByRole('link', { name: 'Uptime Data Upload' })).not.toBeInTheDocument();
     expect(document.getElementById('nav-group-data-entry')).toHaveAttribute('inert');
   });
 
@@ -150,17 +150,26 @@ describe('Sidebar order and groups', () => {
 
   it('links every entry to its existing route', async () => {
     const user = userEvent.setup();
-    renderWithWorkbook(<Sidebar />, { url: '/data/new-site' });
+    renderWithWorkbook(<Sidebar />, { url: '/data/upload-csv' });
     await user.click(within(nav()).getByRole('button', { name: 'Data Management' }));
     await user.click(within(nav()).getByRole('button', { name: 'Data Arrival & Follow-up' }));
     const href = (name: string) => within(nav()).getByRole('link', { name }).getAttribute('href');
     expect(Object.fromEntries(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance', 'Data Source',
-      'Data Source & Quality', 'Add Row', 'Uptime Data Upload', 'Add Site', 'CSV Arrival Tracking', 'Users & Roles'].map((n) => [n, href(n)]))).toEqual({
+      'Data Source & Quality', 'Uptime Data Upload', 'CSV Arrival Tracking', 'Users & Roles'].map((n) => [n, href(n)]))).toEqual({
       'Site Portfolio': '/portfolio', 'Master Data': '/master-data', Overview: '/', '4G Saturation': '/?report_type=4G+Saturation', LWE: '/?report_type=LWE',
       'Threshold Analysis': '/thresholds', 'Team Performance': '/teams', 'Data Source': '/workbook', 'Data Source & Quality': '/data-source',
-      'Add Row': '/data/add-row', 'Uptime Data Upload': '/data/upload-csv', 'Add Site': '/data/new-site',
+      'Uptime Data Upload': '/data/upload-csv',
       'CSV Arrival Tracking': '/daily-ingestion', 'Users & Roles': '/admin/users',
     });
+  });
+
+  it('lists only the Uptime Data Upload under Uptime Data (Add Row and Add Site were removed)', () => {
+    renderWithWorkbook(<Sidebar />, { url: '/data/upload-csv' });
+    expect(within(nav()).getByRole('button', { name: 'Uptime Data' })).toHaveAttribute('aria-expanded', 'true');
+    const labels = within(nav()).getAllByRole('link').map((a) => a.textContent);
+    expect(labels.slice(labels.indexOf('Uptime Data Upload'), labels.indexOf('Uptime Data Upload') + 2)).toEqual(['Uptime Data Upload', 'Users & Roles']);
+    expect(within(nav()).getByRole('link', { name: 'Uptime Data Upload' })).toHaveAttribute('aria-current', 'page');
+    for (const removed of ['Add Row', 'Add Site']) expect(within(nav()).queryByRole('link', { name: removed })).not.toBeInTheDocument();
   });
 
   it('opens Data Arrival & Follow-up on its page', () => {

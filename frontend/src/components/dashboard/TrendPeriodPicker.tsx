@@ -35,7 +35,8 @@ export function TrendPeriodPicker({ id, options, filters, onChange }: TrendPerio
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>(currentMode(filters));
   const dates = options.reporting_dates;
-  const monthOptions = options.months ?? [];
+  // Imported historical months first (monthly trend only), then the months calculated from daily records.
+  const monthOptions = [...(options.history_months ?? []), ...(options.months ?? [])];
   const monthEnd = Number(options.month.end.slice(8, 10));
   const weekRanges = WEEK_RANGES.map((w) => ({ ...w, last: Math.min(w.last, monthEnd) }));
   const dayOf = (day: number) => `${options.month.start.slice(0, 8)}${String(day).padStart(2, '0')}`;
@@ -164,20 +165,25 @@ export function TrendPeriodPicker({ id, options, filters, onChange }: TrendPerio
 
           {mode === 'months' && (
             <>
-              <p className="text-xs text-muted-foreground">Monthly uptime. Pick any months, or leave all unticked for the full history.</p>
+              <p className="text-xs text-muted-foreground">
+                Monthly uptime. Pick any months, or leave all unticked for the full history.
+                {(options.history_months ?? []).length > 0 && ' Months marked Excel are historical monthly totals (Excel source); period figures cover calculated months only.'}
+              </p>
               <div className="grid grid-cols-4 gap-1" role="group" aria-label="Months">
                 {monthOptions.map((m) => {
-                  const selected = filters.monthList.includes(m.key);
+                  const selected = filters.selectedMonths.includes(m.key);
+                  const historical = 'source' in m && m.source === 'historical_import';
                   return (
                     <button
                       key={m.key}
                       type="button"
                       aria-pressed={selected}
-                      onClick={() => onChange({ months: monthOptions.map((o) => o.key).filter((k) => toggle(filters.monthList, m.key).includes(k)).join(','), trend: 'monthly' })}
+                      onClick={() => onChange({ months: monthOptions.map((o) => o.key).filter((k) => toggle(filters.selectedMonths, m.key).includes(k)).join(','), trend: 'monthly' })}
                       className={cn('rounded-md border px-1 py-1.5 text-xs transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
                         selected ? 'border-primary bg-primary/10 font-semibold' : 'hover:bg-muted')}
                     >
                       {m.label.replace(' MTD', '')}{m.label.endsWith('MTD') && <span className="block text-[10px] text-muted-foreground">MTD</span>}
+                      {historical && <span className="block text-[10px] text-muted-foreground" title="Historical monthly (Excel source)">Excel</span>}
                     </button>
                   );
                 })}
@@ -198,8 +204,8 @@ export function TrendPeriodPicker({ id, options, filters, onChange }: TrendPerio
 
 function summary(filters: ResolvedFilters, months: FilterOptions['months']) {
   if (filters.trendView === 'monthly') {
-    if (!filters.monthList.length) return 'Months · all';
-    const labels = months.filter((m) => filters.monthList.includes(m.key)).map((m) => m.label);
+    if (!filters.selectedMonths.length) return 'Months · all';
+    const labels = months.filter((m) => filters.selectedMonths.includes(m.key)).map((m) => m.label);
     if (labels.length <= 2) return `Months · ${labels.join(', ')}`;
     return `${labels.length} months · ${labels[0]}–${labels.at(-1)!.replace(' MTD', '')}`;
   }

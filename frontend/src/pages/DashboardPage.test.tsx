@@ -6,7 +6,7 @@ import * as api from '../services/api';
 import { ApiError } from '../services/api';
 import { breakdown, filterOptions, monthly, period, records, summary, teams, trend } from '../test/fixtures';
 import { renderWithWorkbook, workbookValue } from '../test/renderWithWorkbook';
-import type { TrendResponse } from '../types';
+import type { MonthPoint, TrendResponse } from '../types';
 import { WorkbookContext } from '../context/workbook';
 import { BucketsSitesPage } from './BucketsSitesPage';
 import { DashboardPage } from './DashboardPage';
@@ -342,6 +342,69 @@ describe('Trend period', () => {
     await screen.findByText(/by selected month/);
     expect(lastParams(mocked.fetchMonthly).get('months')).toBe('2026-09,2026-10');
     expect(screen.getByRole('button', { name: 'Trend period' })).toHaveTextContent('Months · Sep-26, Oct-26 MTD');
+  });
+
+  describe('historical monthly totals (Excel source)', () => {
+    const jul: MonthPoint = { ...monthly.months[0], key: '2026-07', label: 'Jul-26', start: '2026-07-01', days: 31, sites_in_scope: 4, sites_reported: 4,
+      uptime_pct: 88.5, uptime_pct_blank_as_zero: null, change_pts: null, by_report_type: { '4G Saturation': 88.5, LWE: null }, outage_minutes: 20500,
+      source: 'historical_import', source_label: 'Historical monthly (Excel source)', missing_report_types: ['LWE'] };
+    beforeEach(() => {
+      mocked.fetchMonthly.mockResolvedValue({ ...monthly, historical_months: [jul] });
+      mocked.fetchFilterOptions.mockResolvedValue({ ...filterOptions, history_months: [{ key: '2026-07', label: 'Jul-26', source: 'historical_import' }] });
+    });
+
+    it('shows imported historical months before the calculated months, marked by source', async () => {
+      renderPage('/?trend=monthly');
+      const table = await screen.findByRole('table', { name: 'Monthly uptime' });
+      const rows = within(table).getAllByRole('row').slice(1);
+      expect(rows.map((r) => within(r).getAllByRole('cell')[0].textContent)).toEqual(['Jul-26', 'Aug-26', 'Sep-26', 'Oct-26 MTD (3 days)']);  // Aug-26: no data, an empty point
+      expect(rows[0]).toHaveTextContent('Historical monthly (Excel source)');
+      expect(rows[0]).toHaveTextContent('4 with a value');
+      expect(rows[1]).toHaveTextContent('No data');
+      expect(rows[2]).toHaveTextContent('Calculated from daily records');
+      expect(screen.getAllByText(/Historical monthly \(Excel source\): Jul-26/)[0]).toBeInTheDocument();
+      expect(screen.getByText(/Overall · Sep-26 to 03 Oct 2026 · 2 months \(calculated\)/)).toBeInTheDocument();  // tiles: calculated months only
+    });
+
+    it('keeps picked historical months out of the monthly endpoint and the period KPI', async () => {
+      renderPage('/?trend=monthly&months=2026-07,2026-09');
+      const table = await screen.findByRole('table', { name: 'Monthly uptime' });
+      expect(within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent)).toEqual(['Jul-26', 'Sep-26']);
+      expect(lastParams(mocked.fetchMonthly).get('months')).toBe('2026-09');
+      expect(lastParams(mocked.fetchPeriod).get('months')).toBe('2026-09');
+      expect(screen.getByRole('button', { name: 'Trend period' })).toHaveTextContent('Months · Jul-26, Sep-26');
+    });
+
+    it('shows only the historical month when only it is picked', async () => {
+      renderPage('/?trend=monthly&months=2026-07');
+      const table = await screen.findByRole('table', { name: 'Monthly uptime' });
+      expect(within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent)).toEqual(['Jul-26']);
+      expect(lastParams(mocked.fetchMonthly).get('months')).toBeNull();
+    });
+
+    it('shows a month missing between the shown months as an empty point, never a value', async () => {
+      const jun: MonthPoint = { ...jul, key: '2026-06', label: 'Jun-26', start: '2026-06-01', days: 30 };
+      mocked.fetchMonthly.mockResolvedValue({ ...monthly, historical_months: [jun] });  // Jul-26 and Aug-26: no data at all
+      renderPage('/?trend=monthly');
+      const table = await screen.findByRole('table', { name: 'Monthly uptime' });
+      const rows = within(table).getAllByRole('row').slice(1);
+      expect(rows.map((r) => within(r).getAllByRole('cell')[0].textContent)).toEqual(['Jun-26', 'Jul-26', 'Aug-26', 'Sep-26', 'Oct-26 MTD (3 days)']);
+      for (const gap of rows.slice(1, 3)) {
+        expect(gap).toHaveTextContent('No data');
+        expect(gap).not.toHaveTextContent(/\d+\.\d+%/);  // no value, never 0%
+      }
+      expect(screen.getAllByText(/Historical monthly \(Excel source\): Jun-26 \(/)[0]).toBeInTheDocument();  // the gap is not historical
+      expect(screen.getAllByText(/Calculated from daily records: Sep-26–Oct-26 MTD/)[0]).toBeInTheDocument();  // nor calculated
+    });
+
+    it('adds no empty months when months are picked', async () => {
+      const jun: MonthPoint = { ...jul, key: '2026-06', label: 'Jun-26', start: '2026-06-01', days: 30 };
+      mocked.fetchMonthly.mockResolvedValue({ ...monthly, historical_months: [jun] });
+      mocked.fetchFilterOptions.mockResolvedValue({ ...filterOptions, history_months: [{ key: '2026-06', label: 'Jun-26', source: 'historical_import' }] });
+      renderPage('/?trend=monthly&months=2026-06,2026-09');
+      const table = await screen.findByRole('table', { name: 'Monthly uptime' });
+      expect(within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent)).toEqual(['Jun-26', 'Sep-26']);
+    });
   });
 
   it('switches the chart to months and picks a month from the period picker', async () => {

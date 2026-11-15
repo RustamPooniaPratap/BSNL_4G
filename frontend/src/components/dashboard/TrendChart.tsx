@@ -10,7 +10,9 @@ import type { CircleSeriesInfo, MonthlyResponse, TrendResponse } from '../../typ
 import { UptimeHeatmap, type HeatmapColumn } from './UptimeHeatmap';
 import { ChartCard } from './ChartCard';
 import { DataTable } from './DataTable';
-import { AXIS_TICK, DENSE_CARD, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor, type UptimeChartView } from './constants';
+import { AXIS_TICK, DENSE_CARD, HISTORY_LABEL, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor, type UptimeChartView } from './constants';
+import { SOURCE_LABEL_MARGIN, SourceMarks, SourceNote } from './SourceMarks';
+import { isCalculated, isHistorical, monthKind } from '../../lib/monthlyHistory';
 import { PeriodStatusBadge } from '../reporting/ReportingStatus';
 import { statusText } from '../../lib/reportingStatus';
 
@@ -87,7 +89,8 @@ export function TrendChart(props: TrendChartProps) {
   if (chartView === 'heatmap') {
     const isMonthly = view === 'monthly';
     const columns: HeatmapColumn[] = isMonthly
-      ? (props.monthly?.months ?? []).map((m) => ({ key: m.key, label: m.partial ? `${m.label.replace(' MTD', '')}*` : m.label, title: m.partial ? `${m.label} (${m.days} days)` : m.label, values: m.by_circle }))
+      ? (props.monthly?.months ?? []).map((m) => ({ key: m.key, label: m.partial ? `${m.label.replace(' MTD', '')}*` : m.label,
+          title: m.partial ? `${m.label} (${m.days} days)` : m.gap ? `${m.label} · No data` : isHistorical(m) ? `${m.label} · ${HISTORY_LABEL}` : m.label, values: m.by_circle }))
       : view === 'weekly'
         ? selectWeeks(props.trend?.weeks ?? [], weekList).map((w) => ({ key: w.label, label: w.label.replace('Week ', 'Wk-'), title: `${w.label} (${formatShortDate(w.start)}–${formatShortDate(w.end)})`, values: w.by_circle }))
         : selectDays(props.trend?.series ?? [], dayList).filter((p) => p.reported).map((p) => ({ key: p.date, label: p.date.slice(8), title: formatDate(p.date), values: p.by_circle }));
@@ -114,7 +117,9 @@ export function TrendChart(props: TrendChartProps) {
     return (
       <ChartCard className={DENSE_CARD}
         title="Uptime trend"
-        description={`${scopeLabel}, by ${props.monthsFiltered ? 'selected' : ''} month. Recomputed from each site's monthly outage with today's On-Air / O&M flags; months reported earlier in the workbook's Summ sheet can differ slightly.`}
+        description={months.some(isHistorical)
+          ? `${scopeLabel} for the months calculated from daily records; earlier months are the imported historical monthly totals (Excel source), every imported site with a value, outage-weighted.`
+          : `${scopeLabel}, by ${props.monthsFiltered ? 'selected' : ''} month. Recomputed from each site's monthly outage with today's On-Air / O&M flags; months reported earlier in the workbook's Summ sheet can differ slightly.`}
         action={actions}
         loading={props.monthlyLoading}
         error={props.monthlyError}
@@ -321,12 +326,15 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
   const split = types.length > 1 || style.circles;
   const keys = types.length > 1 && !style.circles ? [COMBINED, ...types] : types;
   const months = monthly.months;
-  const data = months.map((m) => ({ label: m.label, [COMBINED]: m.uptime_pct, ...m.by_report_type }));
+  const data = months.map((m) => ({ label: m.label, source: m.source, [COMBINED]: m.uptime_pct, ...m.by_report_type }));
+  // The summary tiles describe the months calculated from daily records (the response's overall figure).
+  const calculated = months.filter(isCalculated);
+  const marked = months.some(isHistorical);
   const lower = lowerBound(months.flatMap((m) => [...(style.circles ? [] : [m.uptime_pct]), ...Object.values(m.by_report_type)]));
   const latest = months.at(-1);
-  const incomplete = months.filter((m) => !m.partial && m.sites_reported < m.sites_in_scope).length;
+  const incomplete = calculated.filter((m) => !m.partial && m.sites_reported < m.sites_in_scope).length;
   const { overall } = monthly;
-  const firstLabel = months.find((m) => m.uptime_pct != null)?.label ?? '—';
+  const firstLabel = calculated.find((m) => m.uptime_pct != null)?.label ?? '—';
   const monthStatuses = months.some((m) => m.status || m.finalization_status);
 
   return (
@@ -334,7 +342,7 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
       <dl className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
         <div className="rounded-lg bg-muted/60 px-3 py-2">
           <dt className="text-[11px] text-muted-foreground">
-            Overall · {firstLabel} to {formatDate(overall.end)} · {overall.months} months
+            Overall · {firstLabel} to {formatDate(overall.end)} · {overall.months} months{calculated.length < months.length ? ' (calculated)' : ''}
           </dt>
           <dd className="text-lg font-semibold tabular-nums">{formatPct(overall.uptime_pct)}</dd>
           {split && !style.circles && (
@@ -356,12 +364,15 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
       </dl>
       <div className="h-[clamp(224px,30vh,280px)]" role="img" aria-label="Line chart of monthly uptime">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -8 }}>
+          <LineChart data={data} margin={{ top: marked ? SOURCE_LABEL_MARGIN : 8, right: 12, bottom: 0, left: -8 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-            <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={40} />
+            {/* Height for the longest angled label ("Nov-26 MTD"), so its start is not cut off below the axis. */}
+            <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={52} />
             <YAxis domain={[lower, 100]} tickFormatter={(v: number) => `${v}%`} tick={AXIS_TICK} tickLine={false} axisLine={false} width={48} />
-            <Tooltip formatter={(value) => (value == null ? 'No data' : formatPct(Number(value)))} {...TOOLTIP_PROPS} />
+            <Tooltip formatter={(value) => (value == null ? 'No data' : formatPct(Number(value)))} {...TOOLTIP_PROPS}
+              labelFormatter={(label, payload) => (payload?.[0]?.payload?.source === 'historical_import' ? `${label} · ${HISTORY_LABEL}` : String(label))} />
             <Legend itemSorter={null} {...LEGEND_PROPS} />
+            <SourceMarks labels={data.map((d) => d.label)} kinds={months.map(monthKind)} />
             {keys.map((key) => (
               <Line isAnimationActive={false} key={key} type="monotone" dataKey={key} name={style.name(key)} stroke={style.color(key)}
                 strokeWidth={key === COMBINED ? 2.25 : 1.75}
@@ -371,22 +382,24 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
           </LineChart>
         </ResponsiveContainer>
       </div>
+      <SourceNote months={months.map((m) => ({ label: m.label, source: m.gap ? 'gap' : m.source }))} />
       {incomplete > 0 && (
         <p className="mt-2 text-xs text-muted-foreground">
-          In {incomplete} of {months.length - 1} months some sites in scope have no value and are excluded; the workbook counts them
+          In {incomplete} of {calculated.length - 1} months some sites in scope have no value and are excluded; the workbook counts them
           as 100% up. The data table shows both figures.
         </p>
       )}
       <DataTable
         caption="Monthly uptime"
-        columns={['Month', ...keys.map(style.name), 'Change', 'Workbook method (blank = 100%)', 'Sites reported', ...(monthStatuses ? ['Status'] : [])]}
+        columns={['Month', ...keys.map(style.name), 'Change', 'Workbook method (blank = 100%)', 'Sites reported', ...(monthStatuses ? ['Status'] : []), 'Source']}
         rows={months.map((m) => [
           m.partial ? `${m.label} (${m.days} days)` : m.label,
           ...keys.map((k) => formatPct(k === COMBINED ? m.uptime_pct : m.by_report_type[k])),
           formatChange(m.change_pts),
           formatPct(m.uptime_pct_blank_as_zero),
-          `${formatNumber(m.sites_reported)} / ${formatNumber(m.sites_in_scope)}`,
+          m.gap ? '—' : isHistorical(m) ? `${formatNumber(m.sites_reported)} with a value` : `${formatNumber(m.sites_reported)} / ${formatNumber(m.sites_in_scope)}`,
           ...(monthStatuses ? [statusText(m)] : []),
+          m.gap ? 'No data' : isHistorical(m) ? HISTORY_LABEL : 'Calculated from daily records',
         ])}
       />
     </>
@@ -396,13 +409,14 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
 function BestWorst({ months }: { months: MonthlyResponse['months'] }) {
   const complete = months.filter((m) => !m.partial && m.uptime_pct != null);
   if (complete.length < 2) return null;
+  const tag = (m: MonthlyResponse['months'][number]) => (isHistorical(m) ? ' (Excel)' : '');
   const best = complete.reduce((a, b) => ((b.uptime_pct ?? 0) > (a.uptime_pct ?? 0) ? b : a));
   const worst = complete.reduce((a, b) => ((b.uptime_pct ?? 0) < (a.uptime_pct ?? 0) ? b : a));
   return (
     <div className="rounded-lg bg-muted/60 px-3 py-2">
       <dt className="text-[11px] text-muted-foreground">Best / worst complete month</dt>
-      <dd className="text-sm font-semibold tabular-nums">{best.label} {formatPct(best.uptime_pct)}</dd>
-      <dd className="text-sm font-semibold tabular-nums text-destructive">{worst.label} {formatPct(worst.uptime_pct)}</dd>
+      <dd className="text-sm font-semibold tabular-nums">{best.label}{tag(best)} {formatPct(best.uptime_pct)}</dd>
+      <dd className="text-sm font-semibold tabular-nums text-destructive">{worst.label}{tag(worst)} {formatPct(worst.uptime_pct)}</dd>
     </div>
   );
 }

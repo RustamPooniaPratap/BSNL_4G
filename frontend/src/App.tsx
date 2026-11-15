@@ -15,9 +15,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ 
 const PortfolioPage = lazy(() => import('./pages/PortfolioPage').then((m) => ({ default: m.PortfolioPage })));
 const BucketsSitesPage = lazy(() => import('./pages/BucketsSitesPage').then((m) => ({ default: m.BucketsSitesPage })));
 const ThresholdPage = lazy(() => import('./pages/ThresholdPage').then((m) => ({ default: m.ThresholdPage })));
-const AddRowPage = lazy(() => import('./pages/data/AddRowPage').then((m) => ({ default: m.AddRowPage })));
 const UploadCsvPage = lazy(() => import('./pages/data/UploadCsvPage').then((m) => ({ default: m.UploadCsvPage })));
-const AddSitePage = lazy(() => import('./pages/data/AddSitePage').then((m) => ({ default: m.AddSitePage })));
 const TeamsPage = lazy(() => import('./pages/TeamsPage').then((m) => ({ default: m.TeamsPage })));
 const TopPerformersPage = lazy(() => import('./pages/TopPerformersPage').then((m) => ({ default: m.TopPerformersPage })));
 const CircleTopPerformerPage = lazy(() => import('./pages/CircleTopPerformerPage').then((m) => ({ default: m.CircleTopPerformerPage })));
@@ -70,9 +68,7 @@ function PortalRoutes() {
               <Route path="/teams/hierarchy/circle/:circleCode/oa/:oaId/ci/:ciId/ie/:ieId" element={<RequireAdmin><IePerformancePage /></RequireAdmin>} />
               {/* Data Source (Admin): status and imports of the reporting data (the data layer). */}
               <Route path="/workbook" element={<RequireAdmin><DatabaseImportPage /></RequireAdmin>} />
-              <Route path="/data/add-row" element={<RequirePage><AddRowPage /></RequirePage>} />
               <Route path="/data/upload-csv" element={<RequirePage><UploadCsvPage /></RequirePage>} />
-              <Route path="/data/new-site" element={<RequirePage><AddSitePage /></RequirePage>} />
               <Route path="/data-source" element={<RequirePage><DataSourcePage /></RequirePage>} />
               {/* The former Raw CSV files page: now CSV arrival tracking (uploads moved to /data/upload-csv). */}
               <Route path="/daily-ingestion" element={<RequireAdmin><CsvArrivalPage /></RequireAdmin>} />

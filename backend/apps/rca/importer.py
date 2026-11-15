@@ -453,11 +453,9 @@ def _by_date(rows: list[dict], comparison: dict, period: tuple[date, date] | Non
 def _coverage(rows: list[dict], cycle, period: tuple[date, date] | None, projects: set[str] | None) -> dict:
     """The expected projects / circles of the reporting period against those the workbook has rows for (on those dates)."""
     from . import cycles
-    if cycle is not None:
-        expected, source = list(cycle.required.values_list('project', 'circle')), 'period'
-    else:
-        expected, source = cycles.default_units(before=period[0] if period else None), 'previous period'
-    expected = [u for u in expected if not projects or u[0] in projects]
+    # The period's expected scope: fixed for a finalized period, otherwise the Organization's active projects and circles.
+    expected = [u for u in cycles.expected_units(cycle) if not projects or u[0] in projects]
+    source = 'period' if cycle is not None and cycle.reports.exists() else 'organization'
     present = sorted({(r['project'], r['circle']) for r in rows if not r.get('earlier_date')})
     return {'source': source if expected else None, 'expected': [list(u) for u in sorted(expected)],
             'present': [list(u) for u in present], 'missing': [list(u) for u in sorted(set(expected) - set(present))]}

@@ -26,7 +26,7 @@
 | | Admin | CI |
 |---|---|---|
 | Site Portfolio, Overview, 4G, LWE, Threshold Analysis, Data source & quality | ✓ | ✓ |
-| Add Row, Upload CSV, Add New Site (checked in the browser; nothing is written to the server) | ✓ | ✓ |
+| Upload CSV | ✓ | ✓ |
 | Read the active workbook status (`GET dashboard/workbook/`) | ✓ | ✓ |
 | Upload the Master workbook (`POST dashboard/workbook/`) | ✓ | 403 |
 | Team performance (`dashboard/teams/`) | ✓ | 403 |

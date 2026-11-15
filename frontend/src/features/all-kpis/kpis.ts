@@ -36,7 +36,7 @@ export interface KpiDef {
 const counts = { format: count, unit: '%' as const, higherIsBetter: false };
 
 export const KPIS: KpiDef[] = [
-  { id: 'availability', name: 'Availability', key: 'availability_pct', format: (v) => pct(v, 3), higherIsBetter: true, unit: 'pts', tone: availabilityTone, trend: 'availability',
+  { id: 'availability', name: 'Availability', key: 'availability_pct', format: pct, higherIsBetter: true, unit: 'pts', tone: availabilityTone, trend: 'availability',
     siteSort: 'availability', target: 98.5,
     definition: (sites) => `Outage-weighted availability of ${sites} over the period: 100 × (1 − outage ÷ (1,440 min × reported site-days)); never an average of daily percentages. Missing values are left out, never 0%.` },
   { id: 'outage', name: 'Outage hours', key: 'outage_hours', format: hours, higherIsBetter: false, unit: '%', tone: () => 'neutral', trend: 'outage', siteSort: '-outage',

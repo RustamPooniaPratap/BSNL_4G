@@ -13,7 +13,7 @@ from apps.accounts.roles import set_rca_consolidated
 from apps.accounts.scope import set_pairs
 from apps.rca.models import RcaEvent, RcaImportBatch, RcaRecord, RcaReport, RcaReportingCycle
 from tests.auth_helpers import portal_user
-from tests.test_rca import RcaTestCase, uptime_sites, workbook
+from tests.test_rca import RcaTestCase, uptime_sites, workbook, active_scope
 
 D21, D22 = datetime(2026, 10, 21), datetime(2026, 10, 22)
 OD_21 = [[D21, '4G Satu', 'Odisha', 'OD0001', 'Bravo', 'KORAPUT', 'KORAPUT', 'Yes', 90, 'BSNL OFC', 'Fiber', 'Cut'],
@@ -60,11 +60,9 @@ class UploadCase(RcaTestCase):
         detail = self.client.get(reverse('rca-cycle', args=[cycle.pk])).json()
         return {(u['project'], u['circle']): u for u in detail['units']} | {'_status': detail['status']}
 
-    def configure(self, day='2026-10-21'):
-        cycle = RcaReportingCycle.objects.get(reporting_date=day)
-        self.client.force_login(self.admin)
-        response = self.client.put(reverse('rca-cycle-required', args=[cycle.pk]), {'units': SCOPE}, content_type='application/json')
-        self.assertEqual(response.status_code, 200, response.content)
+    def configure(self):
+        """The Organization's active projects / circles are the expected scope: keep SCOPE active only."""
+        active_scope(SCOPE)
 
 
 class CircleErrorAccountabilityTests(UploadCase):
@@ -175,7 +173,7 @@ class SubmissionTrackingTests(UploadCase):
     def test_a_circle_submission_counts_for_its_own_date_only(self):
         self.imported(self.circle(OD_21))
         self.imported(self.consolidated(OD_22, name='d22.xlsx'))
-        self.configure('2026-10-22')
+        self.configure()
         self.assertEqual(self.units('2026-10-22')[('4G Saturation', 'OD')]['submission_status'], 'not_received')
 
 
@@ -207,12 +205,13 @@ class DailyCycleTests(UploadCase):
         self.imported(self.circle(OD_21, name='od.xlsx'))  # reuses the 21 Oct period
         self.assertEqual(RcaReportingCycle.objects.count(), 2)
 
-    def test_expected_units_carry_over_from_the_previous_day(self):
+    def test_every_day_expects_the_organizations_active_units_without_configuration(self):
         self.imported(self.circle(OD_21))
         self.configure()
         self.imported(self.circle(OD_22, day='2026-10-22', name='d22.xlsx'))
-        self.assertEqual(sorted(RcaReportingCycle.objects.get(reporting_date='2026-10-22').required.values_list('project', 'circle')),
-                         sorted(tuple(u) for u in SCOPE))
+        for day in ('2026-10-21', '2026-10-22'):
+            self.assertEqual(sorted(k for k in self.units(day) if k != '_status'), sorted(tuple(u) for u in SCOPE))
+        self.assertFalse(RcaReportingCycle.objects.get(reporting_date='2026-10-22').required.exists())  # generated, not stored
 
 
 class FinalReportTests(UploadCase):

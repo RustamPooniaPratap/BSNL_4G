@@ -19,7 +19,6 @@ urlpatterns = [
     path('imports/<int:batch_id>/report.xlsx', views.import_workbook, name='rca-import-workbook'),
     path('cycles/', views.cycle_list, name='rca-cycles'),
     path('cycles/<int:cycle_id>/', views.cycle_detail, name='rca-cycle'),
-    path('cycles/<int:cycle_id>/required/', views.cycle_required, name='rca-cycle-required'),
     path('cycles/<int:cycle_id>/finalize/', views.cycle_finalize, name='rca-cycle-finalize'),
     path('cycles/<int:cycle_id>/report.xlsx', views.cycle_workbook, name='rca-cycle-workbook'),
     path('cycles/<int:cycle_id>/reports/<int:report_id>.xlsx', views.cycle_report_file, name='rca-cycle-report'),

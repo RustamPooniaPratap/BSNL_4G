@@ -35,6 +35,7 @@ class UploadBatch(models.Model):
         RAW_CSV_4G = 'raw_csv_4g', '4G raw CSV'
         RAW_CSV_LWE = 'raw_csv_lwe', 'LWE raw CSV'
         CORRECTION = 'correction', 'Authorized correction'
+        UPTIME_HISTORY = 'uptime_history', 'Historical monthly Uptime (workbook monthly totals)'
 
     class Validation(models.TextChoices):
         PENDING = 'pending', 'Pending'
@@ -47,6 +48,7 @@ class UploadBatch(models.Model):
         COMMITTED = 'committed', 'Committed'
         FAILED = 'failed', 'Failed'
         DISCARDED = 'discarded', 'Discarded'
+        RETIRED = 'retired', 'Retired (its records were withdrawn; earlier revisions restored)'
 
     kind = models.CharField(max_length=30, choices=Kind.choices)
     original_filename = models.CharField(max_length=255)
@@ -340,12 +342,22 @@ class DailyPerformanceEvent(models.Model):
 
 
 class MonthlySitePerformance(models.Model):
-    """Site-wise monthly result. Revisions are kept; one current record per site, month and category."""
+    """Site-wise monthly result. Revisions are kept; one current record per site, month and category.
+
+    Two sources share the table, told apart by the category:
+    - calculated from the daily records (calculations.py): daily_derived, om_start, on_air (DAILY_CATEGORIES);
+    - historical_import: a monthly total imported as written from an Uptime Master workbook (history.py), for months
+      before the daily data layer. It has no reporting-day count (reporting_days is NULL, never invented), keeps its
+      upload (import_batch), source row and source values, and is never calculated, finalized or read as daily-derived.
+    """
 
     class Category(models.TextChoices):
         DAILY_DERIVED = 'daily_derived', 'All reported days (outage-weighted)'
         OM_START = 'om_start', 'O&M Start days: reported days from the matrix O&M Start Date (outage-weighted)'
         ON_AIR = 'on_air', 'On-Air days: reported days from the matrix Site On-Air Date (outage-weighted)'
+        HISTORICAL_IMPORT = 'historical_import', 'Historical monthly total (imported Uptime Master workbook)'
+
+    DAILY_CATEGORIES = (Category.DAILY_DERIVED, Category.OM_START, Category.ON_AIR)
 
     site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name='monthly')
     month = models.DateField(help_text='First day of the month.')
@@ -353,7 +365,9 @@ class MonthlySitePerformance(models.Model):
     calculation_category = models.CharField(max_length=30, choices=Category.choices)
     total_outage_minutes = models.FloatField()
     availability_pct = models.FloatField(help_text='100 x (1 - total outage / (1440 x reporting days)).')
-    reporting_days = models.PositiveSmallIntegerField(help_text='Days with a daily record (missing days are not counted as 0).')
+    reporting_days = models.PositiveSmallIntegerField(null=True, blank=True,
+                                                      help_text='Days with a daily record (missing days are not counted as 0). '
+                                                                'NULL only for historical_import: the workbook gives no day count.')
     calendar_days = models.PositiveSmallIntegerField(help_text='Days of the month in the category (O&M Start: from the effective date).')
     effective_from = models.DateField(help_text='First day counted: the 1st, or the O&M Start Date when it falls in the month.')
     source_batches = models.JSONField(default=list, blank=True, help_text='Uploads of the daily records used.')
@@ -362,12 +376,24 @@ class MonthlySitePerformance(models.Model):
     calculated_at = models.DateTimeField(auto_now_add=True)
     finalized_at = models.DateTimeField(null=True, blank=True)
     finalized_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name='+')
+    # historical_import only: the upload, the workbook row and the source values as written (FF Count, Bucket, O&M flag,
+    # Up-Time, column labels, eligibility note). Empty for the calculated categories.
+    import_batch = models.ForeignKey('UploadBatch', null=True, blank=True, on_delete=models.PROTECT, related_name='historical_monthly')
+    source_row = models.PositiveIntegerField(null=True, blank=True)
+    source_values = models.JSONField(default=dict, blank=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['site', 'month', 'calculation_category', 'revision'], name='sitedata_monthly_revision'),
             models.UniqueConstraint(fields=['site', 'month', 'calculation_category'], condition=Q(is_current=True), name='sitedata_monthly_current'),
             models.CheckConstraint(condition=Q(reporting_days__lte=F('calendar_days')), name='sitedata_monthly_days'),
+            # Calculated categories always have a day count; a historical import never has one (never invented).
+            models.CheckConstraint(condition=(Q(calculation_category='historical_import', reporting_days__isnull=True)
+                                              | (~Q(calculation_category='historical_import') & Q(reporting_days__isnull=False))),
+                                   name='sitedata_monthly_days_by_source'),
+            # A historical import always names its upload.
+            models.CheckConstraint(condition=~Q(calculation_category='historical_import') | Q(import_batch__isnull=False),
+                                   name='sitedata_monthly_history_batch'),
         ]
         indexes = [models.Index(fields=['month', 'technology', 'is_current'])]
 

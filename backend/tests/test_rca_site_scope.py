@@ -121,9 +121,10 @@ class SiteScopeTests(TestCase):
 
     def test_submissions_show_scoped_figures_without_changing_the_status(self):
         from apps.rca import cycles
-        from apps.rca.models import RcaReportingCycle, RcaRequiredSubmission
+        from apps.rca.models import RcaReportingCycle
+        from tests.test_rca import active_scope
         cycle = RcaReportingCycle.objects.create(reporting_date=date(2026, 10, 5), created_by=self.admin)
-        RcaRequiredSubmission.objects.create(cycle=cycle, project=G4, circle='MP')
+        active_scope([(G4, 'MP')])
         plain = cycles.cycle_json(cycle, full=True)
         scoped = self.client.get(reverse('rca-cycle', args=[cycle.pk]), {'site_scope': 'om_not_started'}).json()
         [u] = scoped['units']

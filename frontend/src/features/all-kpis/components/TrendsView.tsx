@@ -14,7 +14,7 @@ import { CHART } from './theme';
 type Key = 'availability_pct' | 'outage_hours' | 'usd_sites' | 'nsla_sites' | 'below_98_5_sites' | 'below_60_sites';
 /** [label, field of the trend point, format, higher is better, change unit] — fields of /trends/, unchanged. */
 const ROWS: [string, Key, (v: number | null) => string, boolean, 'pts' | '%'][] = [
-  ['Availability', 'availability_pct', (v) => pct(v, 3), true, 'pts'],
+  ['Availability', 'availability_pct', pct, true, 'pts'],
   ['Outage hours', 'outage_hours', hours, false, '%'],
   ['USD Sites', 'usd_sites', count, false, '%'],
   ['NSLA Sites', 'nsla_sites', count, false, '%'],
@@ -77,7 +77,7 @@ export function TrendsView({ query }: { query: URLSearchParams }) {
       </Panel>
       {points.length > 0 && (
         <div className="akp-row">
-          <MiniChart title="Availability" points={points} dataKey="availability_pct" line format={(v) => pct(v, 3)} />
+          <MiniChart title="Availability" points={points} dataKey="availability_pct" line format={pct} />
           <MiniChart title="Outage hours" points={points} dataKey="outage_hours" format={hours} />
           <MiniChart title="USD Sites" points={points} dataKey="usd_sites" format={count} />
           <MiniChart title="NSLA Sites" points={points} dataKey="nsla_sites" format={count} />

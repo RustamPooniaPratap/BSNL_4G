@@ -7,7 +7,9 @@ import { formatCompact, formatDate, formatMinutes, formatNumber, formatShortDate
 import type { MonthlyResponse, TrendResponse } from '../../types';
 import { ChartCard } from './ChartCard';
 import { DataTable } from './DataTable';
-import { AXIS_TICK, DENSE_CARD, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor } from './constants';
+import { AXIS_TICK, DENSE_CARD, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor, HISTORY_LABEL } from './constants';
+import { SOURCE_LABEL_MARGIN, SourceMarks, SourceNote } from './SourceMarks';
+import { isHistorical, monthKind, type MonthKind } from '../../lib/monthlyHistory';
 import { TrendViewSwitch } from './TrendChart';
 
 const COMBINED = 'Combined';
@@ -35,6 +37,10 @@ interface OutageChartProps {
 interface Point {
   label: string;
   tooltip: string;
+  /** Monthly view: a month of imported historical totals (Excel source). */
+  historical?: boolean;
+  /** Monthly view: historical, calculated from daily records, or an empty gap month. */
+  kind?: MonthKind;
   total: number | null;
   byType: Record<string, number | null>;
   byCircle: Record<string, number | null> | undefined;
@@ -60,7 +66,8 @@ export function OutageChart(props: OutageChartProps) {
     }));
   } else {
     points = (monthly?.months ?? []).map((m) => ({
-      label: m.label, tooltip: m.partial ? `${m.label} (${m.days} days)` : m.label, total: m.outage_minutes, byType: m.outage_by_report_type, byCircle: m.outage_by_circle,
+      label: m.label, tooltip: m.partial ? `${m.label} (${m.days} days)` : m.gap ? `${m.label} · No data` : isHistorical(m) ? `${m.label} · ${HISTORY_LABEL}` : m.label,
+      historical: isHistorical(m), kind: monthKind(m), total: m.outage_minutes, byType: m.outage_by_report_type, byCircle: m.outage_by_circle,
     }));
   }
   const period = points.length ? `${points[0].tooltip} – ${points.at(-1)!.tooltip}` : '';
@@ -88,7 +95,8 @@ export function OutageChart(props: OutageChartProps) {
       emptyMessage="No outage data reported for this period."
     >
       {outageView === 'circles'
-        ? <CircleOutage points={points} circles={(isMonthly ? monthly?.circles : trend?.circles) ?? []} period={period} />
+        // Per site of today's scope: only the months calculated from daily records (historical totals cover other site sets).
+        ? <CircleOutage points={points.filter((p) => !p.historical && p.kind !== 'gap')} circles={(isMonthly ? monthly?.circles : trend?.circles) ?? []} period={period} />
         : <OverallOutage points={points} types={types} view={view} picked={props.picked} showCombined={showCombined} onShowCombined={setShowCombined} />}
     </ChartCard>
   );
@@ -115,15 +123,16 @@ function OverallOutage({ points, types, view, picked, showCombined, onShowCombin
       )}
       <div className="h-[clamp(208px,28vh,256px)]" role="img" aria-label={`Line chart of ${view} outage minutes`}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -4 }}>
+          <LineChart data={data} margin={{ top: isMonthly && points.some((p) => p.historical) ? SOURCE_LABEL_MARGIN : 4, right: 12, bottom: 0, left: -4 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
             <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={false}
               minTickGap={isMonthly ? 0 : 16} interval={isMonthly ? 0 : undefined}
-              angle={isMonthly ? -30 : 0} textAnchor={isMonthly ? 'end' : 'middle'} height={isMonthly ? 40 : 24} />
+              angle={isMonthly ? -30 : 0} textAnchor={isMonthly ? 'end' : 'middle'} height={isMonthly ? 52 : 24} />
             <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} width={48} tickFormatter={(v: number) => formatCompact(v)} />
             <Tooltip {...TOOLTIP_PROPS} labelFormatter={(_label, payload) => String(payload?.[0]?.payload?.tooltip ?? '')}
               formatter={(value) => (value == null ? 'Not reported' : formatMinutes(Number(value)))} />
             <Legend itemSorter={null} {...LEGEND_PROPS} />
+            {isMonthly && <SourceMarks labels={data.map((d) => d.label)} kinds={points.map((p) => p.kind ?? 'daily')} />}
             {keys.map((key) => (
               <Line isAnimationActive={false} key={key} type={curve} dataKey={key} connectNulls={false}
                 stroke={key === COMBINED ? OVERALL_COLOR : reportTypeColor(key)} strokeWidth={2}
@@ -132,6 +141,7 @@ function OverallOutage({ points, types, view, picked, showCombined, onShowCombin
           </LineChart>
         </ResponsiveContainer>
       </div>
+      {isMonthly && <SourceNote months={points.map((p) => ({ label: p.label, source: p.kind === 'gap' ? 'gap' : p.historical ? 'historical_import' : 'daily_derived' }))} />}
       <DataTable caption={`${view} outage minutes`} columns={[isMonthly ? 'Month' : view === 'weekly' ? 'Week' : 'Date', ...(split ? [COMBINED, ...types] : types)]}
         rows={points.map((p) => [p.tooltip, ...(split ? [COMBINED, ...types] : types).map((k) => show(k === COMBINED ? p.total : p.byType?.[k]))])} />
     </>

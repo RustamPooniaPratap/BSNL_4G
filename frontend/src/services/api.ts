@@ -353,12 +353,8 @@ export const rcaImportWorkbookUrl = (id: number) => `${API_BASE_URL}/rca/imports
 export const fetchRcaCycles = (signal?: AbortSignal) => request<RcaCycleList>('/rca/cycles/', undefined, { signal });
 export const fetchRcaCycle = (id: number, signal?: AbortSignal, siteScope = '') =>
   request<RcaCycleDetail>(`/rca/cycles/${id}/`, siteScope ? new URLSearchParams({ site_scope: siteScope }) : undefined, { signal });
-export const startRcaCycle = (period: { name: string; period_start: string; period_end: string; notes: string }, units: [string, string][]) =>
-  send<RcaCycleDetail>('/rca/cycles/', { ...period, units });
-export const setRcaRequired = (id: number, units: [string, string][]) => send<RcaCycleDetail>(`/rca/cycles/${id}/required/`, { units }, 'PUT');
-export const finalizeRcaCycle = (id: number) =>
-  send<RcaCycleDetail & { created: boolean; report: RcaReportVersion }>(`/rca/cycles/${id}/finalize/`);
-export const rcaCycleWorkbookUrl = (id: number) => `${API_BASE_URL}/rca/cycles/${id}/report.xlsx`;
+export const startRcaCycle = (period: { name: string; period_start: string; period_end: string; notes: string }) =>
+  send<RcaCycleDetail>('/rca/cycles/', period);
 export const rcaReportFileUrl = (cycle: number, report: number) => `${API_BASE_URL}/rca/cycles/${cycle}/reports/${report}.xlsx`;
 export const fetchRcaCauses = (signal?: AbortSignal) => request<RcaCauses>('/rca/causes/', undefined, { signal });
 export const createRcaCategory = (name: string, description = '') => send<{ id: number; name: string }>('/rca/causes/categories/', { name, description });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  detectColumns, newSiteLink, normaliseCircle, outageError, outageWarning, parseCsv, parseDate, siteIdError, validateCsv,
+  detectColumns, normaliseCircle, parseCsv, parseDate, siteIdError, validateCsv,
 } from './dataEntry';
 
 const META = { reportType: '4G Saturation', circle: 'MP', date: '2026-10-16' };
@@ -30,21 +30,9 @@ describe('field checks', () => {
     expect(parseDate('Oct 16')).toBeNull();
   });
 
-  it('checks outage minutes', () => {
-    expect(outageError('0')).toBeNull();
-    expect(outageError('45.5')).toBeNull();
-    expect(outageError('')).toMatch(/required/);
-    expect(outageError('abc')).toMatch(/number/);
-    expect(outageError('1,440')).toMatch(/number/);
-    expect(outageError('-5')).toMatch(/negative/);
-    expect(outageWarning('1500')).toMatch(/full day/);
-    expect(outageWarning('1440')).toBeNull();
-  });
-
-  it('normalises LWE circle names and builds the Add New Site link', () => {
+  it('normalises LWE circle names', () => {
     expect(normaliseCircle('Madhya Pradesh')).toBe('MP');
     expect(normaliseCircle(' od ')).toBe('OD');
-    expect(newSiteLink('uvmpbpl09999', 'LWE', 'MP')).toBe('/data/new-site?site_id=UVMPBPL09999&report_type=LWE&circle=MP');
   });
 });
 

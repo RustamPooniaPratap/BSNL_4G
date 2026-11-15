@@ -120,7 +120,8 @@ DATASETS: dict[str, Dataset] = {d.key: d for d in (
         search=('site__bsnl_site_id', 'site__site_name', 'site__oa'), population='daily'),
     Dataset(
         'uptime_monthly', 'Monthly Performance',
-        'Current monthly results per site, calculated from the daily records (read-only).',
+        'Current monthly results per site (read-only): calculated from the daily records, or imported historical monthly totals '
+        '(category "Historical monthly total", no reporting-day count).',
         lambda: MonthlySitePerformance.objects.filter(is_current=True).select_related('site'),
         (_c('month', 'Month', kind='month'), *SITE, _c('category', 'Category', 'calculation_category'),
          _c('availability_pct', 'Availability', kind='pct'), _c('outage_minutes', 'Outage minutes', 'total_outage_minutes', kind='minutes'),

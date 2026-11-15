@@ -2,7 +2,8 @@ import { formatNumber } from '../../lib/format';
 
 /** Formatting of All KPI's values: null is "Not available", never 0. */
 export const NA = 'Not available';
-export const pct = (v: number | null | undefined, digits = 2) => (v == null ? NA : `${v.toFixed(digits)}%`);
+/** A percentage, always with two decimals (display only: the value itself is never rounded). */
+export const pct = (v: number | null | undefined) => (v == null ? NA : `${v.toFixed(2)}%`);
 export const count = (v: number | null | undefined) => (v == null ? NA : formatNumber(v));
 export const hours = (v: number | null | undefined) => (v == null ? NA : `${formatNumber(Math.round(v * 10) / 10)} h`);
 export const minutes = (v: number | null | undefined) => (v == null ? NA : `${formatNumber(Math.round(v))} min`);

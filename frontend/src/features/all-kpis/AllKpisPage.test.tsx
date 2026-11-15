@@ -62,7 +62,7 @@ describe("All KPI's", () => {
     expect(usd).toHaveTextContent('Not available');
     expect(screen.queryByText(/O&M Start data is not available/)).not.toBeInTheDocument();  // On-Air population: nothing depends on it here
     expect(screen.queryByText(/handover/i)).not.toBeInTheDocument();  // not a project concept: no card, label or placeholder
-    expect(screen.getByRole('group', { name: 'Availability (selected period)' })).toHaveTextContent('98.745%');
+    expect(screen.getByRole('group', { name: 'Availability (selected period)' })).toHaveTextContent('98.75%');
     expect(screen.getByRole('group', { name: 'Outage hours' })).toHaveTextContent('410 h');
   });
 
@@ -129,10 +129,10 @@ describe("All KPI's", () => {
     const names = within(table).getAllByRole('button', { name: /^Open Circle/ }).map((b) => b.textContent);
     expect(names).toEqual(['UP', 'MP', 'RJ', 'OD', 'BH', 'KL']);  // highest availability first, as the API reports it
     const rj = within(table).getByRole('button', { name: 'Open Circle RJ (4G)' }).closest('tr')!;
-    expect(rj).toHaveTextContent('98.745%');
+    expect(rj).toHaveTextContent('98.75%');
     await waitFor(() => expect(rj).toHaveTextContent('▼ 2'));  // rank 1 → 3 against the previous period
     expect(within(table).getByRole('button', { name: 'Open Circle KL (4G)' }).closest('tr')).toHaveClass('bottom');
-    expect(within(table).getByRole('row', { name: 'Total of the selected filters' })).toHaveTextContent('98.745%');
+    expect(within(table).getByRole('row', { name: 'Total of the selected filters' })).toHaveTextContent('98.75%');
     // The previous ranks come from the same endpoint with the summary's comparison period.
     expect(m.fetchKpiHierarchy.mock.calls.some(([p]) => isPrevious(p as URLSearchParams) && (p as URLSearchParams).get('date_to') === '2026-10-31')).toBe(true);
   });
@@ -160,7 +160,7 @@ describe("All KPI's", () => {
     renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis?tab=trends' });
     const table = await screen.findByRole('region', { name: 'KPI trend table' });
     expect(within(table).getByRole('columnheader', { name: 'Oct 26*' })).toBeInTheDocument();
-    expect(within(table).getByRole('row', { name: /^Availability/ })).toHaveTextContent('98.200%');
+    expect(within(table).getByRole('row', { name: /^Availability/ })).toHaveTextContent('98.20%');
     expect(within(table).getByRole('row', { name: /^USD Sites/ })).toBeInTheDocument();
     expect(m.fetchKpiTrends.mock.calls.some(([p]) => (p as URLSearchParams).get('granularity') === 'month')).toBe(true);
   });
@@ -169,7 +169,7 @@ describe("All KPI's", () => {
     renderWithWorkbook(<><Sidebar /><AllKpisPage /></>, { url: '/all-kpis?tab=availability' });
     expect(screen.queryByRole('navigation', { name: "All KPI's sections" })).not.toBeInTheDocument();
     expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Availability' })).toHaveAttribute('aria-current', 'page');
-    expect(await screen.findByRole('group', { name: 'Availability: this period against the previous' })).toHaveTextContent('98.745%');
+    expect(await screen.findByRole('group', { name: 'Availability: this period against the previous' })).toHaveTextContent('98.75%');
   });
 
   it('drills from a circle to its CIs, keeping the filters in the URL', async () => {

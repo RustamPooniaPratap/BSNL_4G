@@ -1,8 +1,8 @@
 import { Fragment, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  Activity, BriefcaseBusiness, ChevronRight, LayoutGrid, ClipboardPen, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
-  LayoutDashboard, MapPinPlus, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy, Table2, ListTree, MapPinned, ChartLine, Building2, TableProperties, BellRing, Mail, Workflow, History,
+  Activity, BriefcaseBusiness, ChevronRight, LayoutGrid, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
+  LayoutDashboard, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy, Table2, ListTree, MapPinned, ChartLine, Building2, TableProperties, BellRing, Mail, Workflow, History,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { canOpen, hasPermission, useAuth } from '../context/auth';
@@ -124,7 +124,7 @@ const entries: NavEntry[] = [
   },
   {
     kind: 'group', id: 'data-entry', label: 'Uptime Data', icon: SquarePen,
-    items: [page('/data/add-row', 'Add Row', ClipboardPen), page('/data/upload-csv', 'Uptime Data Upload', Sheet), page('/data/new-site', 'Add Site', MapPinPlus)],
+    items: [page('/data/upload-csv', 'Uptime Data Upload', Sheet)],
   },
   { kind: 'group', id: 'csv-arrival', label: 'Data Arrival & Follow-up', icon: Inbox, items: [page('/daily-ingestion', 'CSV Arrival Tracking', Inbox)] },
   { kind: 'section', heading: 'Administration', items: [{ ...page('/admin/users', 'Users & Roles', UserCog), isActive: (p) => p === '/admin/users' || p.startsWith('/admin/users/') },

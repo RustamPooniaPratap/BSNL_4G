@@ -15,7 +15,7 @@ from openpyxl import load_workbook
 from apps.rca.models import RcaEvent, RcaImportBatch, RcaRecord, RcaReport, RcaReportingCycle
 from apps.accounts.roles import set_rca_consolidated
 from tests.auth_helpers import portal_user
-from tests.test_rca import RcaTestCase, uptime_sites, workbook
+from tests.test_rca import RcaTestCase, active_scope, uptime_sites, workbook
 
 DAY = datetime(2026, 10, 21)
 OD = [
@@ -107,7 +107,8 @@ class NocLeadUploadTests(UploadTestCase):
         self.assertEqual([b['id'] for b in mine], [result['id']])
         book = self.sheets(self.client.get(reverse('rca-import-workbook', args=[result['id']])))
         self.assertEqual(book.sheetnames, ['Report', 'Coverage', 'Uploads', 'Summary', 'RCA Master'])
-        self.assertEqual(book['Report']['A2'].value, 'PARTIAL — EXPECTED SCOPE NOT CONFIGURED')
+        # The Organization's active units are expected from the start; the other circles' data is still awaited.
+        self.assertEqual(book['Report']['A2'].value, 'PARTIAL — AWAITING DATA')
         # The register shows the accepted records to every portal user.
         self.client.force_login(self.ci)
         self.assertEqual(self.client.get(reverse('rca-records')).json()['count'], 4)
@@ -257,17 +258,11 @@ class DailyHistoryTests(UploadTestCase):
 
     def test_the_workbook_is_checked_against_the_expected_daily_scope_and_the_admin_sees_daily_status(self):
         self.imported(WORKBOOK)
-        day1 = self.period()
-        self.as_admin('put', 'rca-cycle-required', [day1.pk], {'units': SCOPE})
-        # 22 Oct: the expected scope carries over; the workbook has no LWE Bihar or LWE Odisha rows for 22 Oct.
+        active_scope(SCOPE)
+        # 22 Oct: the Organization's active units are expected; the workbook has no LWE Bihar or LWE Odisha rows for 22 Oct.
         preview = self.upload(WORKBOOK + DAY2_ROWS, 'Daily_22.xlsx', period_start='2026-10-22').json()
         coverage = preview['report']['coverage']
-        self.assertEqual((coverage['source'], coverage['missing']), ('previous period', [['LWE', 'BH'], ['LWE', 'OD']]))
-        # A later period's scope is never used for an earlier date.
-        self.as_admin('post', 'rca-cycles', data={'period_start': '2026-10-25', 'units': [['LWE', 'JH']]})
-        check = self.upload(WORKBOOK + DAY2_ROWS, 'x.xlsx', period_start='2026-10-22').json()
-        self.assertEqual(check['report']['coverage']['expected'], SCOPE)
-        self.client.post(reverse('rca-import-discard', args=[check['id']]))
+        self.assertEqual((coverage['source'], coverage['expected'], coverage['missing']), ('organization', SCOPE, [['LWE', 'BH'], ['LWE', 'OD']]))
         self.commit(preview['id'])
         bad = workbook(Path(self.tmp.name) / 'bad.xlsx', rows=OD, headers=['Date', 'Project'])
         self.client.post(reverse('rca-import-preview'), {'file': SimpleUploadedFile('bad.xlsx', bad.read_bytes()), **{**DETAILS, 'period_start': '2026-10-22'}})
@@ -286,12 +281,12 @@ class DailyHistoryTests(UploadTestCase):
 
 class CoverageTests(UploadTestCase):
     def test_coverage_comes_only_from_the_configured_scope_and_accepted_records_and_completes_the_final_report(self):
+        active_scope(SCOPE)
         first = self.imported(WORKBOOK)
         period = self.period()
-        self.assertEqual(self.detail()['status']['code'], 'unconfigured')
-        self.assertEqual(self.as_admin('post', 'rca-cycle-finalize', [period.pk]).status_code, 409)
-        data = self.as_admin('put', 'rca-cycle-required', [period.pk], {'units': SCOPE}).json()
+        data = self.detail()  # nothing configured: the Organization's active units are expected
         self.assertEqual((data['status']['code'], data['status']['received'], data['status']['required']), ('partial', 3, 4))
+        self.assertEqual(self.as_admin('post', 'rca-cycle-finalize', [period.pk]).status_code, 409)  # LWE OD still pending
         units = {(u['project'], u['circle']): u for u in data['units']}
         self.assertEqual(units[('LWE', 'OD')]['status_label'], 'Pending — no accepted records')
         self.assertEqual((units[('4G Saturation', 'OD')]['records'], units[('4G Saturation', 'OD')]['source_files']), (2, ['rca.xlsx']))
@@ -327,7 +322,10 @@ class CoverageTests(UploadTestCase):
         response = self.client.get(reverse('rca-import-workbook', args=[result['id']]))
         self.assertEqual(response['Content-Disposition'].split('filename=')[1].strip('"'), 'RCA_Master_2026-10-21_FINAL_v1.xlsx')
         self.sheets(response)  # reads and releases the file (see sheets)
-        self.assertEqual(self.as_admin('put', 'rca-cycle-required', [period.pk], {'units': SCOPE[:1]}).status_code, 409)
+        # The finalized period keeps the scope its final report was built on, whatever the Organization does later.
+        self.assertEqual(sorted(period.required.values_list('project', 'circle')), sorted(tuple(u) for u in SCOPE))
+        active_scope(SCOPE[:1])
+        self.assertEqual([(u['project'], u['circle']) for u in self.detail()['units']], [tuple(u) for u in SCOPE])
         # A correction after finalization makes the period "revised" until an Admin generates v2.
         corrected = [list(r) for r in WORKBOOK]
         corrected[2][10], corrected[2][11] = 'Fiber', 'OFC cut'
@@ -341,8 +339,9 @@ class CoverageTests(UploadTestCase):
         self.assertEqual((again.status_code, again.json()['created']), (200, False))  # no extra version
 
     def test_an_admin_starts_a_period_with_its_expected_scope_and_the_summary_shows_it(self):
+        active_scope(SCOPE)
         started = self.as_admin('post', 'rca-cycles', data={'period_start': '2026-10-01', 'period_end': '2026-10-31',
-                                                            'name': 'October 2026 RCA Report', 'units': SCOPE})
+                                                            'name': 'October 2026 RCA Report'})
         self.assertEqual(started.status_code, 201, started.content)
         self.assertEqual((started.json()['period_label'], started.json()['status']['code']), ('01 Oct 2026 – 31 Oct 2026', 'awaiting'))
         upload = self.imported(WORKBOOK)  # reporting date 21 Oct: filed under the Admin's October period, no new period
@@ -351,7 +350,93 @@ class CoverageTests(UploadTestCase):
         self.assertEqual((summary['kpis']['records'], summary['cycle']['status']['received'], summary['cycle']['status']['required']), (4, 3, 4))
         self.assertEqual(summary['projects'][0]['project'], '4G Saturation')
         listing = self.as_admin('get', 'rca-cycles').json()
-        self.assertEqual(listing['default_units'], SCOPE)  # the next period starts with this scope
+        self.assertNotIn('default_units', listing)  # nothing to configure for the next period
+
+
+class SubmissionTrackerTests(UploadTestCase):
+    """RCA Submissions page data: every period listed, consistent "awaiting confirmation", and a cheap record fingerprint."""
+
+    def test_the_period_list_includes_more_than_the_former_36_daily_periods_and_says_how_many_exist(self):
+        from datetime import date, timedelta
+        for n in range(40):
+            RcaReportingCycle.objects.create(reporting_date=date(2026, 9, 1) + timedelta(days=n))
+        listing = self.as_admin('get', 'rca-cycles').json()
+        self.assertEqual((len(listing['cycles']), listing['total']), (40, 40))
+        self.assertEqual((listing['cycles'][0]['period_start'], listing['cycles'][-1]['period_start']), ('2026-10-10', '2026-09-01'))
+
+    def test_a_preview_for_a_day_inside_a_multi_day_period_shows_it_as_awaiting_confirmation(self):
+        active_scope(SCOPE)
+        started = self.as_admin('post', 'rca-cycles', data={'period_start': '2026-10-01', 'period_end': '2026-10-31'}).json()
+        self.imported(OD)
+        self.assertEqual(self.detail()['status']['code'], 'partial')
+        self.upload(RJ, 'rj.xlsx')  # validated for 21 Oct, inside the October period, not confirmed
+        detail = self.detail()
+        self.assertEqual((detail['id'], detail['status']['code'], detail['status']['upload_awaiting_confirmation']), (started['id'], 'review', True))
+        self.assertEqual(detail['uploads_summary']['awaiting_confirmation'], 1)
+
+    def test_the_stored_fingerprint_matches_the_final_report_fingerprint(self):
+        from apps.rca import cycles
+        self.imported(WORKBOOK)
+        period = self.period()
+        self.assertEqual(cycles.stored_fingerprint(period), (cycles.fingerprint(list(cycles.records(period))), 4))
+
+
+class GeneratedScopeTests(UploadTestCase):
+    """The expected scope is every active project / circle association of the Organization: nothing is configured."""
+
+    def units(self) -> list[tuple[str, str]]:
+        return [(u['project'], u['circle']) for u in self.detail()['units']]
+
+    def test_every_active_association_is_expected_and_missing_units_stay_pending(self):
+        from apps.organization.services import associations
+        self.imported(WORKBOOK)
+        detail = self.detail()
+        self.assertEqual([(u['project'], u['circle']) for u in detail['units']], associations(active_only=True))
+        self.assertEqual(len(detail['units']), 13)  # 4G Saturation: MP, OD, RJ; LWE: ten circles
+        pending = {(u['project'], u['circle']) for u in detail['units'] if u['status'] == 'pending'}
+        self.assertEqual((detail['status']['required'], detail['status']['received'], len(pending)), (13, 3, 10))
+        self.assertIn(('LWE', 'WB'), pending)  # no records and no upload: still listed, as pending
+        self.assertEqual(len(detail['status']['outstanding']), 10)  # the summary uses the same generated scope
+        self.assertEqual(detail['unexpected'], [])
+
+    def test_a_new_project_or_circle_is_tracked_without_configuration(self):
+        from apps.organization.models import Circle, Project, ProjectCircle
+        self.imported(WORKBOOK)
+        project = Project.objects.create(key='Induws Pilot', code='IP', name='Induws Pilot', sort_order=30)
+        ProjectCircle.objects.create(project=project, circle=Circle.objects.get(code='MP'))
+        circle = Circle.objects.create(code='KA', name='Karnataka')
+        ProjectCircle.objects.create(project=Project.objects.get(key='LWE'), circle=circle)
+        units = self.units()
+        self.assertIn(('Induws Pilot', 'MP'), units)
+        self.assertIn(('LWE', 'KA'), units)
+        self.assertEqual(len(units), 15)
+
+    def test_a_deactivated_project_stops_being_expected_and_its_records_stay_listed(self):
+        from apps.organization.models import Project
+        self.imported(WORKBOOK)
+        Project.objects.filter(key='LWE').update(is_active=False)
+        detail = self.detail()
+        self.assertEqual({u['project'] for u in detail['units']}, {'4G Saturation'})
+        self.assertEqual(detail['unexpected'], [{'project': 'LWE', 'circle': 'BH', 'records': 1}])  # history kept, outside the scope
+        self.assertEqual(RcaRecord.objects.filter(project='LWE').count(), 1)
+
+    def test_uploads_are_listed_once_per_period_and_referenced_by_each_unit(self):
+        active_scope(SCOPE)
+        first = self.imported(WORKBOOK)
+        lwe = self.upload(LWE_OD, 'lwe.xlsx', project_scope='LWE').json()  # validated, not confirmed
+        detail = self.detail()
+        ids = {(u['project'], u['circle']): u['upload_ids'] for u in detail['units']}
+        self.assertEqual(ids, {('4G Saturation', 'OD'): [first['id']], ('4G Saturation', 'RJ'): [first['id']],
+                               ('LWE', 'BH'): [first['id']], ('LWE', 'OD'): [lwe['id']]})
+        self.assertEqual(sorted(b['id'] for b in detail['uploads']), sorted([first['id'], lwe['id']]))
+
+    def test_the_manual_scope_endpoint_is_gone_and_starting_a_period_needs_no_units(self):
+        from django.urls import NoReverseMatch
+        with self.assertRaises(NoReverseMatch):
+            reverse('rca-cycle-required', args=[1])
+        started = self.as_admin('post', 'rca-cycles', data={'period_start': '2026-10-01'})
+        self.assertEqual((started.status_code, started.json()['status']['required']), (201, 13))
+        self.assertFalse(RcaReportingCycle.objects.get().required.exists())
 
 
 class PermissionTests(UploadTestCase):

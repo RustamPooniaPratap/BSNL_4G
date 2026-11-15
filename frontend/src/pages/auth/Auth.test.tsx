@@ -151,7 +151,7 @@ describe('roles in the interface', () => {
     await user.click(within(nav).getByRole('button', { name: 'Uptime Data' }));
     const links = within(nav).getAllByRole('link').map((a) => a.textContent);
     expect(links).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', "All KPI's", 'RCA Register', 'Upload Circle RCA',
-      'Data Source & Quality', 'Add Row', 'Uptime Data Upload', 'Add Site']);
+      'Data Source & Quality', 'Uptime Data Upload']);
     expect(within(nav).queryByText('Data Arrival & Follow-up')).not.toBeInTheDocument();
     expect(within(nav).queryByText('Administration')).not.toBeInTheDocument();
   });

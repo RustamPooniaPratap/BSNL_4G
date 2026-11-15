@@ -1,5 +1,5 @@
 /**
- * Client-side checks for the data-management forms (Add Row, Upload CSV, Add New Site).
+ * Client-side checks for uptime data (Site ID formats, dates, numbers and CSV contents).
  *
  * These are preliminary checks only: nothing here is saved, and passing them does not
  * guarantee uniqueness or correctness in the authoritative database.
@@ -9,13 +9,6 @@
 export const MINUTES_PER_DAY = 1440;
 
 /** Confirmation messages: these workflows validate locally and never save. */
-export const VALIDATED_MESSAGES = {
-  row: 'Record validated locally. Backend integration is not enabled yet.',
-  csv: 'CSV validated locally. Backend ingestion is not enabled yet.',
-  site: 'Site details validated locally. Master DB integration is not enabled yet.',
-} as const;
-
-/** Props that tie an input to its Field's error or warning text for screen readers. */
 export const fieldA11y = (id: string, error?: string | null, warning?: string | null) => ({
   id,
   'aria-invalid': error ? true : undefined,
@@ -77,24 +70,6 @@ export function parseNumber(value: string): number | null {
   if (!/^-?\d+(\.\d+)?$/.test(text)) return null;
   return Number(text);
 }
-
-export function outageError(value: string): string | null {
-  if (!value.trim()) return 'Outage minutes are required (enter 0 for no outage).';
-  const minutes = parseNumber(value);
-  if (minutes == null) return 'Enter a number of minutes, e.g. 0, 45 or 1440.';
-  if (minutes < 0) return 'Outage minutes cannot be negative.';
-  return null;
-}
-
-/** Outage above a full day is accepted by the workbook but flagged (business rule pending). */
-export const outageWarning = (value: string) => {
-  const minutes = parseNumber(value);
-  return minutes != null && minutes > MINUTES_PER_DAY
-    ? `More than ${MINUTES_PER_DAY.toLocaleString('en-IN')} minutes (a full day). The workbook flags such values; the rule is still open.`
-    : null;
-};
-
-// --- CSV ---------------------------------------------------------------------------------
 
 export interface ParsedCsv {
   headers: string[];
@@ -364,15 +339,6 @@ function summariseDates(expected: string | null, column: string | null, detected
     unreadable ? `${unreadable} row${unreadable === 1 ? '' : 's'} with an unreadable date` : null,
   ].filter(Boolean);
   return { ...base, status: 'failed', message: `Expected ${expected} on every row; found ${parts.join(', ')}.` };
-}
-
-/** Link to the Add New Site form, pre-filled from a daily record. */
-export function newSiteLink(siteId: string, reportType?: string, circle?: string) {
-  const query = new URLSearchParams();
-  if (siteId) query.set('site_id', normaliseSiteId(siteId));
-  if (reportType) query.set('report_type', reportType);
-  if (circle) query.set('circle', circle);
-  return `/data/new-site?${query}`;
 }
 
 export const formatBytes = (bytes: number) =>

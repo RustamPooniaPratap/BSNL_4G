@@ -3,10 +3,13 @@
 A period is a reporting date or a date range; periods never overlap. The NOC Lead uploads the consolidated RCA
 workbook for a period; the first accepted upload creates the period if an Admin has not started it already.
 
-Coverage is computed only from evidence: an Admin configures the project / circle units the period is expected
-to cover, and a unit counts as received when accepted RCA records of that project and circle exist in the
-period. A successful upload alone proves nothing about a circle that has no rows in it. Without a configured
-scope the period reports "expected scope not configured" and its report stays partial.
+Expected scope is generated, never configured: every active project / circle association of the Organization
+(an active project, an active circle and an active association), so a new project or circle is tracked as soon as
+it is associated and a deactivated one stops being expected. A finalized period keeps the scope its first final
+report was built on (stored with it), so a later Organization change never rewrites a finalized report. A unit counts
+as received when accepted RCA records of that project and circle exist in the period. A successful upload alone proves
+nothing about a circle that has no rows in it. With no active association at all the period reports "expected scope
+not configured" and its report stays partial.
 
 Two facts per expected unit, never derived from each other:
 - RCA data availability ("received" / "pending"): accepted records of the project and circle exist in the period,
@@ -80,15 +83,7 @@ def period_cycle(start: date, end: date, *, create: bool = False, name: str = ''
                          f'{f" ({other.name})" if other.name else ""}. Use that period or dates that do not overlap it.', 409)
     if exact is not None or not create:
         return exact
-    cycle = RcaReportingCycle.objects.create(reporting_date=start, period_end=end if end != start else None, name=name, created_by=user)
-    # The expected scope carries over from the previous period; a first period starts unconfigured (an Admin sets it).
-    # Units no longer active in the Organization (association, project or circle deactivated) are not carried over.
-    previous = RcaReportingCycle.objects.exclude(pk=cycle.pk).filter(reporting_date__lt=start).order_by('-reporting_date').first()
-    if previous is not None:
-        from apps.organization.services import associations
-        active = set(associations(active_only=True))
-        set_required(cycle, [u for u in previous.required.values_list('project', 'circle') if u in active])
-    return cycle
+    return RcaReportingCycle.objects.create(reporting_date=start, period_end=end if end != start else None, name=name, created_by=user)
 
 
 def containing_cycle(day: date) -> RcaReportingCycle | None:
@@ -102,64 +97,71 @@ def cycle_for_date(day: date, *, user=None, name: str = '') -> RcaReportingCycle
     return containing or period_cycle(day, day, create=True, name=name, user=user, lock=True)
 
 
-def available_units() -> list[tuple[str, str]]:
-    """Technology / circle units of the site master's dashboard-scope sites (offered when configuring the expected scope)."""
-    from apps.sitedata.models import Site
-    return sorted(set(Site.objects.filter(reporting_scope=Site.Scope.DASHBOARD).order_by()
-                      .values_list('technology', 'circle').distinct()))
+def expected_units(cycle: RcaReportingCycle | None = None) -> list[tuple[str, str]]:
+    """The (project, circle) units a period is expected to cover.
 
-
-def default_units(before: date | None = None) -> list[tuple[str, str]]:
-    """A new period starts with the expected scope of the latest period (before ``before``, if given); none before the first."""
-    periods = RcaReportingCycle.objects.filter(reporting_date__lt=before) if before else RcaReportingCycle.objects.all()
-    previous = periods.order_by('-reporting_date').first()
-    return list(previous.required.values_list('project', 'circle')) if previous is not None else []
-
-
-def validate_units(raw) -> list[tuple[str, str]]:
-    """Expected units must be active project/circle associations of the Organization."""
+    A finalized period: the scope stored when its first final report was generated (or, for a report generated before
+    the scope was stored with it, the units that report lists). Any other period, or no period yet: every active
+    project / circle association of the Organization, in the Organization's order (project, then circle).
+    """
+    if cycle is not None and cycle.pk and cycle.reports.exists():
+        frozen = list(cycle.required.values_list('project', 'circle'))
+        if frozen:
+            return frozen
+        first = cycle.reports.order_by('version').first()
+        return [(u['project'], u['circle']) for u in first.submissions or []]
     from apps.organization.services import associations
-    known = set(associations(active_only=True))
-    units = []
-    for item in raw or []:
-        if not isinstance(item, (list, tuple)) or len(item) != 2:
-            raise CycleError('Each expected unit is a [project, circle] pair.')
-        project, circle = str(item[0]), str(item[1]).upper()
-        if (project, circle) not in known:
-            raise CycleError(f'"{project} / {circle}" is not an active project and circle of the Organization.')
-        units.append((project, circle))
-    return sorted(set(units))
+    return associations(active_only=True)
 
 
-def set_required(cycle: RcaReportingCycle, units: list[tuple[str, str]]) -> None:
-    if cycle.reports.exists():
-        raise CycleError('The final report has been generated: the expected scope of this period is fixed.', 409)
-    with transaction.atomic():
-        cycle.required.all().delete()
-        RcaRequiredSubmission.objects.bulk_create([RcaRequiredSubmission(cycle=cycle, project=p, circle=c) for p, c in units])
+def _freeze_scope(cycle: RcaReportingCycle, units: list[dict]) -> None:
+    """Stores the scope of the first final report with the period (it never changes afterwards)."""
+    cycle.required.all().delete()  # rows of a former manual configuration, never used for an open period
+    RcaRequiredSubmission.objects.bulk_create([RcaRequiredSubmission(cycle=cycle, project=u['project'], circle=u['circle']) for u in units])
 
 
 # --- Records, coverage and status ----------------------------------------------------------------
 
 def records(cycle: RcaReportingCycle):
     """The canonical accepted records of the period: every stored (not withdrawn) RCA record with a date in it."""
+    # The batch's parsed rows and validation report (large JSON, up to the whole workbook) are never read from a record:
+    # loading them once per record made a daily period take close to a minute.
     return services.with_category(RcaRecord.objects.filter(reporting_date__range=(cycle.reporting_date, cycle.end))) \
-        .select_related('batch').order_by('reporting_date', 'project', 'circle', 'site_key', 'id')
+        .select_related('batch').defer(*BATCH_PAYLOAD) \
+        .order_by('reporting_date', 'project', 'circle', 'site_key', 'id')
+
+
+# Large JSON columns of an upload, needed only to preview or commit it.
+BATCH_PAYLOAD = ('batch__rows', 'batch__report')
+_FINGERPRINT_FIELDS = ('pk', 'source', 'reporting_date', 'project', 'site_key', *SOURCE_FIELDS)
+
+
+def _digest(rows) -> str:
+    return hashlib.sha256(json.dumps(sorted(rows, key=lambda x: x[0]), default=str).encode()).hexdigest()
 
 
 def fingerprint(recs) -> str:
     """Changes whenever a record is added, withdrawn or has a source value changed."""
-    rows = [[r.pk, r.source, r.reporting_date.isoformat(), r.project, r.site_key, *[getattr(r, f) for f in SOURCE_FIELDS]] for r in recs]
-    return hashlib.sha256(json.dumps(sorted(rows, key=lambda x: x[0]), default=str).encode()).hexdigest()
+    return _digest([[r.pk, r.source, r.reporting_date.isoformat(), r.project, r.site_key, *[getattr(r, f) for f in SOURCE_FIELDS]] for r in recs])
+
+
+def stored_fingerprint(cycle: RcaReportingCycle) -> tuple[str, int]:
+    """(fingerprint, record count) of the period's accepted records, read as plain values: the same digest as
+    ``fingerprint(records(cycle))`` without building a model instance per record."""
+    rows = [[r[0], r[1], r[2].isoformat(), *r[3:]] for r in RcaRecord.objects.filter(
+        reporting_date__range=(cycle.reporting_date, cycle.end)).order_by().values_list(*_FINGERPRINT_FIELDS)]
+    return _digest(rows), len(rows)
 
 
 def uploads(cycle: RcaReportingCycle):
     """Every upload for the period: accepted ones, and those still awaiting confirmation, rejected or failed."""
     ids = RcaImportBatch.objects.filter(
         Q(cycle=cycle) | Q(period_start=cycle.reporting_date, period_end=cycle.end)
-        # a cumulative workbook of a later date that added or corrected records of this period
-        | Q(records__reporting_date__range=(cycle.reporting_date, cycle.end))).values('pk')
-    return RcaImportBatch.objects.select_related('imported_by').filter(pk__in=ids).order_by('-uploaded_at', '-id')
+        # a cumulative workbook of a later date that added or corrected records of this period (withdrawn ones included)
+        | Q(pk__in=RcaRecord.all_objects.filter(reporting_date__range=(cycle.reporting_date, cycle.end)).order_by().values('batch_id'))
+    ).values('pk')
+    # The parsed rows held between preview and commit are not needed to describe an upload.
+    return RcaImportBatch.objects.select_related('imported_by').defer('rows').filter(pk__in=ids).order_by('-uploaded_at', '-id')
 
 
 def batch_json(batch: RcaImportBatch, *, full: bool = False) -> dict:
@@ -194,8 +196,17 @@ def batch_json(batch: RcaImportBatch, *, full: bool = False) -> dict:
     return data
 
 
-def unit_states(cycle: RcaReportingCycle) -> list[dict]:
-    """Each expected unit with the evidence: accepted records of that project and circle in the period, and their files."""
+def _covers(batch: RcaImportBatch, project: str, circle: str) -> bool:
+    """The upload is for this unit: a circle upload of it, or a workbook with valid rows of it."""
+    if batch.upload_type == RcaImportBatch.UploadType.CIRCLE and (batch.project_scope, batch.circle) == (project, circle):
+        return True
+    return [project, circle] in (batch.units or [])
+
+
+def unit_states(cycle: RcaReportingCycle, batches: list[RcaImportBatch] | None = None) -> list[dict]:
+    """Each expected unit with the evidence: accepted records of that project and circle in the period, their files, and
+    the period's uploads for the unit (``upload_ids``, latest first; the uploads themselves are listed once per period)."""
+    batches = list(uploads(cycle)) if batches is None else batches
     recs = RcaRecord.objects.filter(reporting_date__range=(cycle.reporting_date, cycle.end)).order_by()
     stored = {(r['project'], r['circle']): r for r in recs.values('project', 'circle').annotate(records=Count('id'), minutes=Sum('outage_minutes'))}
     sources: dict[tuple, set] = {}
@@ -203,18 +214,19 @@ def unit_states(cycle: RcaReportingCycle) -> list[dict]:
         sources.setdefault((p, c), set()).add(f or 'Recorded in the portal')
     submitted = circle_submissions(cycle)
     states = []
-    for unit in cycle.required.all():
-        row = stored.get((unit.project, unit.circle), {})
+    for project, circle in expected_units(cycle):
+        row = stored.get((project, circle), {})
         status = 'received' if row.get('records') else 'pending'
-        files = submitted.get((unit.project, unit.circle), [])
+        files = submitted.get((project, circle), [])
         submission = 'received' if files else 'not_received'
         latest = files[0] if files else None
-        states.append({'project': unit.project, 'circle': unit.circle, 'status': status, 'status_label': UNIT_LABELS[status],
+        states.append({'project': project, 'circle': circle, 'status': status, 'status_label': UNIT_LABELS[status],
                        'data_label': DATA_LABELS[status],
                        'records': row.get('records', 0), 'outage_minutes': services._round(row.get('minutes')),
-                       'source_files': sorted(sources.get((unit.project, unit.circle), ())),
+                       'source_files': sorted(sources.get((project, circle), ())),
                        'submission_status': submission, 'submission_label': SUBMISSION_LABELS[submission],
-                       'submission': latest, 'submissions': len(files)})
+                       'submission': latest, 'submissions': len(files),
+                       'upload_ids': [b.pk for b in batches if _covers(b, project, circle)]})
     return states
 
 
@@ -234,13 +246,14 @@ def circle_submissions(cycle: RcaReportingCycle) -> dict[tuple[str, str], list[d
 
 def status(cycle: RcaReportingCycle, *, units: list[dict] | None = None, current: str | None = None) -> dict:
     units = unit_states(cycle) if units is None else units
-    current = fingerprint(records(cycle)) if current is None else current
+    current = stored_fingerprint(cycle)[0] if current is None else current
     latest = cycle.reports.first()
     required, received = len(units), sum(1 for u in units if u['status'] == 'received')
     submitted = sum(1 for u in units if u.get('submission_status') == 'received')
     complete = bool(required) and received == required
-    waiting = RcaImportBatch.objects.filter(period_start=cycle.reporting_date, period_end=cycle.end,
-                                            status=RcaImportBatch.Status.PREVIEWED).exists()
+    # The same uploads the period lists and counts as awaiting confirmation (uploads_summary): a preview linked to the
+    # period, or of exactly its dates. Matching the dates alone missed a day's preview inside a multi-day period.
+    waiting = uploads(cycle).filter(status=RcaImportBatch.Status.PREVIEWED).exists()
     if latest is not None:
         code = 'final' if latest.records_checksum == current else 'revised'
     elif not required:
@@ -266,20 +279,20 @@ def status(cycle: RcaReportingCycle, *, units: list[dict] | None = None, current
 
 
 def cycle_json(cycle: RcaReportingCycle, *, full: bool = False, site_scope: str = 'all') -> dict:
-    units = unit_states(cycle)
-    recs = list(records(cycle))
+    batches = list(uploads(cycle))  # read once: per-unit uploads, the upload summary and the period's upload list
+    units = unit_states(cycle, batches)
+    current, count = stored_fingerprint(cycle)
     data = {
         'id': cycle.pk, 'name': cycle.name or None, 'period_start': cycle.reporting_date.isoformat(), 'period_end': cycle.end.isoformat(),
         'period_label': period_label(cycle.reporting_date, cycle.end), 'notes': cycle.notes or None,
         'created_by': cycle.created_by.get_username() if cycle.created_by else None, 'created_at': cycle.created_at.isoformat(),
-        'status': status(cycle, units=units, current=fingerprint(recs)), 'records': len(recs),
-        'uploads_summary': _uploads_summary(cycle),
+        'status': status(cycle, units=units, current=current), 'records': count,
+        'uploads_summary': _uploads_summary(batches),
     }
     if full:
         expected = {(u['project'], u['circle']) for u in units}
-        represented: dict[tuple, int] = {}
-        for r in recs:
-            represented[(r.project, r.circle)] = represented.get((r.project, r.circle), 0) + 1
+        represented = {(r['project'], r['circle']): r['n'] for r in RcaRecord.objects.filter(
+            reporting_date__range=(cycle.reporting_date, cycle.end)).order_by().values('project', 'circle').annotate(n=Count('id'))}
         from . import sitescope
         if site_scope != sitescope.ALL:
             # Site Scope: each unit's records and outage minutes of those sites only. The unit's status (data received
@@ -295,17 +308,17 @@ def cycle_json(cycle: RcaReportingCycle, *, full: bool = False, site_scope: str 
             'units': units,
             # Data present for projects / circles the period is not expected to cover (shown, never counted as coverage).
             'unexpected': [{'project': p, 'circle': c, 'records': n} for (p, c), n in sorted(represented.items()) if (p, c) not in expected],
-            'uploads': [batch_json(b) for b in uploads(cycle)],
+            'uploads': [batch_json(b) for b in batches],
             'reports': [report_json(r) for r in cycle.reports.select_related('generated_by')],
-            'available_units': [list(u) for u in available_units()],
+            # The scope is fixed once a final report exists; until then it follows the Organization.
             'locked': cycle.reports.exists(),
         })
     return data
 
 
-def _uploads_summary(cycle: RcaReportingCycle) -> dict:
+def _uploads_summary(period_uploads: list[RcaImportBatch]) -> dict:
     """Upload outcomes for the period (kept apart from completeness): imported, awaiting confirmation, failed, corrections."""
-    batches = [b for b in uploads(cycle) if b.status != RcaImportBatch.Status.DISCARDED]  # discarded before import: not counted
+    batches = [b for b in period_uploads if b.status != RcaImportBatch.Status.DISCARDED]  # discarded before import: not counted
     return {
         'total': len(batches),
         'imported': sum(1 for b in batches if b.status == RcaImportBatch.Status.COMMITTED),
@@ -370,7 +383,7 @@ def generate_final(cycle: RcaReportingCycle, *, user=None, automatic: bool = Fal
         state = status(cycle, units=units, current=current)
         if not state['complete']:
             if not state['required']:
-                raise CycleError('Configure the expected projects and circles of this period before generating the final report.', 409)
+                raise CycleError('No active project and circle is associated in the Organization, so nothing is expected yet.', 409)
             names = ', '.join(f'{u["project"]} / {u["circle"]}' for u in state['outstanding'])
             raise CycleError(f'The final report needs accepted data for every expected project and circle. Pending: {names}.', 409)
         latest = cycle.reports.select_for_update().first()
@@ -392,6 +405,8 @@ def generate_final(cycle: RcaReportingCycle, *, user=None, automatic: bool = Fal
         if latest is not None:
             latest.superseded_at = now
             latest.save(update_fields=['superseded_at'])
+        else:
+            _freeze_scope(cycle, units)
         report = RcaReport.objects.create(
             cycle=cycle, version=version, generated_by=user, automatic=automatic, filename=filename, stored_path=str(path),
             checksum_sha256=hashlib.sha256(content).hexdigest(), records_checksum=current, record_count=len(recs),

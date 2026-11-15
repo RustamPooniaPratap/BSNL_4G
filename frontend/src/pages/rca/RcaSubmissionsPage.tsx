@@ -1,130 +1,538 @@
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Download, FileCheck2 } from 'lucide-react';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  CalendarPlus, ChevronRight, CircleCheck, ClipboardList, Database, FileSearch, FileUp, FileX, Hourglass, Info, RefreshCw,
+  RotateCcw, Search, Upload, UploadCloud,
+} from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 import { Field, SelectField } from '../../components/data/DataEntry';
 import { Field as FilterField, FilterCard } from '../../components/dashboard/FilterBar';
 import { CycleBadge, SiteScopeField } from '../../components/rca/RcaShared';
+import { EmptyRows, Pager, SortHead, SummaryTiles, type Sort, type Tile } from '../../components/tracking/TrackerParts';
 import { PageHeading } from '../../context/pageHeader';
 import { useApiQuery } from '../../hooks/useApiQuery';
-import { formatDateTime, formatNumber } from '../../lib/format';
+import { formatDate, formatDateTime, formatNumber } from '../../lib/format';
+import { pageOf } from '../../lib/paging';
 import { formatMin, periodText, shortProject } from '../../lib/rca';
-import {
-  fetchRcaCycle, fetchRcaCycles, fetchRcaImports, finalizeRcaCycle, rcaCycleWorkbookUrl, rcaIssuesUrl, rcaReportFileUrl, setRcaRequired, startRcaCycle,
-} from '../../services/api';
-import type { RcaCycle, RcaCycleDetail, RcaImportBatch } from '../../types/rca';
+import { fetchRcaCycle, fetchRcaCycles, fetchRcaImports, rcaIssuesUrl, rcaReportFileUrl, startRcaCycle } from '../../services/api';
+import type { RcaCycle, RcaCycleDetail, RcaImportBatch, RcaUnitState } from '../../types/rca';
 
-type Unit = [string, string];
-const unitKey = ([p, c]: Unit) => `${p}|${c}`;
+const keyOf = (u: RcaUnitState) => `${u.project}|${u.circle}`;
+
+type CardFilter = 'all' | 'received' | 'pending' | 'submitted' | 'not_submitted' | 'uploaded' | 'awaiting';
+type UnitSort = 'circle' | 'project' | 'data' | 'submission' | 'upload' | 'records' | 'minutes';
+interface Filters {
+  search: string; circle: string; project: string; data: '' | 'received' | 'pending'; submission: '' | 'received' | 'not_received'; card: CardFilter;
+}
+const DEFAULT_FILTERS: Filters = { search: '', circle: '', project: '', data: '', submission: '', card: 'all' };
+const PAGE_SIZE = 20;
+const PERIOD_PAGE_SIZE = 14;
+
+// Same colour conventions as the Data Arrival & Follow-up tracker (data status, upload status and project badges).
+const DATA_STYLE: Record<RcaUnitState['status'], string> = {
+  received: 'border-emerald-300 bg-emerald-50 text-emerald-800',
+  pending: 'border-slate-300 bg-slate-50 text-slate-700',
+};
+const UPLOAD_STYLE: Record<RcaImportBatch['status'], string> = {
+  committed: 'border-emerald-300 text-emerald-800',
+  previewed: 'border-sky-300 text-sky-800',
+  failed: 'border-red-300 text-red-800',
+  rejected: 'border-red-300 text-red-800',
+  discarded: 'border-slate-300 text-slate-600',
+};
+const NO_UPLOAD = 'border-dashed border-slate-300 text-muted-foreground';
+const submitted = (u: RcaUnitState) => u.submission_status === 'received';
+
+/** The period's uploads of a unit (latest first), from the ids the API lists per unit. */
+const unitUploads = (u: RcaUnitState, byId: Map<number, RcaImportBatch>) =>
+  (u.upload_ids ?? []).map((id) => byId.get(id)).filter((b): b is RcaImportBatch => b !== undefined);
+
+function matchesUnit(u: RcaUnitState, f: Filters, byId: Map<number, RcaImportBatch>) {
+  if (f.circle && u.circle !== f.circle) return false;
+  if (f.project && u.project !== f.project) return false;
+  if (f.data && u.status !== f.data) return false;
+  if (f.submission && (u.submission_status ?? 'not_received') !== f.submission) return false;
+  const q = f.search.trim().toLowerCase();
+  if (!q) return true;
+  return [u.circle, u.project, shortProject(u.project), ...u.source_files, u.submission?.file, u.submission?.uploaded_by,
+    ...unitUploads(u, byId).flatMap((b) => [b.file, b.imported_by])].some((v) => v && v.toLowerCase().includes(q));
+}
+
+function cardUnit(u: RcaUnitState, card: CardFilter, byId: Map<number, RcaImportBatch>) {
+  switch (card) {
+    case 'received': return u.status === 'received';
+    case 'pending': return u.status === 'pending';
+    case 'submitted': return submitted(u);
+    case 'not_submitted': return !submitted(u);
+    case 'uploaded': return (u.upload_ids ?? []).length > 0;
+    case 'awaiting': return unitUploads(u, byId).some((b) => b.status === 'previewed');
+    default: return true;
+  }
+}
 
 /**
- * RCA Submissions (Admin): every upload and every reporting period. For a period, the expected projects / circles
- * (configured here) are compared with the accepted records: a unit is received only when accepted records of that
- * project and circle exist. Upload status is shown apart from period completeness. Every figure comes from the API.
+ * RCA Submissions (Admin), laid out as the Data Arrival & Follow-up tracker. For a reporting period: every expected project
+ * / circle (generated by the API from the Organization's active projects and circles; fixed once a final report exists)
+ * with its circle file, its accepted RCA data and its latest upload; a row opens every upload and source file of the unit.
+ * A unit has data only when accepted records of that project and circle exist; upload status is shown apart from
+ * completeness. Every figure comes from the API.
  */
 export function RcaSubmissionsPage() {
   const [params, setParams] = useSearchParams();
   const [version, setVersion] = useState(0);
   const list = useApiQuery(`rca-cycles-${version}`, (signal) => fetchRcaCycles(signal));
-  const all = useApiQuery(`rca-all-uploads-${version}`, (signal) => fetchRcaImports(signal, true));
   const selected = Number(params.get('cycle')) || list.data?.cycles[0]?.id || null;
   const siteScope = params.get('site_scope') ?? '';
   const detail = useApiQuery(selected ? `rca-cycle-${selected}-${version}-${siteScope}` : null, (signal) => fetchRcaCycle(selected!, signal, siteScope));
   const [starting, setStarting] = useState(false);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [sort, setSort] = useState<Sort<UnitSort>>({ key: 'data', desc: true });
+  const [page, setPage] = useState(1);
+  const [panel, setPanel] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const refresh = () => setVersion((v) => v + 1);
-  const choose = (id: number) => setParams((cur) => { const next = new URLSearchParams(cur); next.set('cycle', String(id)); return next; }, { replace: true });
+  const setFilter = (changes: Partial<Filters>) => { setFilters((f) => ({ ...f, ...changes })); setPage(1); };
+  const choose = (id: number) => {
+    setParams((cur) => { const next = new URLSearchParams(cur); next.set('cycle', String(id)); return next; }, { replace: true });
+    setPage(1); setPanel(null);
+  };
+  // Never show another period's figures while the selected one loads.
   const cycle = detail.data && detail.data.id === selected ? detail.data : null;
+  const loading = list.loading || detail.loading;
+
+  const units = useMemo(() => cycle?.units ?? [], [cycle]);
+  const byId = useMemo(() => new Map((cycle?.uploads ?? []).map((b) => [b.id, b])), [cycle]);
+  const filtered = useMemo(() => units.filter((u) => matchesUnit(u, filters, byId)), [units, filters, byId]);
+  const rows = useMemo(() => {
+    const value = (u: RcaUnitState): string | number => {
+      switch (sort.key) {
+        case 'circle': return u.circle;
+        case 'project': return u.project;
+        case 'submission': return submitted(u) ? 1 : 0;
+        case 'upload': return unitUploads(u, byId)[0]?.uploaded_at ?? '';
+        case 'records': return u.records_in_scope ?? u.records;
+        case 'minutes': return (u.records_in_scope === undefined ? u.outage_minutes : u.outage_minutes_in_scope) ?? -1;
+        default: return u.status === 'pending' ? 1 : 0;  // descending (the default): pending first
+      }
+    };
+    return filtered.filter((u) => cardUnit(u, filters.card, byId)).sort((a, b) => {
+      const [x, y] = [value(a), value(b)];
+      const order = x < y ? -1 : x > y ? 1 : 0;
+      return (sort.desc ? -order : order) || a.project.localeCompare(b.project) || a.circle.localeCompare(b.circle);
+    });
+  }, [filtered, filters.card, sort, byId]);
+
+  const total = list.data ? list.data.total ?? list.data.cycles.length : 0;
+  const periodHeading = cycle
+    ? `${cycle.period_start === cycle.period_end ? `${new Date(`${cycle.period_start}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' })}, ` : ''}${cycle.period_label}`
+    : list.data ? `${formatNumber(total)} reporting period${total === 1 ? '' : 's'}` : 'Loading';
+  const heading = <PageHeading title="RCA Submissions" subtitle={`${periodHeading} · circle RCA files, accepted RCA data and uploads of every active project and circle`} />;
+
+  if (list.error && !list.data) {
+    return (
+      <div className="space-y-3">
+        {heading}
+        <LoadError title="The reporting periods could not be loaded" error={list.error} onRetry={refresh} />
+      </div>
+    );
+  }
+  if (!list.data) {
+    return (
+      <div className="space-y-3">
+        {heading}
+        <Skeleton className="h-96 w-full" aria-label="Loading RCA submissions" />
+      </div>
+    );
+  }
+
+  const periods = list.data.cycles;
+  const circles = [...new Set(units.map((u) => u.circle))].sort();
+  const projects = [...new Set(units.map((u) => u.project))];
+  const isDefault = JSON.stringify(filters) === JSON.stringify(DEFAULT_FILTERS);
+  const unitPage = pageOf(rows, page, PAGE_SIZE);
+  const open = panel ? units.find((u) => keyOf(u) === panel) : undefined;
+  const count = (card: CardFilter) => filtered.filter((u) => cardUnit(u, card, byId)).length;
+  const tiles: Tile<CardFilter>[] = [
+    { id: 'all', label: 'Expected circles', value: filtered.length, icon: <ClipboardList /> },
+    { id: 'received', label: 'RCA data available', value: count('received'), icon: <CircleCheck />, tone: 'text-emerald-700' },
+    { id: 'pending', label: 'No RCA data', value: count('pending'), icon: <Database />, tone: count('pending') ? 'text-amber-700' : undefined },
+    { id: 'submitted', label: 'Circle files received', value: count('submitted'), icon: <FileUp /> },
+    { id: 'not_submitted', label: 'Circle files not received', value: count('not_submitted'), icon: <FileX /> },
+    { id: 'uploaded', label: 'Uploads recorded', value: count('uploaded'), icon: <UploadCloud /> },
+    { id: 'awaiting', label: 'Awaiting confirmation', value: count('awaiting'), icon: <Hourglass />, tone: count('awaiting') ? 'text-amber-700' : undefined },
+  ];
 
   return (
     <div className="space-y-3">
-      <PageHeading title="RCA Submissions"
-        subtitle={`${list.data ? `${list.data.cycles.length} reporting period${list.data.cycles.length === 1 ? '' : 's'}` : 'Loading'} · circle submissions (confirmed circle files) are tracked apart from RCA data availability`} />
-      {list.error && <Alert variant="destructive"><AlertDescription>{list.error.message}</AlertDescription></Alert>}
-      <FilterCard label="Reporting period"
-        footer={list.data && !list.data.cycles.length && !starting
-          ? 'No reporting period yet. The first accepted upload creates its period; you can also start one here with its expected scope.' : undefined}
+      {heading}
+      <FilterCard label="Tracking filters"
+        footer={!periods.length && !starting
+          ? 'No reporting period yet. The first accepted upload creates its period; you can also start one here.' : undefined}
         actions={(
           <>
-            <Button asChild variant="outline" className="h-9"><Link to="/rca/import">Upload RCA data</Link></Button>
-            <Button type="button" className="h-9" variant={starting ? 'ghost' : 'outline'} onClick={() => setStarting((s) => !s)}>{starting ? 'Cancel' : 'Start a reporting period'}</Button>
+            <Button asChild variant="outline" className="h-9"><Link to="/rca/import"><Upload /> Upload RCA data</Link></Button>
+            <Button type="button" className="h-9" variant={starting ? 'ghost' : 'outline'} onClick={() => setStarting((s) => !s)}>
+              {starting ? 'Cancel' : <><CalendarPlus /> Start a reporting period</>}
+            </Button>
+            <Button className="h-9" disabled={loading} onClick={refresh}><RefreshCw className={cn(loading && 'animate-spin')} /> Refresh</Button>
           </>
         )}>
-        {list.data && list.data.cycles.length > 0 && (
-          <FilterField id="rca-cycle" label="Reporting period" className="w-[28rem] max-w-full">
-            <SelectField id="rca-cycle" value={selected ? String(selected) : ''} placeholder="Choose a period" onChange={(v) => choose(Number(v))}
-              options={list.data.cycles.map((c) => ({ value: String(c.id), label: `${c.period_label}${c.name ? ` · ${c.name}` : ''} · ${c.status.label}` }))} />
-          </FilterField>
-        )}
-        {list.data && list.data.cycles.length > 0 && (
-          <SiteScopeField id="rca-cycle-site-scope" value={siteScope}
-            onChange={(v) => setParams((cur) => { const next = new URLSearchParams(cur); if (v) next.set('site_scope', v); else next.delete('site_scope'); return next; }, { replace: true })} />
+        {periods.length > 0 && (
+          <>
+            <FilterField id="rca-cycle" label="Reporting period" className="w-72 max-w-full">
+              <SelectField id="rca-cycle" value={selected ? String(selected) : ''} placeholder="Choose a period" onChange={(v) => choose(Number(v))}
+                options={periods.map((c) => ({ value: String(c.id), label: `${c.period_label}${c.name ? ` · ${c.name}` : ''} · ${c.status.label}` }))} />
+            </FilterField>
+            <FilterField id="rca-track-search" label="Search" className="w-56">
+              <div className="relative">
+                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                <Input id="rca-track-search" type="search" value={filters.search} maxLength={80} className="h-9 pl-8"
+                  placeholder="Circle, project, file, uploader" onChange={(e) => setFilter({ search: e.target.value })} />
+              </div>
+            </FilterField>
+            <FilterField id="rca-track-circle" label="Circle / State" className="w-36">
+              <SelectField id="rca-track-circle" value={filters.circle || 'all'} placeholder="All" onChange={(v) => setFilter({ circle: v === 'all' ? '' : v })}
+                options={[{ value: 'all', label: 'All circles' }, ...circles.map((c) => ({ value: c, label: c }))]} />
+            </FilterField>
+            <FilterField id="rca-track-project" label="Project" className="w-28">
+              <SelectField id="rca-track-project" value={filters.project || 'all'} placeholder="All" onChange={(v) => setFilter({ project: v === 'all' ? '' : v })}
+                options={[{ value: 'all', label: 'All' }, ...projects.map((p) => ({ value: p, label: shortProject(p) }))]} />
+            </FilterField>
+            <FilterField id="rca-track-data" label="RCA data" className="w-36">
+              <SelectField id="rca-track-data" value={filters.data || 'all'} placeholder="All" onChange={(v) => setFilter({ data: v === 'all' ? '' : (v as Filters['data']) })}
+                options={[{ value: 'all', label: 'All' }, { value: 'received', label: 'Data available' }, { value: 'pending', label: 'No data' }]} />
+            </FilterField>
+            <FilterField id="rca-track-submission" label="Circle submission" className="w-36">
+              <SelectField id="rca-track-submission" value={filters.submission || 'all'} placeholder="All"
+                onChange={(v) => setFilter({ submission: v === 'all' ? '' : (v as Filters['submission']) })}
+                options={[{ value: 'all', label: 'All' }, { value: 'received', label: 'Received' }, { value: 'not_received', label: 'Not received' }]} />
+            </FilterField>
+            <SiteScopeField id="rca-cycle-site-scope" value={siteScope}
+              onChange={(v) => setParams((cur) => { const next = new URLSearchParams(cur); if (v) next.set('site_scope', v); else next.delete('site_scope'); return next; }, { replace: true })} />
+            <Button variant="ghost" size="icon" className="size-9" aria-label="Clear filters" title="Clear filters" disabled={isDefault} onClick={() => setFilter(DEFAULT_FILTERS)}>
+              <RotateCcw />
+            </Button>
+          </>
         )}
       </FilterCard>
-      {starting && list.data && (
-        <StartPeriod defaults={list.data.default_units} available={list.data.available_units}
-          onStarted={(created) => { setStarting(false); choose(created.id); refresh(); }} />
+
+      <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
+        <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+        <p>
+          Every active project and circle of the Organization is expected; a finalized period keeps the scope of its final report. Circle submission: a
+          confirmed Upload Circle RCA file of that project, circle and date (consolidated uploads never count). RCA data: accepted records of the project and
+          circle, from any upload; the final report needs data for every expected unit. No deadline is configured, so receipt times are shown without on-time
+          or late. Upload status (validated, imported, failed) is kept apart from completeness.
+        </p>
+      </div>
+      {message && (
+        <Alert className="border-emerald-200 bg-emerald-50/70" role="status">
+          <CircleCheck className="text-emerald-700" />
+          <AlertTitle>{message}</AlertTitle>
+        </Alert>
+      )}
+      {starting && (
+        <StartPeriod onStarted={(created) => { setStarting(false); setMessage(`Reporting period ${created.period_label} started.`); choose(created.id); refresh(); }} />
       )}
 
-      {list.data && list.data.cycles.length > 0 && <DailyStatus cycles={list.data.cycles} selected={selected} onOpen={choose} />}
+      {detail.error && <LoadError title="The reporting period could not be loaded" error={detail.error} onRetry={refresh} />}
+      {selected && !cycle && !detail.error && <Skeleton className="h-72 w-full" aria-label="Loading the reporting period" />}
+      {cycle && (
+        <>
+          <SummaryTiles label="Submission summary" tiles={tiles} active={filters.card} allId="all" onSelect={(card) => setFilter({ card })} />
 
-      {detail.error && <Alert variant="destructive"><AlertDescription>{detail.error.message}</AlertDescription></Alert>}
-      {selected && !cycle && !detail.error && <Skeleton className="h-72 w-full" />}
-      {cycle && <PeriodView key={cycle.id} cycle={cycle} onChanged={refresh} />}
+          <Card aria-label="Expected coverage">
+            <CardHeader>
+              <CardTitle className="text-sm font-semibold">Circle-wise submissions and RCA data · {cycle.period_label}</CardTitle>
+              <CardDescription className="text-xs">
+                {formatNumber(rows.length)} of {formatNumber(units.length)} expected project circles shown{cycle.locked ? ' (scope fixed by the final report)' : ''}.
+                Select a row for its uploads, circle file and source files.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 px-0">
+              {rows.length === 0 ? (
+                <EmptyRows action={units.length > 0 && <Button variant="outline" size="sm" onClick={() => setFilter(DEFAULT_FILTERS)}>Clear filters</Button>}>
+                  {units.length ? 'No circle matches these filters.' : 'No active project and circle is associated in the Organization.'}
+                </EmptyRows>
+              ) : (
+                <div className="overflow-x-auto">
+                  <UnitTable rows={unitPage.shown} byId={byId} cycle={cycle} sort={sort} onOpen={setPanel}
+                    onSort={(key) => setSort((s) => ({ key, desc: s.key === key ? !s.desc : false }))} />
+                </div>
+              )}
+              <Pager page={unitPage.page} pages={unitPage.pages} onPage={setPage} />
+              {cycle.unexpected.length > 0 && (
+                <p className="px-4 text-xs text-muted-foreground">
+                  Also in the accepted data, outside the expected scope: {cycle.unexpected.map((u) => `${u.circle} ${shortProject(u.project)} (${formatNumber(u.records)})`).join(', ')}.
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
-      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="All uploads">
-        <h2 className="text-base font-semibold">All uploads</h2>
-        {all.data ? <UploadTable uploads={all.data.imports} showPeriod empty="No RCA data has been uploaded yet." />
-          : <p className="text-sm text-muted-foreground">{all.error ? all.error.message : 'Loading…'}</p>}
-      </Card>
+          <ReportsCard cycle={cycle} />
+        </>
+      )}
+
+      {periods.length > 0 && <DailyStatus cycles={periods} total={total} selected={selected} onOpen={choose} />}
+
+      <UploadHistory version={version} />
+
+      <Sheet open={open !== undefined} onOpenChange={(o) => { if (!o) setPanel(null); }}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
+          {open && cycle && <UnitDetails u={open} cycle={cycle} uploads={unitUploads(open, byId)} />}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
 
-/** One row per reporting date (or period): completeness from the expected scope, and the upload outcomes beside it. */
-function DailyStatus({ cycles, selected, onOpen }: { cycles: RcaCycle[]; selected: number | null; onOpen: (id: number) => void }) {
+function LoadError({ title, error, onRetry }: { title: string; error: Error; onRetry: () => void }) {
   return (
-    <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Daily reporting status">
-      <h2 className="text-base font-semibold">Daily reporting status</h2>
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>{['Reporting date', 'Report', 'Status', 'Expected data received', 'Pending', 'Imported uploads', 'Validation failed', 'Awaiting confirmation', 'Corrections', 'Last upload', ''].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow>
-          </TableHeader>
-          <TableBody>
-            {cycles.map((c) => {
-              const u = c.uploads_summary;
-              return (
-                <TableRow key={c.id} className={c.id === selected ? 'bg-muted/50' : undefined}>
-                  <TableCell className="font-medium whitespace-nowrap">{c.period_label}</TableCell>
-                  <TableCell className="max-w-44 truncate" title={c.name ?? ''}>{c.name ?? '—'}</TableCell>
-                  <TableCell><CycleBadge code={c.status.code} label={c.status.label} /></TableCell>
-                  <TableCell className="tabular-nums">{c.status.required ? `${c.status.received} of ${c.status.required}` : 'Scope not configured'}</TableCell>
-                  <TableCell className="max-w-56 min-w-40 text-xs whitespace-normal">{c.status.outstanding.map((o) => `${o.circle} ${shortProject(o.project)}`).join(', ') || '—'}</TableCell>
-                  <TableCell className="tabular-nums">{formatNumber(u.imported)}{u.with_rejected_rows ? <span className="text-xs text-destructive"> ({u.with_rejected_rows} with rejected rows)</span> : null}</TableCell>
-                  <TableCell className={`tabular-nums ${u.validation_failed ? 'text-destructive' : ''}`}>{formatNumber(u.validation_failed)}</TableCell>
-                  <TableCell className="tabular-nums">{formatNumber(u.awaiting_confirmation)}</TableCell>
-                  <TableCell className={`tabular-nums ${u.corrections ? 'text-amber-800' : ''}`}>{formatNumber(u.corrections)}</TableCell>
-                  <TableCell className="whitespace-nowrap">{u.last_upload_at ? formatDateTime(u.last_upload_at) : '—'}</TableCell>
-                  <TableCell><Button type="button" size="sm" variant="ghost" onClick={() => onOpen(c.id)} aria-label={`Open ${c.period_label}`}>Open</Button></TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+    <Alert variant="destructive" role="alert">
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription className="space-y-2">
+        <p>{error.message}</p>
+        <Button size="sm" variant="outline" onClick={onRetry}><RefreshCw /> Try again</Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+function ProjectBadge({ project }: { project: string }) {
+  return (
+    <Badge variant="outline" className={cn('font-semibold', project === 'LWE' ? 'border-teal-300 text-teal-800' : 'border-blue-300 text-blue-800')}>
+      {shortProject(project)}
+    </Badge>
+  );
+}
+
+function DataBadge({ u }: { u: RcaUnitState }) {
+  return <Badge variant="outline" className={cn('font-medium', DATA_STYLE[u.status])}>{u.data_label ?? u.status_label}</Badge>;
+}
+
+function SubmissionBadge({ u }: { u: RcaUnitState }) {
+  return (
+    <Badge variant="outline" className={cn('font-medium', submitted(u) ? 'border-emerald-300 text-emerald-800' : NO_UPLOAD)}>
+      {u.submission_label ?? 'Not received'}
+    </Badge>
+  );
+}
+
+function UploadBadge({ b }: { b?: RcaImportBatch }) {
+  if (!b) return <Badge variant="outline" className={cn('font-medium', NO_UPLOAD)}>No upload recorded</Badge>;
+  const rejectedRows = b.status === 'committed' && Number(b.counts.rejected) > 0;
+  return <Badge variant="outline" className={cn('font-medium', rejectedRows ? 'border-amber-300 text-amber-800' : UPLOAD_STYLE[b.status])}>{b.status_label}</Badge>;
+}
+
+const uploadType = (b: RcaImportBatch) =>
+  b.upload_type === 'circle' ? `Circle file · ${b.circle} ${b.project_scope ? shortProject(b.project_scope) : ''}` : b.upload_type === 'consolidated' ? 'Consolidated' : 'Legacy';
+
+const uploadCounts = (b: RcaImportBatch) => {
+  const c = b.counts;
+  const n = (v: number | boolean | undefined) => (typeof v === 'number' ? formatNumber(v) : '—');
+  return b.status === 'committed'
+    ? `${n(c.inserted)} imported · ${n(c.updated)} updated · ${n(c.skipped)} skipped · ${n(c.rejected)} rejected`
+    : `${n(c.valid)} valid · ${n(c.rejected)} rejected`;
+};
+
+const registerLink = (u: RcaUnitState, cycle: RcaCycleDetail) =>
+  `/rca?${new URLSearchParams({ project: u.project, circle: u.circle, date_from: cycle.period_start, date_to: cycle.period_end })}`;
+
+function UnitTable({ rows, byId, cycle, sort, onSort, onOpen }: {
+  rows: RcaUnitState[]; byId: Map<number, RcaImportBatch>; cycle: RcaCycleDetail; sort: Sort<UnitSort>; onSort: (key: UnitSort) => void; onOpen: (key: string) => void;
+}) {
+  const head = (key: UnitSort, label: string, className?: string) => <SortHead sortKey={key} label={label} sort={sort} onSort={onSort} className={className} />;
+  return (
+    <Table className="text-xs">
+      <TableHeader>
+        <TableRow className="bg-muted/50 hover:bg-muted/50">
+          {head('circle', 'Circle / State', 'pl-4')}
+          {head('project', 'Project')}
+          {head('data', 'RCA data')}
+          {head('submission', 'Circle submission')}
+          {head('upload', 'Latest upload')}
+          {head('records', 'Accepted records', 'text-right')}
+          {head('minutes', 'Outage minutes', 'text-right')}
+          <TableHead className="pr-4 text-right">Actions</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((u) => {
+          const name = `${u.circle} ${shortProject(u.project)}`;
+          const s = u.submission;
+          const ups = unitUploads(u, byId);
+          const latest = ups[0];
+          return (
+            <TableRow key={keyOf(u)} className="cursor-pointer" tabIndex={0} aria-label={`${name}: open details`} onClick={() => onOpen(keyOf(u))}
+              onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(keyOf(u)); } }}>
+              <TableCell className="pl-4 font-medium">{u.circle}</TableCell>
+              <TableCell><ProjectBadge project={u.project} /></TableCell>
+              <TableCell><DataBadge u={u} /></TableCell>
+              <TableCell className="whitespace-nowrap">
+                <SubmissionBadge u={u} />
+                {s && <span className="mt-0.5 block text-[11px] text-muted-foreground">{formatDateTime(s.committed_at ?? s.uploaded_at)}</span>}
+              </TableCell>
+              <TableCell className="max-w-64">
+                <UploadBadge b={latest} />
+                {latest && (
+                  <span className="mt-0.5 block truncate text-[11px] text-muted-foreground" title={latest.file}>
+                    {latest.file} · {formatDateTime(latest.uploaded_at)}{latest.imported_by ? ` · ${latest.imported_by}` : ''}
+                    {ups.length > 1 ? ` · +${ups.length - 1} more` : ''}
+                  </span>
+                )}
+              </TableCell>
+              {u.records_in_scope === undefined ? (
+                <>
+                  <TableCell className="text-right tabular-nums">{formatNumber(u.records)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{u.records ? formatMin(u.outage_minutes) : '—'}</TableCell>
+                </>
+              ) : (
+                <>
+                  <TableCell className="text-right tabular-nums" title={`${formatNumber(u.records)} records of every site`}>
+                    {formatNumber(u.records_in_scope)} <span className="text-muted-foreground">of {formatNumber(u.records)}</span>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{u.records_in_scope ? formatMin(u.outage_minutes_in_scope) : '—'}</TableCell>
+                </>
+              )}
+              <TableCell className="pr-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                {u.records > 0 && (
+                  <Button asChild size="icon" variant="ghost" aria-label={`View ${name} records in the RCA Register`} title="View these records in the RCA Register">
+                    <Link to={registerLink(u, cycle)}><FileSearch /></Link>
+                  </Button>
+                )}
+                <Button size="icon" variant="ghost" aria-label={`Open details for ${name}`} onClick={() => onOpen(keyOf(u))}><ChevronRight /></Button>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
+function UnitDetails({ u, cycle, uploads }: { u: RcaUnitState; cycle: RcaCycleDetail; uploads: RcaImportBatch[] }) {
+  const row = (label: string, value: ReactNode) => (
+    <div className="grid grid-cols-[9rem_1fr] gap-2 py-1 text-sm"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="min-w-0 break-words">{value || '—'}</dd></div>
+  );
+  const s = u.submission;
+  // Files the accepted records came from that are not among the period's uploads listed below (e.g. a portal entry).
+  const otherSources = u.source_files.filter((f) => !uploads.some((b) => b.file === f));
+  return (
+    <>
+      <SheetHeader>
+        <SheetTitle className="flex flex-wrap items-center gap-2">{u.circle} <ProjectBadge project={u.project} /> <DataBadge u={u} /></SheetTitle>
+        <SheetDescription>{cycle.name ? `${cycle.name} · ` : ''}{cycle.period_label} · no deadline configured</SheetDescription>
+      </SheetHeader>
+      <div className="space-y-4 px-4 pb-6">
+        <section aria-label="Accepted RCA data">
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Accepted RCA data</h3>
+          <dl className="divide-y">
+            {row('Status', u.status_label)}
+            {row('Accepted records', formatNumber(u.records))}
+            {row('Outage minutes', u.records ? formatMin(u.outage_minutes) : '—')}
+            {u.records_in_scope !== undefined && row(cycle.site_scope?.label ?? 'Site scope', `${formatNumber(u.records_in_scope)} records · ${u.records_in_scope ? formatMin(u.outage_minutes_in_scope) : '—'}`)}
+            {otherSources.length > 0 && row('Also recorded from', otherSources.join(', '))}
+          </dl>
+          {u.records > 0 && (
+            <Button asChild size="sm" variant="outline" className="mt-2"><Link to={registerLink(u, cycle)}><FileSearch /> View records in the RCA Register</Link></Button>
+          )}
+        </section>
+        <section aria-label="Circle submission">
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Circle submission</h3>
+          <p className="mb-1"><SubmissionBadge u={u} /></p>
+          {s ? (
+            <p className="text-xs text-muted-foreground">
+              Upload #{s.batch} · {formatDate(s.reporting_date)} · confirmed {formatDateTime(s.committed_at ?? s.uploaded_at)}{s.uploaded_by ? ` · ${s.uploaded_by}` : ''}
+              {(u.submissions ?? 0) > 1 ? ` · ${formatNumber(u.submissions ?? 0)} circle files confirmed for this period; the latest is shown` : ''}
+            </p>
+          ) : <p className="text-sm text-muted-foreground">No confirmed Upload Circle RCA file of this project, circle and period. Consolidated uploads never count as one.</p>}
+        </section>
+        <section aria-label="Uploads">
+          <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Uploads for {cycle.period_label}</h3>
+          {uploads.length ? (
+            <ol className="space-y-2">
+              {uploads.map((b) => (
+                <li key={b.id} className="rounded-md border px-3 py-2 text-sm">
+                  <p className="flex flex-wrap items-center gap-2"><UploadBadge b={b} /><span className="truncate font-mono text-xs">{b.file}</span>
+                    {b.correction && <span className="text-xs text-amber-800">Correction</span>}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Upload #{b.id} · {uploadType(b)} · {formatDateTime(b.uploaded_at)}{b.imported_by ? ` · ${b.imported_by}` : ''} · {uploadCounts(b)}
+                  </p>
+                  {b.error && <p className="mt-1 text-xs text-destructive">{b.error}</p>}
+                  {b.status !== 'discarded' && <a href={rcaIssuesUrl(b.id)} className="mt-1 inline-block text-xs underline underline-offset-2">Validation report</a>}
+                </li>
+              ))}
+            </ol>
+          ) : <p className="text-sm text-muted-foreground">No upload recorded for this unit in this period.</p>}
+          <p className="mt-1 text-xs text-muted-foreground"><Link className="underline underline-offset-2" to="/rca/import">Upload RCA data</Link></p>
+        </section>
       </div>
+    </>
+  );
+}
+
+/** One row per reporting date (or period): completeness from the expected scope, and the upload outcomes beside it. */
+function DailyStatus({ cycles, total, selected, onOpen }: { cycles: RcaCycle[]; total: number; selected: number | null; onOpen: (id: number) => void }) {
+  const [page, setPage] = useState(1);
+  const view = pageOf(cycles, page, PERIOD_PAGE_SIZE);
+  return (
+    <Card aria-label="Daily reporting status">
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold">Daily reporting status</CardTitle>
+        <CardDescription className="text-xs">
+          {total > cycles.length ? `The latest ${formatNumber(cycles.length)} of ${formatNumber(total)} reporting periods.` : `${formatNumber(cycles.length)} reporting period${cycles.length === 1 ? '' : 's'}.`}
+          {' '}Select a row to open the period above.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 px-0">
+        <div className="overflow-x-auto">
+          <Table className="text-xs">
+            <TableHeader>
+              <TableRow className="bg-muted/50 hover:bg-muted/50">
+                {['Reporting date', 'Report', 'Status', 'Expected data received', 'Pending', 'Imported uploads', 'Validation failed', 'Awaiting confirmation', 'Corrections', 'Last upload']
+                  .map((h, i) => <TableHead key={h} className={cn(i === 0 && 'pl-4', i === 9 && 'pr-4', i >= 5 && i <= 8 && 'text-right')}>{h}</TableHead>)}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {view.shown.map((c) => {
+                const u = c.uploads_summary;
+                return (
+                  <TableRow key={c.id} className={cn('cursor-pointer', c.id === selected && 'bg-primary/5 hover:bg-primary/10')} tabIndex={0}
+                    aria-label={`Open ${c.period_label}`} aria-current={c.id === selected ? 'true' : undefined} onClick={() => onOpen(c.id)}
+                    onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(c.id); } }}>
+                    <TableCell className="pl-4 font-medium whitespace-nowrap">{c.period_label}</TableCell>
+                    <TableCell className="max-w-44 truncate" title={c.name ?? ''}>{c.name ?? '—'}</TableCell>
+                    <TableCell><CycleBadge code={c.status.code} label={c.status.label} /></TableCell>
+                    <TableCell className="tabular-nums">{c.status.required ? `${c.status.received} of ${c.status.required}` : <span className="text-muted-foreground">Nothing expected</span>}</TableCell>
+                    <TableCell className="max-w-56 min-w-40 whitespace-normal">{c.status.outstanding.map((o) => `${o.circle} ${shortProject(o.project)}`).join(', ') || '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNumber(u.imported)}{u.with_rejected_rows ? <span className="text-destructive"> ({u.with_rejected_rows} with rejected rows)</span> : null}</TableCell>
+                    <TableCell className={cn('text-right tabular-nums', u.validation_failed && 'text-destructive')}>{formatNumber(u.validation_failed)}</TableCell>
+                    <TableCell className={cn('text-right tabular-nums', u.awaiting_confirmation && 'text-amber-700')}>{formatNumber(u.awaiting_confirmation)}</TableCell>
+                    <TableCell className={cn('text-right tabular-nums', u.corrections && 'text-amber-800')}>{formatNumber(u.corrections)}</TableCell>
+                    <TableCell className="pr-4 whitespace-nowrap">{u.last_upload_at ? formatDateTime(u.last_upload_at) : '—'}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+        <Pager page={view.page} pages={view.pages} onPage={setPage} label="Reporting period pagination" />
+      </CardContent>
     </Card>
   );
 }
 
-function StartPeriod({ defaults, available, onStarted }: { defaults: Unit[]; available: Unit[]; onStarted: (c: RcaCycleDetail) => void }) {
+/** Starts a reporting date or date range; its expected scope is generated (every active project and circle). */
+function StartPeriod({ onStarted }: { onStarted: (c: RcaCycleDetail) => void }) {
   const [period, setPeriod] = useState({ name: '', period_start: '', period_end: '', notes: '' });
-  const [units, setUnits] = useState<Set<string>>(() => new Set(defaults.map(unitKey)));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const set = (key: keyof typeof period, value: string) => setPeriod((p) => ({ ...p, [key]: value }));
@@ -132,7 +540,7 @@ function StartPeriod({ defaults, available, onStarted }: { defaults: Unit[]; ava
     setBusy(true);
     setError(null);
     try {
-      onStarted(await startRcaCycle(period, available.filter((u) => units.has(unitKey(u)))));
+      onStarted(await startRcaCycle(period));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -140,259 +548,97 @@ function StartPeriod({ defaults, available, onStarted }: { defaults: Unit[]; ava
     }
   };
   return (
-    <div className="space-y-3 rounded-lg border bg-muted/30 px-4 py-3" aria-label="Start a reporting period">
-      <div className="flex flex-wrap items-end gap-3">
-        <Field id="period-name" label="Report name" plain className="min-w-64 flex-1">
-          <Input id="period-name" value={period.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. October 2026 RCA Report" />
-        </Field>
-        <Field id="period-from" label="Reporting date (or first day)" plain className="w-52">
-          <Input id="period-from" type="date" value={period.period_start} onChange={(e) => set('period_start', e.target.value)} />
-        </Field>
-        <Field id="period-to" label="Last day (for a period)" plain className="w-52">
-          <Input id="period-to" type="date" value={period.period_end} min={period.period_start || undefined} onChange={(e) => set('period_end', e.target.value)} />
-        </Field>
-      </div>
-      <UnitPicker available={available} value={units} onChange={setUnits} />
-      {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-      <Button type="button" onClick={start} disabled={busy || !period.period_start}>{busy ? 'Starting…' : `Start period expecting ${units.size} projects / circles`}</Button>
-    </div>
-  );
-}
-
-/** Expected scope: one checkbox per project / circle of the Up-Time Report. */
-function UnitPicker({ available, value, onChange }: { available: Unit[]; value: Set<string>; onChange: (v: Set<string>) => void }) {
-  const projects = [...new Set(available.map(([p]) => p))];
-  const toggle = (key: string) => { const next = new Set(value); if (next.has(key)) next.delete(key); else next.add(key); onChange(next); };
-  return (
-    <div className="space-y-2">
-      <p className="text-xs font-medium">Expected projects and circles</p>
-      {projects.map((project) => (
-        <fieldset key={project} className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <legend className="mb-1 text-xs text-muted-foreground">{project}</legend>
-          {available.filter(([p]) => p === project).map((u) => (
-            <label key={unitKey(u)} className="flex items-center gap-1.5 text-sm">
-              <input type="checkbox" checked={value.has(unitKey(u))} onChange={() => toggle(unitKey(u))} aria-label={`${project} ${u[1]}`} />
-              {u[1]}
-            </label>
-          ))}
-        </fieldset>
-      ))}
-    </div>
-  );
-}
-
-function PeriodView({ cycle, onChanged }: { cycle: RcaCycleDetail; onChanged: () => void }) {
-  const s = cycle.status;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-  const finalize = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await finalizeRcaCycle(cycle.id);
-      setDone(result.created ? `Final report v${result.report.version} generated from ${formatNumber(result.report.record_count)} accepted records.`
-        : `The final report v${result.report.version} already reflects the accepted records; no new version was created.`);
-      onChanged();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const current = cycle.reports.find((r) => r.current);
-
-  return (
-    <>
-      <Card className="gap-3 rounded-xl px-4 py-3" aria-label="Period status">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1">
-            <h2 className="flex flex-wrap items-center gap-2 text-base font-semibold">
-              {cycle.name ?? 'Reporting period'} · {cycle.period_label} <CycleBadge code={s.code} label={s.label} />
-              {s.final_version && <span className="text-xs font-normal text-muted-foreground">latest final: v{s.final_version}</span>}
-            </h2>
-            <p className="text-sm">
-              {s.required ? <><span className="font-semibold tabular-nums">{s.received} of {s.required}</span> expected projects / circles have accepted data · </>
-                : <span className="text-amber-800">No expected projects / circles are configured, so completeness cannot be judged. </span>}
-              <span className="tabular-nums">{formatNumber(cycle.records)}</span> accepted RCA records in the period
-            </p>
-            {s.outstanding.length > 0 && (
-              <p className="text-sm text-amber-800">Pending (no accepted records): {s.outstanding.map((o) => `${o.circle} ${shortProject(o.project)}`).join(', ')}</p>
-            )}
-            {s.upload_awaiting_confirmation && <p className="text-sm text-amber-800">An upload for this period is validated but not yet confirmed; its rows do not count until imported.</p>}
-            {s.code === 'revised' && <p className="text-sm text-orange-800">Records changed after final report v{s.final_version}. Review the change, then generate the revised version; v{s.final_version} stays available.</p>}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline">
-              <a href={rcaCycleWorkbookUrl(cycle.id)}><Download />{s.code === 'final' && current ? `Download final report v${current.version}` : s.complete ? 'Download draft report' : 'Download partial report'}</a>
-            </Button>
-            {s.can_finalize && (
-              <Button type="button" onClick={finalize} disabled={busy}>
-                <FileCheck2 />{busy ? 'Generating…' : s.code === 'revised' ? `Generate revised final report (v${(s.final_version ?? 0) + 1})` : 'Generate final report'}
-              </Button>
-            )}
-          </div>
+    <Card aria-label="Start a reporting period">
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold">Start a reporting period</CardTitle>
+        <CardDescription className="text-xs">A reporting date or a date range; periods never overlap. Every active project and circle is expected.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <Field id="period-name" label="Report name" plain className="min-w-64 flex-1">
+            <Input id="period-name" value={period.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. October 2026 RCA Report" />
+          </Field>
+          <Field id="period-from" label="Reporting date (or first day)" plain className="w-52">
+            <Input id="period-from" type="date" value={period.period_start} onChange={(e) => set('period_start', e.target.value)} />
+          </Field>
+          <Field id="period-to" label="Last day (for a period)" plain className="w-52">
+            <Input id="period-to" type="date" value={period.period_end} min={period.period_start || undefined} onChange={(e) => set('period_end', e.target.value)} />
+          </Field>
         </div>
-        {!s.complete && <p className="text-xs text-muted-foreground">The downloaded workbook is labelled partial until every expected project / circle has accepted data.</p>}
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-        {done && <Alert><AlertDescription>{done}</AlertDescription></Alert>}
-      </Card>
+        <Button type="button" onClick={start} disabled={busy || !period.period_start}>{busy ? 'Starting…' : 'Start period'}</Button>
+      </CardContent>
+    </Card>
+  );
+}
 
-      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Expected coverage">
-        <h2 className="text-base font-semibold">Circle submissions and RCA data</h2>
-        <p className="text-xs text-muted-foreground">
-          Circle submission: a confirmed Upload Circle RCA file of that project, circle and date (consolidated uploads never count). RCA data: accepted records of
-          the project and circle, from any upload; the final report needs data for every expected unit. No deadline is configured, so receipt times are shown without
-          on-time or late.
-        </p>
-        {cycle.units.length ? (
+function ReportsCard({ cycle }: { cycle: RcaCycleDetail }) {
+  const s = cycle.status;
+  return (
+    <Card aria-label="Final reports">
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold">Final reports</CardTitle>
+        <CardDescription className="text-xs">Each version is kept; a revised version supersedes the previous one.</CardDescription>
+      </CardHeader>
+      <CardContent className="px-0">
+        {cycle.reports.length ? (
           <div className="overflow-x-auto">
-            <Table>
-              <TableHeader><TableRow>{['Circle', 'Project', 'Circle submission', 'Received', 'RCA data', 'Accepted records', 'Outage minutes', 'From uploaded files'].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
+            <Table className="text-xs">
+              <TableHeader>
+                <TableRow className="bg-muted/50 hover:bg-muted/50">
+                  {['Version', 'Generated', 'By', 'Records', 'Status', 'File'].map((h, i) => <TableHead key={h} className={cn(i === 0 && 'pl-4', i === 5 && 'pr-4', i === 3 && 'text-right')}>{h}</TableHead>)}
+                </TableRow>
+              </TableHeader>
               <TableBody>
-                {cycle.units.map((u) => (
-                  <TableRow key={`${u.project}|${u.circle}`}>
-                    <TableCell className="font-medium">{u.circle}</TableCell>
-                    <TableCell>{u.project}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={u.submission_status === 'received' ? 'border-emerald-300 text-emerald-800' : 'border-slate-300 text-slate-600'}>
-                        {u.submission_label ?? 'Not received'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs whitespace-nowrap">
-                      {u.submission ? <>{formatDateTime(u.submission.committed_at ?? u.submission.uploaded_at)}<span className="block text-muted-foreground">by {u.submission.uploaded_by ?? '—'} · #{u.submission.batch}</span></> : '—'}
-                    </TableCell>
-                    <TableCell><CycleBadge code={u.status} label={u.data_label ?? u.status_label} /></TableCell>
-                    {u.records_in_scope === undefined ? (
-                      <>
-                        <TableCell className="tabular-nums">{formatNumber(u.records)}</TableCell>
-                        <TableCell className="tabular-nums">{u.records ? formatMin(u.outage_minutes) : '—'}</TableCell>
-                      </>
-                    ) : (
-                      <>
-                        <TableCell className="tabular-nums" title={`${formatNumber(u.records)} records of every site`}>
-                          {formatNumber(u.records_in_scope)} <span className="text-muted-foreground">of {formatNumber(u.records)}</span>
-                        </TableCell>
-                        <TableCell className="tabular-nums">{u.records_in_scope ? formatMin(u.outage_minutes_in_scope) : '—'}</TableCell>
-                      </>
-                    )}
-                    <TableCell className="max-w-80 truncate text-xs" title={u.source_files.join(', ')}>{u.source_files.join(', ') || '—'}</TableCell>
+                {cycle.reports.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="pl-4 font-medium">v{r.version}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDateTime(r.generated_at)}</TableCell>
+                    <TableCell>{r.automatic ? 'Automatic (expected data complete)' : r.generated_by ?? '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNumber(r.record_count)}</TableCell>
+                    <TableCell>{r.current ? (s.code === 'revised' ? 'Current, records changed since' : 'Current') : `Superseded ${formatDateTime(r.superseded_at)}`}</TableCell>
+                    <TableCell className="pr-4">{r.available ? <a href={rcaReportFileUrl(cycle.id, r.id)} className="underline underline-offset-2">{r.filename}</a> : <span className="text-destructive">File missing</span>}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-        ) : <p className="text-sm text-muted-foreground">Configure the expected projects and circles below to track what is still pending.</p>}
-        {cycle.unexpected.length > 0 && (
-          <p className="text-xs text-muted-foreground">Also in the accepted data, outside the expected scope: {cycle.unexpected.map((u) => `${u.circle} ${shortProject(u.project)} (${formatNumber(u.records)})`).join(', ')}.</p>
-        )}
-      </Card>
-
-      <ScopeEditor cycle={cycle} onChanged={onChanged} />
-
-      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Period uploads">
-        <h2 className="text-base font-semibold">Uploads for this period</h2>
-        <UploadTable uploads={cycle.uploads} empty="No upload for this period yet." />
-      </Card>
-
-      <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Final reports">
-        <h2 className="text-base font-semibold">Final reports</h2>
-        {cycle.reports.length ? (
-          <Table>
-            <TableHeader><TableRow>{['Version', 'Generated', 'By', 'Records', 'Status', ''].map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
-            <TableBody>
-              {cycle.reports.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-medium">v{r.version}</TableCell>
-                  <TableCell className="whitespace-nowrap">{formatDateTime(r.generated_at)}</TableCell>
-                  <TableCell>{r.automatic ? 'Automatic (expected data complete)' : r.generated_by ?? '—'}</TableCell>
-                  <TableCell className="tabular-nums">{formatNumber(r.record_count)}</TableCell>
-                  <TableCell>{r.current ? (s.code === 'revised' ? 'Current, records changed since' : 'Current') : `Superseded ${formatDateTime(r.superseded_at)}`}</TableCell>
-                  <TableCell>{r.available ? <a href={rcaReportFileUrl(cycle.id, r.id)} className="text-xs underline">{r.filename}</a> : <span className="text-xs text-destructive">File missing</span>}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : <p className="text-sm text-muted-foreground">No final report yet. It is generated once every expected project / circle has accepted data.</p>}
-      </Card>
-    </>
-  );
-}
-
-function UploadTable({ uploads, showPeriod = false, empty }: { uploads: RcaImportBatch[]; showPeriod?: boolean; empty: string }) {
-  if (!uploads.length) return <p className="text-sm text-muted-foreground">{empty}</p>;
-  const headers = ['#', 'Report', ...(showPeriod ? ['Period'] : []), 'Uploaded by', 'File', 'Type · scope', 'Uploaded', 'Status', 'Circles in workbook', 'Imported · updated · skipped · rejected', ''];
-  return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader><TableRow>{headers.map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader>
-        <TableBody>
-          {uploads.map((b) => {
-            const c = b.counts;
-            const n = (v: number | boolean | undefined) => (typeof v === 'number' ? formatNumber(v) : '—');
-            const problem = b.status === 'failed' || b.status === 'rejected' || (b.status === 'committed' && Number(c.rejected) > 0);
-            return (
-              <TableRow key={b.id}>
-                <TableCell>{b.id}</TableCell>
-                <TableCell className="max-w-44 truncate" title={b.report_name ?? ''}>{b.report_name ?? '—'}</TableCell>
-                {showPeriod && <TableCell className="whitespace-nowrap">{periodText(b.period_start, b.period_end)}</TableCell>}
-                <TableCell>{b.imported_by ?? '—'}</TableCell>
-                <TableCell className="max-w-44 truncate" title={b.file}>{b.file}</TableCell>
-                <TableCell className="text-xs">
-                  {b.upload_type === 'circle' ? `Circle · ${b.circle} ${b.project_scope ? shortProject(b.project_scope) : ''}` : b.upload_type === 'consolidated' ? 'Consolidated' : 'Legacy'}
-                  <span className="block text-muted-foreground">{b.project_scope === 'both' ? '4G + LWE' : b.project_scope ? shortProject(b.project_scope) : '—'}</span>
-                </TableCell>
-                <TableCell className="whitespace-nowrap">{formatDateTime(b.uploaded_at)}</TableCell>
-                <TableCell className={problem ? 'text-destructive' : ''}>
-                  {b.status_label}{b.correction && <span className="block text-xs text-amber-800">Correction</span>}
-                </TableCell>
-                <TableCell className="max-w-56 min-w-32 text-xs whitespace-normal">{b.units.map(([p, ci]) => `${ci} ${shortProject(p)}`).join(', ') || '—'}</TableCell>
-                <TableCell className="text-xs tabular-nums">{b.status === 'committed' ? `${n(c.inserted)} · ${n(c.updated)} · ${n(c.skipped)} · ${n(c.rejected)}` : b.error ?? `${n(c.valid)} valid · ${n(c.rejected)} rejected`}</TableCell>
-                <TableCell>{b.status !== 'discarded' && <a href={rcaIssuesUrl(b.id)} className="text-xs underline">Validation report</a>}</TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </div>
-  );
-}
-
-function ScopeEditor({ cycle, onChanged }: { cycle: RcaCycleDetail; onChanged: () => void }) {
-  const initial = () => new Set(cycle.units.map((u) => unitKey([u.project, u.circle])));
-  const [open, setOpen] = useState(false);
-  const [value, setValue] = useState<Set<string>>(initial);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const known = [...cycle.available_units];
-  for (const u of cycle.units) if (!known.some(([p, c]) => p === u.project && c === u.circle)) known.push([u.project, u.circle]);
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await setRcaRequired(cycle.id, known.filter((u) => value.has(unitKey(u))));
-      setOpen(false);
-      onChanged();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Card className="gap-2 rounded-xl px-4 py-3" aria-label="Configure expected scope">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">Expected projects and circles</h2>
-        {cycle.locked ? <span className="text-xs text-muted-foreground">Fixed: the final report has been generated.</span>
-          : <Button type="button" size="sm" variant="ghost" onClick={() => { setValue(initial()); setOpen((o) => !o); }}>{open ? 'Cancel' : cycle.units.length ? 'Change' : 'Configure'}</Button>}
-      </div>
-      {open && !cycle.locked && (
-        <>
-          <UnitPicker available={known} value={value} onChange={setValue} />
-          {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-          <Button type="button" className="w-fit" onClick={save} disabled={busy}>{busy ? 'Saving…' : `Save ${value.size} expected projects / circles`}</Button>
-        </>
-      )}
+        ) : <p className="px-4 text-sm text-muted-foreground">No final report yet. It is generated once every expected project / circle has accepted data.</p>}
+      </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Every upload by every user, failed and discarded ones included (audit history), as a collapsed reference list like the
+ * Uptime CSV tracker's server files. Loaded only when opened.
+ */
+function UploadHistory({ version }: { version: number }) {
+  const [opened, setOpened] = useState(false);
+  const all = useApiQuery(opened ? `rca-all-uploads-${version}` : null, (signal) => fetchRcaImports(signal, true));
+  const files = all.data?.imports ?? [];
+  return (
+    <details className="group rounded-xl border bg-card px-4 py-3 text-sm" aria-label="Upload history" onToggle={(e) => { if (e.currentTarget.open) setOpened(true); }}>
+      <summary className="cursor-pointer text-xs font-medium text-muted-foreground select-none">
+        Upload history (every user, every period){all.data ? ` · ${formatNumber(files.length)}` : ''}
+      </summary>
+      <p className="mt-2 text-xs text-muted-foreground">
+        For audit: the latest uploads, including failed and discarded ones and uploads that could not be read. A period's uploads are also listed per circle above.
+      </p>
+      {all.error ? <p className="mt-2 text-xs text-destructive">{all.error.message}</p> : !all.data ? (opened && <Skeleton className="mt-2 h-16" aria-label="Loading upload history" />) : files.length ? (
+        <ul className="mt-2 divide-y text-xs">
+          {files.map((b) => (
+            <li key={b.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5">
+              <UploadBadge b={b} />
+              <span className="min-w-0 flex-1 truncate font-mono" title={b.file}>{b.file}</span>
+              <span className="text-muted-foreground">{periodText(b.period_start, b.period_end)} · {uploadType(b)}{b.project_scope === 'both' ? ' (4G + LWE)' : ''}</span>
+              <span className="text-muted-foreground">#{b.id} · {formatDateTime(b.uploaded_at)}{b.imported_by ? ` · ${b.imported_by}` : ''}</span>
+              {b.status !== 'discarded' && <a href={rcaIssuesUrl(b.id)} className="underline underline-offset-2">Validation report</a>}
+              {b.error && <span className="basis-full text-destructive">{b.error}</span>}
+            </li>
+          ))}
+        </ul>
+      ) : <p className="mt-2 text-xs text-muted-foreground">No RCA data has been uploaded yet.</p>}
+    </details>
   );
 }

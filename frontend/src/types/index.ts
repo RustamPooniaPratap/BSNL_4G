@@ -62,6 +62,8 @@ export interface FilterOptions {
   default_trend_range: { start: string | null; end: string | null };
   /** Months with uptime history, oldest first; the last is the current month to date. */
   months: { key: string; label: string }[];
+  /** Months of imported historical totals (monthly trend only; never a period KPI month). */
+  history_months?: { key: string; label: string; source: 'historical_import' }[];
   /** Earlier months whose daily columns are in the workbook, with their reported dates. */
   daily_history?: { key: string; label: string; dates: string[] }[];
   month: { label: string; start: string; end: string };
@@ -364,13 +366,27 @@ export interface MonthPoint extends PeriodStatusFields {
   outage_by_circle?: Record<string, number | null>;
   /** Set when the month is finalized: Complete, or finalized with missing data. */
   finalization_status?: 'complete' | 'incomplete_missing_data' | null;
+  /** Where the month comes from: imported workbook monthly totals, or calculated from daily records. */
+  source?: MonthSource;
+  source_label?: string;
+  /** Historical months: projects shown without a value that month (the combined figure then stays empty). */
+  missing_report_types?: string[];
+  /** Historical months: imported site-months by their On-Air note (traceability; not verified eligibility). */
+  on_air_notes?: Record<string, number>;
+  /** Chart-only: a calendar month inside the range shown that has no data from either source (an empty point). */
+  gap?: boolean;
 }
+
+export type MonthSource = 'historical_import' | 'daily_derived';
 
 export interface MonthlyResponse {
   circles?: CircleSeriesInfo[];
   reporting_date: string;
   report_types: string[];
   months: MonthPoint[];
+  /** Imported historical monthly totals before the first calculated month (trend charts only, never KPIs). */
+  historical_months?: MonthPoint[];
+  sources?: Record<MonthSource, string>;
   overall: {
     start: string | null;
     end: string;

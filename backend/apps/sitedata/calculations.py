@@ -65,7 +65,7 @@ def site_month_results(month: date) -> dict[tuple[int, str, str], dict]:
 def calculate_month(month: date, *, force: bool = False, request=None) -> dict:
     month = month.replace(day=1)
     current = {(m.site_id, m.technology, m.calculation_category): m
-               for m in MonthlySitePerformance.objects.filter(month=month, is_current=True)}
+               for m in MonthlySitePerformance.objects.filter(month=month, is_current=True, calculation_category__in=MonthlySitePerformance.DAILY_CATEGORIES)}  # never historical imports
     if not force and any(m.finalized_at for m in current.values()):
         raise MonthFinalized(f'{month:%b %Y} is finalized; recalculate with force=True to add revisions.')
     results = site_month_results(month)
@@ -95,7 +95,8 @@ def finalize_month(month: date, *, user, request=None) -> int:
     from apps.accounts.roles import ADMIN, role_of
     if role_of(user) != ADMIN:
         raise PermissionDenied('Only an Admin can finalize a month.')
-    n = (MonthlySitePerformance.objects.filter(month=month.replace(day=1), is_current=True, finalized_at__isnull=True)
+    # Only the results calculated from daily records: imported historical totals are never finalized here.
+    n = (MonthlySitePerformance.objects.filter(month=month.replace(day=1), is_current=True, finalized_at__isnull=True, calculation_category__in=MonthlySitePerformance.DAILY_CATEGORIES)
          .update(finalized_at=timezone.now(), finalized_by=user))
     audit('sitedata.month_finalized', request, month=month.replace(day=1), records=n)
     return n

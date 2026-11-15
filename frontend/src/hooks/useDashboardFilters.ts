@@ -52,8 +52,12 @@ export interface ResolvedFilters extends DashboardFilterState {
   dayList: string[];
   /** Selected week numbers, sorted; empty means every week. */
   weekList: number[];
-  /** Selected month keys in calendar order; empty means every month. */
+  /** Selected calculated-month keys in calendar order; empty means every month. */
   monthList: string[];
+  /** Selected historical-month keys (imported workbook totals), oldest first. */
+  historyMonthList: string[];
+  /** Every selected month key, historical then calculated (empty: every month of both). */
+  selectedMonths: string[];
   /** Query parameters for snapshot endpoints (summary, breakdowns, records). */
   snapshotParams: URLSearchParams;
   /** Query parameters for the trend endpoint. */
@@ -108,6 +112,8 @@ export function useDashboardFilters(options: FilterOptions | null, _legacy: { de
     const weekList = [...new Set(list(read('weeks')).map(Number).filter((w) => WEEK_RANGES.some((r) => r.week === w)))].sort((a, b) => a - b);
     const selectedMonths = new Set(list(read('months')));
     const monthList = (options.months ?? []).map((m) => m.key).filter((key) => selectedMonths.has(key));
+    // Historical months only shape the monthly trend; the period KPI and the monthly endpoint keep the calculated months.
+    const historyMonthList = (options.history_months ?? []).map((m) => m.key).filter((key) => selectedMonths.has(key));
 
     const base = new URLSearchParams({ scope });
     if (reportType) base.set('report_type', reportType);
@@ -142,7 +148,8 @@ export function useDashboardFilters(options: FilterOptions | null, _legacy: { de
     return {
       reportType, circle, scope, date, from, to,
       trend: read('trend'), days: dayList.join(','), weeks: weekList.join(','), months: monthList.join(','),
-      trendView, dayList, weekList, monthList, snapshotParams, trendParams, monthlyParams, periodParams,
+      trendView, dayList, weekList, monthList, historyMonthList, selectedMonths: [...historyMonthList, ...monthList],
+      snapshotParams, trendParams, monthlyParams, periodParams,
     };
   }, [options, searchParams, scope]);
 

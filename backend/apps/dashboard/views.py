@@ -85,9 +85,18 @@ def _population(params: dict) -> dict:
 @permission_classes([Can('dashboard', 'view')])
 def filters_view(request):
     from apps.organization.services import merge_filter_options
+    from apps.sitedata import history_trend
     dataset = _dataset(request)
-    return Response({**merge_filter_options(metrics.filter_options(dataset), pairs_for(request.user, 'dashboard', 'view')),
+    pairs = pairs_for(request.user, 'dashboard', 'view')
+    return Response({**merge_filter_options(metrics.filter_options(dataset), pairs),
+                     # Months of imported historical totals, offered for the monthly trend only (never a period KPI month).
+                     'history_months': history_trend.month_options(pairs, _first_calculated_month(dataset)),
                      'population': metrics.population(metrics.DEFAULT_SCOPE), 'source': _source(dataset)})
+
+
+def _first_calculated_month(dataset):
+    """The first month the dashboard has from daily records: historical totals are shown only before it."""
+    return dataset.months[0]['start'] if dataset.months else dataset.dates[0]
 
 
 @api_view(['GET'])
@@ -256,7 +265,18 @@ def monthly_view(request):
     params = _validated(MonthlySerializer, request, dataset)
     dataset = _scoped(request, params)
     result = metrics.monthly(dataset, params['selection'], params['reporting_date'], params['months'])
-    return Response({**result, 'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
+    for month in result['months']:
+        month['source'] = 'daily_derived'  # calculated from daily records (values unchanged)
+    # Imported historical monthly totals for the trend charts (before the first calculated month; never in the KPIs). A
+    # CI / IE site filter narrows the dataset to one person's sites, which the monthly totals cannot follow: none then.
+    from apps.sitedata import history_trend
+    team = any(request.query_params.get(k) for k in ('team_group', 'team', 'team_project', 'team_circle'))
+    selection = params['selection']
+    historical = [] if team else history_trend.monthly_points(
+        pairs_for(request.user, 'dashboard', 'view'), _first_calculated_month(dataset), selection.report_type, selection.circle,
+        result['report_types'], [c['key'] for c in result.get('circles') or []])
+    return Response({**result, 'historical_months': historical, 'sources': history_trend.LABELS,
+                     'filters': _applied(params), 'population': _population(params), 'source': _source(dataset)})
 
 
 @api_view(['GET'])

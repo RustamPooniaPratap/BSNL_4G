@@ -23,7 +23,7 @@ STATIC_MODULES: dict[str, dict] = {
     },
     'csv_upload': {
         'label': 'CSV Upload',
-        'description': 'Uptime Data: raw daily CSV upload (Uptime Data Upload), Add Row and Add Site.',
+        'description': 'Uptime Data: raw daily CSV upload (Uptime Data Upload).',
         'actions': {UPLOAD: 'Validate, preview and import raw daily CSV files for the assigned circles, and see their own uploads.'},
     },
     'rca_register': {

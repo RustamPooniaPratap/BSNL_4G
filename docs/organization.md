@@ -37,8 +37,7 @@ codes, and which projects and circles each CI user may use. Backend: `apps.organ
     and deactivated instead. Nothing is cascaded, and the answer says which records blocked the removal.
 - **Deleting a circle** is possible only when it has no association, code mapping, record of any project, grant or
   legacy assignment. Otherwise, deactivate it.
-- **Database readiness:** an association needs no new table, column or migration. Sites (from the Master workbook or
-  Add Site), then daily, monthly and upload records, go into the existing project-scoped tables.
+- **Database readiness:** an association needs no new table, column or migration. Sites (from the Master workbook), then daily, monthly and upload records, go into the existing project-scoped tables.
 
 ## Where it is used
 
@@ -53,7 +52,7 @@ codes, and which projects and circles each CI user may use. Backend: `apps.organ
 - **Circle aliases**: raw CSV, Master workbook (database import), day-wise report, escalation matrix and RCA workbook are
   all read through `AliasResolver`. Lookup order: project alias, then source-wide alias, then the canonical code. An
   unknown code is reported; it never becomes a circle.
-- **Dashboard filter options** (`/api/dashboard/filters/`, used by the dashboards, Portfolio, Add Row, Add Site and
+- **Dashboard filter options** (`/api/dashboard/filters/`, used by the dashboards, Portfolio and
   both Excel downloads):
   - Data circles plus every active association. A circle without data is labelled "(no data yet)", and selecting it
     reports nothing, never zeros.

@@ -123,7 +123,7 @@ const prevOf = (s: KpiSummary, key: keyof NonNullable<KpiSummary['previous']>, f
   (s.previous ? fmt((s.previous[key] as number | null) ?? null) : undefined);
 
 const availabilityCards = (s: KpiSummary, sites: string): KpiCardSpec[] => [
-  { label: 'Availability (selected period)', value: pct(s.current!.availability_pct, 3), current: s.current!.availability_pct, previous: s.previous?.availability_pct, unit: 'pts', availability: true,
+  { label: 'Availability (selected period)', value: pct(s.current!.availability_pct), current: s.current!.availability_pct, previous: s.previous?.availability_pct, unit: 'pts', availability: true,
     higherIsBetter: true, tone: availabilityTone(s.current!.availability_pct), tab: 'availability',
     note: s.current!.availability_pct == null ? 'No reported values in this period' : `Outage-weighted, ${sites}` },
 ];
@@ -159,7 +159,7 @@ function Overview({ s, f, query, onOpen, canRca, sites, om }: {
   const p = s.period?.label ?? '';
   const compareLabel = s.previous_period?.label;
   const latestCard = (label: string, point: typeof day, what: string): KpiCardSpec => ({
-    label, value: point ? pct(point.availability_pct, 3) : NA, tone: availabilityTone(point?.availability_pct), availability: Boolean(point), note: point ? `Latest ${what}: ${point.label}` : undefined, tab: 'availability',
+    label, value: point ? pct(point.availability_pct) : NA, tone: availabilityTone(point?.availability_pct), availability: Boolean(point), note: point ? `Latest ${what}: ${point.label}` : undefined, tab: 'availability',
   });
   return (
     <>
@@ -192,8 +192,8 @@ function Ranking({ s, f, query }: { s: KpiSummary; f: ReturnType<typeof useKpiFi
   return (
     <>
       <StatStrip label="Availability: this period against the previous" items={[
-        { label: 'Availability', value: pct(a, 3), sub: s.period?.label },
-        { label: 'Previous period', value: s.previous ? pct(b, 3) : NA, sub: s.previous_period?.label ?? 'No comparison period' },
+        { label: 'Availability', value: pct(a), sub: s.period?.label },
+        { label: 'Previous period', value: s.previous ? pct(b) : NA, sub: s.previous_period?.label ?? 'No comparison period' },
         { label: 'Change', value: <ChangeText current={a} previous={b} unit="pts" higherIsBetter />, sub: 'percentage points' },
         { label: 'NSLA Sites', value: count(s.current?.nsla_sites), sub: 'period uptime < 98.5%' },
         { label: 'Sites < 60%', value: count(s.current?.below_60_sites), sub: 'this period' },

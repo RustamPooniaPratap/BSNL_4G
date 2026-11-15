@@ -32,7 +32,7 @@ const REPORT: RcaImportReport = {
     { date: '2026-10-21', rows: 4, new: 0, unchanged: 3, changed: 1, missing: 0, earlier_date: true, kind: 'earlier date: corrected' },
     { date: '2026-10-22', rows: 1, new: 1, unchanged: 0, changed: 0, missing: 0, earlier_date: false, kind: 'reporting date: new' },
   ],
-  coverage: { source: 'previous period', expected: [['4G Saturation', 'OD'], ['LWE', 'BH'], ['LWE', 'OD']], present: [['4G Saturation', 'OD']],
+  coverage: { source: 'organization', expected: [['4G Saturation', 'OD'], ['LWE', 'BH'], ['LWE', 'OD']], present: [['4G Saturation', 'OD']],
     missing: [['LWE', 'BH'], ['LWE', 'OD']] },
   conflicts: [{ row: 3, site_id: 'OD0001', record_id: 1, differences: { outage_minutes: { database: 90, file: 95 } } }],
 };

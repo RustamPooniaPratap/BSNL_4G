@@ -237,7 +237,8 @@ def _finalization_json(f: MonthFinalization | None) -> dict | None:
 @permission_classes([IsAdminRole])
 def months(request):
     from django.db.models import Count, Max, Q
-    rows = (MonthlySitePerformance.objects.filter(is_current=True).values('month')
+    # Months of the calculated results (historical imports are not finalized; they are listed by their own filter).
+    rows = (MonthlySitePerformance.objects.filter(is_current=True, calculation_category__in=MonthlySitePerformance.DAILY_CATEGORIES).values('month')
             .annotate(records=Count('id'), finalized=Count('id', filter=Q(finalized_at__isnull=False)), calculated_at=Max('calculated_at'))
             .order_by('-month'))
     latest = {}
@@ -300,7 +301,7 @@ def months_reopen(request):
         final = MonthFinalization.objects.select_for_update().filter(month=month, reopened_at__isnull=True).first()
         if final is None:
             return Response({'error': f'{month:%b %Y} is not finalized.', 'details': {}}, status=status.HTTP_409_CONFLICT)
-        MonthlySitePerformance.objects.filter(month=month, is_current=True).update(finalized_at=None, finalized_by=None)
+        MonthlySitePerformance.objects.filter(month=month, is_current=True, calculation_category__in=MonthlySitePerformance.DAILY_CATEGORIES).update(finalized_at=None, finalized_by=None)
         final.reopened_at, final.reopened_by, final.reopen_reason = timezone.now(), request.user, reason
         final.save(update_fields=['reopened_at', 'reopened_by', 'reopen_reason'])
     audit('sitedata.month_reopened', request, month=month, revision=final.revision, reason=reason)

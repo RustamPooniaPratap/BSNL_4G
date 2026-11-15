@@ -38,6 +38,7 @@ from .models import (RcaCauseCategory, RcaCauseMapping, RcaComment, RcaEvent, Rc
 ALLOWED = ('.xlsx', '.xlsm')
 ADMIN_STATUSES = {RcaWorkflow.Status.CLOSED}
 WORKFLOW_FIELDS = ('status', 'review_status', 'corrective_action', 'owner', 'target_date', 'completed_date', 'verification')
+CYCLE_LIST_LIMIT = 120  # reporting periods listed on RCA Submissions (daily periods: about four months)
 
 
 def _is_admin(request) -> bool:
@@ -321,7 +322,7 @@ def _batch_json(batch: RcaImportBatch, *, full: bool = False) -> dict:
 @permission_classes([IsPortalUser])
 def import_list(request):
     """The signed-in user's uploads; an Admin may ask for every upload with ?all=1."""
-    qs = RcaImportBatch.objects.select_related('imported_by')
+    qs = RcaImportBatch.objects.select_related('imported_by').defer('rows')  # parsed rows: only needed to commit
     everyone = _is_admin(request) and request.query_params.get('all') == '1'
     if not everyone:
         qs = qs.filter(imported_by=request.user)
@@ -519,9 +520,9 @@ def _cycle_error(exc: cycles.CycleError) -> Response:
 @permission_classes([IsAdminRole])
 def cycle_list(request):
     if request.method == 'GET':
-        return Response({'cycles': [cycles.cycle_json(c) for c in RcaReportingCycle.objects.select_related('created_by')[:36]],
-                         'default_units': [list(u) for u in cycles.default_units()],
-                         'available_units': [list(u) for u in cycles.available_units()]})
+        # Periods are daily: the latest CYCLE_LIST_LIMIT (about four months) are listed, and the total says whether older ones exist.
+        periods = RcaReportingCycle.objects.select_related('created_by')
+        return Response({'cycles': [cycles.cycle_json(c) for c in periods[:CYCLE_LIST_LIMIT]], 'total': periods.count()})
     start = parser._date(request.data.get('period_start') or request.data.get('reporting_date'))
     end = parser._date(request.data.get('period_end')) if request.data.get('period_end') else start
     if start is None or end is None:
@@ -531,7 +532,6 @@ def cycle_list(request):
     if start > timezone.localdate():
         raise ValidationError({'period_start': 'The reporting period cannot start in the future.'})
     try:
-        units = cycles.validate_units(request.data['units']) if 'units' in request.data else cycles.default_units()
         with transaction.atomic():
             if cycles.period_cycle(start, end) is not None:
                 raise ValidationError({'period_start': f'The period {cycles.period_label(start, end)} already exists.'})
@@ -539,10 +539,9 @@ def cycle_list(request):
                                         name=' '.join(str(request.data.get('name') or '').split())[:200])
             cycle.notes = str(request.data.get('notes') or '').strip()[:2000]
             cycle.save(update_fields=['notes'])
-            cycles.set_required(cycle, units)
     except cycles.CycleError as exc:
         raise ValidationError({'period_start': str(exc)}) from exc
-    audit('rca_cycle_started', request, cycle=cycle.pk, start=start.isoformat(), end=end.isoformat(), required=len(units))
+    audit('rca_cycle_started', request, cycle=cycle.pk, start=start.isoformat(), end=end.isoformat(), required=len(cycles.expected_units(cycle)))
     return Response(cycles.cycle_json(cycle, full=True), status=status.HTTP_201_CREATED)
 
 
@@ -551,21 +550,6 @@ def cycle_list(request):
 def cycle_detail(request, cycle_id: int):
     from . import sitescope
     return Response(cycles.cycle_json(_cycle(cycle_id), full=True, site_scope=sitescope.parse(request.query_params.get('site_scope'))))
-
-
-@api_view(['PUT'])
-@parser_classes([JSONParser])
-@permission_classes([IsAdminRole])
-def cycle_required(request, cycle_id: int):
-    """Configure the projects / circles the period is expected to cover."""
-    cycle = _cycle(cycle_id)
-    try:
-        units = cycles.validate_units(request.data.get('units'))
-        cycles.set_required(cycle, units)
-    except cycles.CycleError as exc:
-        return _cycle_error(exc)
-    audit('rca_cycle_required_changed', request, cycle=cycle.pk, required=len(units))
-    return Response(cycles.cycle_json(cycle, full=True))
 
 
 @api_view(['POST'])
