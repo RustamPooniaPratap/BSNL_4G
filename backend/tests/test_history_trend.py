@@ -144,6 +144,33 @@ class MonthlyTrendTests(TrendTestCase):
         self.assertEqual(history_trend.month_options(None, SEP26), [])
 
 
+class DailyTrendEarlierMonthTests(TrendTestCase):
+    """The Daily view of an earlier month (one month at a time): its days come from that month's daily records."""
+
+    def trend(self, **params):
+        response = self.client.get(reverse('dashboard-trends'), {'scope': 'on_air', **params})
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()
+
+    def test_days_of_an_earlier_month_come_from_its_daily_records(self):
+        current = self.trend()
+        october = self.trend(start_date='2026-10-01', end_date='2026-10-31')
+        days = {p['date']: p for p in october['series']}
+        self.assertEqual(len(october['series']), 31)
+        self.assertEqual([d for d, p in days.items() if p['reported']], ['2026-10-01', '2026-10-02'])
+        # On-Air population (RJ has no On-Air date): 2 sites x 60 minutes, 100 x (1 - 120 / (1440 x 2)); per project too
+        self.assertEqual((days['2026-10-01']['uptime_pct'], days['2026-10-01']['outage_minutes'], days['2026-10-01']['sites_reported']), (95.8333, 120.0, 2))
+        self.assertEqual(days['2026-10-01']['by_report_type'], {'4G Saturation': 95.8333, 'LWE': 95.8333})
+        self.assertIsNone(days['2026-10-03']['uptime_pct'])  # no records that day: not reported, never 0
+        # The reporting month and its weeks are unchanged.
+        self.assertEqual(self.trend(), current)
+        self.assertEqual(october['weeks'], current['weeks'])
+
+    def test_a_month_without_daily_records_has_no_reported_day(self):
+        july = self.trend(start_date='2026-07-01', end_date='2026-07-31')
+        self.assertFalse(any(p['reported'] for p in july['series']))
+
+
 class OperationalKpiTests(TrendTestCase):
     """The same responses before and after historical records exist: no KPI reads them."""
 

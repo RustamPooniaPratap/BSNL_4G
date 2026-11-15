@@ -57,8 +57,7 @@ export const UPTIME_VIEWS: { value: UptimeChartView; label: string }[] = [
 ];
 
 /** Main Dashboard chart cards (via ChartCard's className): 12 px card padding and a tighter header gap than the shared default. */
-/** Monthly trend source labels (imported workbook totals / months calculated from daily records). */
-export const HISTORY_LABEL = 'Historical monthly (Excel source)';
+/** Label of the months calculated from daily records (the other source's wording: context/sourceLabels). */
 export const DAILY_LABEL = 'Calculated from daily records';
 
 export const DENSE_CARD = 'gap-2.5 [--card-spacing:--spacing(3)]';

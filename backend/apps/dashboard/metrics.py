@@ -599,17 +599,33 @@ def trend(ds: Dataset, selection: Selection, start: date, end: date) -> dict:
     # Circle series use the same formula over each circle's own sites; a circle without data on a day is None.
     c_rows = circle_rows(ds, rows)
 
+    # Days of earlier months come from their daily records already in the dataset (daily_history); a day counts as reported
+    # when any site has a value, as for the reporting month's dates.
+    history = {h['key']: h for h in ds.daily_history}
+
+    def day_values(day: date):
+        """(outage matrix, column) of a reported day, from the reporting month or an earlier month's daily records."""
+        column = ds.position(day)
+        if column is not None and day in ds.reported_dates:
+            return ds.outage, column
+        entry = history.get(day.strftime('%Y-%m'))
+        if entry is not None and day in entry['dates']:
+            i = list(entry['dates']).index(day)
+            if not np.isnan(entry['outage'][:, i]).all():
+                return entry['outage'], i
+        return None, None
+
     points = []
     current = start
     while current <= end:
-        column = ds.position(current)
+        matrix, column = day_values(current)
         point = {'date': current.isoformat(), 'reported': False, 'sites_in_scope': len(rows),
                  'sites_reported': 0, 'coverage_pct': None, 'outage_minutes': None,
                  'uptime_pct': None, 'by_report_type': {t: None for t in types},
                  'outage_by_report_type': {t: None for t in types},
                  'by_circle': {k: None for k in c_rows}, 'outage_by_circle': {k: None for k in c_rows}}
-        if column is not None and current in ds.reported_dates:
-            values = ds.outage[rows, column]
+        if matrix is not None:
+            values = matrix[rows, column]
             outage, site_days = _window(values)
             point.update(
                 reported=True,
@@ -617,10 +633,10 @@ def trend(ds: Dataset, selection: Selection, start: date, end: date) -> dict:
                 coverage_pct=round(100.0 * site_days / len(rows), 2) if len(rows) else None,
                 outage_minutes=round(outage, 2),
                 uptime_pct=uptime_pct(outage, site_days),
-                by_report_type={t: uptime_pct(*_window(ds.outage[r, column])) for t, r in type_rows.items()},
-                outage_by_report_type={t: outage_total(ds.outage[r, column]) for t, r in type_rows.items()},
-                by_circle={k: uptime_pct(*_window(ds.outage[r, column])) for k, r in c_rows.items()},
-                outage_by_circle={k: outage_total(ds.outage[r, column]) for k, r in c_rows.items()},
+                by_report_type={t: uptime_pct(*_window(matrix[r, column])) for t, r in type_rows.items()},
+                outage_by_report_type={t: outage_total(matrix[r, column]) for t, r in type_rows.items()},
+                by_circle={k: uptime_pct(*_window(matrix[r, column])) for k, r in c_rows.items()},
+                outage_by_circle={k: outage_total(matrix[r, column]) for k, r in c_rows.items()},
             )
         points.append(point)
         current += timedelta(days=1)

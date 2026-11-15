@@ -397,6 +397,24 @@ describe('Trend period', () => {
       expect(screen.getAllByText(/Calculated from daily records: Sep-26–Oct-26 MTD/)[0]).toBeInTheDocument();  // nor calculated
     });
 
+    it.each([['4G+Saturation'], ['LWE']])('uses neutral wording for the same values on the %s page', async (project) => {
+      const user = userEvent.setup();
+      renderPage(`/?report_type=${project}&trend=monthly`);
+      const table = await screen.findByRole('table', { name: 'Monthly uptime' });
+      const rows = within(table).getAllByRole('row').slice(1);
+      expect(rows[0]).toHaveTextContent('Jul-26');
+      expect(rows[0]).toHaveTextContent('88.50%');                 // the same value is shown
+      expect(rows[0]).toHaveTextContent('Monthly reporting data');
+      expect(rows[2]).toHaveTextContent('Calculated from daily records');
+      expect(screen.getAllByText(/Monthly reporting data: Jul-26 \(every site with a value; not a population view\)/)[0]).toBeInTheDocument();
+      const text = document.body.textContent ?? '';
+      expect(text).not.toMatch(/Excel|imported|[Hh]istorical/);
+      await user.click(screen.getByRole('button', { name: 'Trend period' }));
+      const months = await screen.findByRole('group', { name: 'Months' });
+      expect(within(months).getByRole('button', { name: 'Jul-26' })).toBeInTheDocument();  // still selectable, no Excel marker
+      expect(document.body.textContent ?? '').not.toMatch(/Excel|[Hh]istorical/);
+    });
+
     it('adds no empty months when months are picked', async () => {
       const jun: MonthPoint = { ...jul, key: '2026-06', label: 'Jun-26', start: '2026-06-01', days: 30 };
       mocked.fetchMonthly.mockResolvedValue({ ...monthly, historical_months: [jun] });

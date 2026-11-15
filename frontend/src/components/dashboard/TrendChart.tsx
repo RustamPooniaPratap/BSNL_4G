@@ -10,7 +10,8 @@ import type { CircleSeriesInfo, MonthlyResponse, TrendResponse } from '../../typ
 import { UptimeHeatmap, type HeatmapColumn } from './UptimeHeatmap';
 import { ChartCard } from './ChartCard';
 import { DataTable } from './DataTable';
-import { AXIS_TICK, DENSE_CARD, HISTORY_LABEL, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor, type UptimeChartView } from './constants';
+import { AXIS_TICK, DENSE_CARD, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor, type UptimeChartView } from './constants';
+import { useSourceLabels } from '../../context/sourceLabels';
 import { SOURCE_LABEL_MARGIN, SourceMarks, SourceNote } from './SourceMarks';
 import { isCalculated, isHistorical, monthKind } from '../../lib/monthlyHistory';
 import { PeriodStatusBadge } from '../reporting/ReportingStatus';
@@ -80,6 +81,7 @@ export function TrendChart(props: TrendChartProps) {
   const trend = props.trend && circles ? trendByCircle(props.trend, circles.keys) : props.trend;
   const monthly = props.monthly && circles ? monthlyByCircle(props.monthly, circles.keys) : props.monthly;
   const style = styleFor(circles);
+  const sourceLabels = useSourceLabels();
 
   const switcher = <TrendViewSwitch view={view} onChange={setView} />;
   // Header controls: the chart view switch (when the page gives one) and the period switch, on one row.
@@ -90,7 +92,7 @@ export function TrendChart(props: TrendChartProps) {
     const isMonthly = view === 'monthly';
     const columns: HeatmapColumn[] = isMonthly
       ? (props.monthly?.months ?? []).map((m) => ({ key: m.key, label: m.partial ? `${m.label.replace(' MTD', '')}*` : m.label,
-          title: m.partial ? `${m.label} (${m.days} days)` : m.gap ? `${m.label} · No data` : isHistorical(m) ? `${m.label} · ${HISTORY_LABEL}` : m.label, values: m.by_circle }))
+          title: m.partial ? `${m.label} (${m.days} days)` : m.gap ? `${m.label} · No data` : isHistorical(m) ? `${m.label} · ${sourceLabels.history}` : m.label, values: m.by_circle }))
       : view === 'weekly'
         ? selectWeeks(props.trend?.weeks ?? [], weekList).map((w) => ({ key: w.label, label: w.label.replace('Week ', 'Wk-'), title: `${w.label} (${formatShortDate(w.start)}–${formatShortDate(w.end)})`, values: w.by_circle }))
         : selectDays(props.trend?.series ?? [], dayList).filter((p) => p.reported).map((p) => ({ key: p.date, label: p.date.slice(8), title: formatDate(p.date), values: p.by_circle }));
@@ -118,7 +120,7 @@ export function TrendChart(props: TrendChartProps) {
       <ChartCard className={DENSE_CARD}
         title="Uptime trend"
         description={months.some(isHistorical)
-          ? `${scopeLabel} for the months calculated from daily records; earlier months are the imported historical monthly totals (Excel source), every imported site with a value, outage-weighted.`
+          ? sourceLabels.description(scopeLabel, months.find(isCalculated)?.label)
           : `${scopeLabel}, by ${props.monthsFiltered ? 'selected' : ''} month. Recomputed from each site's monthly outage with today's On-Air / O&M flags; months reported earlier in the workbook's Summ sheet can differ slightly.`}
         action={actions}
         loading={props.monthlyLoading}
@@ -322,6 +324,7 @@ function WeeklyView({ trend, weeks, style }: { trend: TrendResponse; weeks: Tren
 }
 
 function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: SeriesStyle }) {
+  const sourceLabels = useSourceLabels();
   const types = monthly.report_types;
   const split = types.length > 1 || style.circles;
   const keys = types.length > 1 && !style.circles ? [COMBINED, ...types] : types;
@@ -370,7 +373,7 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
             <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={52} />
             <YAxis domain={[lower, 100]} tickFormatter={(v: number) => `${v}%`} tick={AXIS_TICK} tickLine={false} axisLine={false} width={48} />
             <Tooltip formatter={(value) => (value == null ? 'No data' : formatPct(Number(value)))} {...TOOLTIP_PROPS}
-              labelFormatter={(label, payload) => (payload?.[0]?.payload?.source === 'historical_import' ? `${label} · ${HISTORY_LABEL}` : String(label))} />
+              labelFormatter={(label, payload) => (payload?.[0]?.payload?.source === 'historical_import' ? `${label} · ${sourceLabels.history}` : String(label))} />
             <Legend itemSorter={null} {...LEGEND_PROPS} />
             <SourceMarks labels={data.map((d) => d.label)} kinds={months.map(monthKind)} />
             {keys.map((key) => (
@@ -399,7 +402,7 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
           formatPct(m.uptime_pct_blank_as_zero),
           m.gap ? '—' : isHistorical(m) ? `${formatNumber(m.sites_reported)} with a value` : `${formatNumber(m.sites_reported)} / ${formatNumber(m.sites_in_scope)}`,
           ...(monthStatuses ? [statusText(m)] : []),
-          m.gap ? 'No data' : isHistorical(m) ? HISTORY_LABEL : 'Calculated from daily records',
+          m.gap ? 'No data' : isHistorical(m) ? sourceLabels.history : 'Calculated from daily records',
         ])}
       />
     </>
@@ -407,9 +410,10 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
 }
 
 function BestWorst({ months }: { months: MonthlyResponse['months'] }) {
+  const { tag: sourceTag } = useSourceLabels();
   const complete = months.filter((m) => !m.partial && m.uptime_pct != null);
   if (complete.length < 2) return null;
-  const tag = (m: MonthlyResponse['months'][number]) => (isHistorical(m) ? ' (Excel)' : '');
+  const tag = (m: MonthlyResponse['months'][number]) => (isHistorical(m) ? sourceTag : '');
   const best = complete.reduce((a, b) => ((b.uptime_pct ?? 0) > (a.uptime_pct ?? 0) ? b : a));
   const worst = complete.reduce((a, b) => ((b.uptime_pct ?? 0) < (a.uptime_pct ?? 0) ? b : a));
   return (

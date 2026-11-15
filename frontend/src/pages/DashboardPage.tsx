@@ -23,6 +23,7 @@ import { fetchBreakdowns, fetchMonthly, fetchPeriod, fetchSummary, fetchTrends }
 import { allCircleKeys, lowestCircles, parseSelection, selectedSeries } from '../lib/circleSeries';
 import { populationSites } from '../lib/population';
 import { withHistory } from '../lib/monthlyHistory';
+import { NEUTRAL_SOURCE_LABELS, SOURCE_LABELS, SourceLabelsContext } from '../context/sourceLabels';
 
 /** Threshold Analysis › Uptime Buckets & Site Details (the bucket chart and site table moved there). */
 const BUCKETS_PATH = '/thresholds/buckets';
@@ -147,6 +148,7 @@ export function DashboardPage() {
   ) : null;
 
   return (
+    <SourceLabelsContext.Provider value={filters.reportType ? NEUTRAL_SOURCE_LABELS : SOURCE_LABELS}>
     <div className="space-y-3">
       <FilterBar options={options.data} filters={filters} onChange={setFilters} onReset={reset} canReset={!isDefault}
         title="Network uptime overview"
@@ -192,6 +194,7 @@ export function DashboardPage() {
         <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       </Link>
     </div>
+    </SourceLabelsContext.Provider>
   );
 }
 

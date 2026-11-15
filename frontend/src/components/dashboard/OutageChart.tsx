@@ -7,7 +7,8 @@ import { formatCompact, formatDate, formatMinutes, formatNumber, formatShortDate
 import type { MonthlyResponse, TrendResponse } from '../../types';
 import { ChartCard } from './ChartCard';
 import { DataTable } from './DataTable';
-import { AXIS_TICK, DENSE_CARD, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor, HISTORY_LABEL } from './constants';
+import { AXIS_TICK, DENSE_CARD, LEGEND_PROPS, OVERALL_COLOR, TOOLTIP_PROPS, reportTypeColor } from './constants';
+import { useSourceLabels } from '../../context/sourceLabels';
 import { SOURCE_LABEL_MARGIN, SourceMarks, SourceNote } from './SourceMarks';
 import { isHistorical, monthKind, type MonthKind } from '../../lib/monthlyHistory';
 import { TrendViewSwitch } from './TrendChart';
@@ -51,6 +52,7 @@ export function OutageChart(props: OutageChartProps) {
   const { trend, monthly, view, scopeLabel, outageView = 'overall' } = props;
   const [showCombined, setShowCombined] = useState(false);
   const isMonthly = view === 'monthly';
+  const sourceLabels = useSourceLabels();
   const types = (isMonthly ? monthly?.report_types : trend?.report_types) ?? [];
 
   let points: Point[];
@@ -66,7 +68,7 @@ export function OutageChart(props: OutageChartProps) {
     }));
   } else {
     points = (monthly?.months ?? []).map((m) => ({
-      label: m.label, tooltip: m.partial ? `${m.label} (${m.days} days)` : m.gap ? `${m.label} · No data` : isHistorical(m) ? `${m.label} · ${HISTORY_LABEL}` : m.label,
+      label: m.label, tooltip: m.partial ? `${m.label} (${m.days} days)` : m.gap ? `${m.label} · No data` : isHistorical(m) ? `${m.label} · ${sourceLabels.history}` : m.label,
       historical: isHistorical(m), kind: monthKind(m), total: m.outage_minutes, byType: m.outage_by_report_type, byCircle: m.outage_by_circle,
     }));
   }
