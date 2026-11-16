@@ -46,8 +46,8 @@ export function TrendPeriodPicker({ id, options, filters, onChange }: TrendPerio
   const chooseMode = (next: Mode) => {
     setMode(next);
     // Switching the kind of period switches the chart view; existing selections are kept.
-    if (next === 'range') onChange({ trend: '', days: '' });
-    else if (next === 'dates') onChange({ trend: '' });
+    if (next === 'range') onChange({ trend: '', days: '', months: '' });
+    else if (next === 'dates') onChange({ trend: '', months: '' });
     else onChange({ trend: next === 'weeks' ? 'weekly' : 'monthly' });
   };
 
@@ -88,13 +88,13 @@ export function TrendPeriodPicker({ id, options, filters, onChange }: TrendPerio
               <p className="text-xs text-muted-foreground">Daily uptime for every day in the range.</p>
               <div className="grid grid-cols-2 gap-2">
                 <RangeSelect label="From" value={filters.from} dates={dates.filter((d) => !filters.to || d <= filters.to)}
-                  onChange={(from) => onChange({ from, days: '', trend: '' })} />
+                  onChange={(from) => onChange({ from, days: '', trend: '', months: '' })} />
                 <RangeSelect label="To" value={filters.to} dates={dates.filter((d) => !filters.from || d >= filters.from)}
-                  onChange={(to) => onChange({ to, days: '', trend: '' })} />
+                  onChange={(to) => onChange({ to, days: '', trend: '', months: '' })} />
               </div>
               <Presets items={[
-                { label: 'Last 7 days', onClick: () => onChange({ from: dates.at(-7) ?? dates[0], to: dates.at(-1) ?? '', days: '', trend: '' }) },
-                { label: 'Month to date', onClick: () => onChange({ from: '', to: '', days: '', trend: '' }) },
+                { label: 'Last 7 days', onClick: () => onChange({ from: dates.at(-7) ?? dates[0], to: dates.at(-1) ?? '', days: '', trend: '', months: '' }) },
+                { label: 'Month to date', onClick: () => onChange({ from: '', to: '', days: '', trend: '', months: '' }) },
               ]} />
             </>
           )}
@@ -118,7 +118,7 @@ export function TrendPeriodPicker({ id, options, filters, onChange }: TrendPerio
                       disabled={!available}
                       aria-pressed={selected}
                       aria-label={`${formatDate(day)}${available ? '' : ' (not reported)'}`}
-                      onClick={() => onChange({ days: toggle(filters.dayList, day).sort().join(','), trend: '' })}
+                      onClick={() => onChange({ days: toggle(filters.dayList, day).sort().join(','), trend: '', months: '' })}
                       className={cn('h-8 rounded-md text-xs tabular-nums transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
                         selected ? 'bg-primary font-semibold text-primary-foreground'
                           : available ? 'hover:bg-muted' : 'cursor-not-allowed text-muted-foreground/40')}
@@ -129,9 +129,9 @@ export function TrendPeriodPicker({ id, options, filters, onChange }: TrendPerio
                 })}
               </div>
               <Presets items={[
-                { label: `Every ${weekdayName(dates.at(-1))}`, onClick: () => onChange({ days: dates.filter((d) => weekdayOf(d) === weekdayOf(dates.at(-1) ?? '')).join(','), trend: '' }) },
-                { label: 'Week starts (1, 8, 15, 22)', onClick: () => onChange({ days: [1, 8, 15, 22].map(dayOf).filter((d) => dates.includes(d)).join(','), trend: '' }) },
-                { label: 'Clear', onClick: () => onChange({ days: '', trend: '' }) },
+                { label: `Every ${weekdayName(dates.at(-1))}`, onClick: () => onChange({ days: dates.filter((d) => weekdayOf(d) === weekdayOf(dates.at(-1) ?? '')).join(','), trend: '', months: '' }) },
+                { label: 'Week starts (1, 8, 15, 22)', onClick: () => onChange({ days: [1, 8, 15, 22].map(dayOf).filter((d) => dates.includes(d)).join(','), trend: '', months: '' }) },
+                { label: 'Clear', onClick: () => onChange({ days: '', trend: '', months: '' }) },
               ]} />
               {!filters.dayList.length && <p className="text-xs text-muted-foreground">No dates picked: the date range is shown.</p>}
             </>
@@ -205,6 +205,10 @@ export function TrendPeriodPicker({ id, options, filters, onChange }: TrendPerio
 }
 
 function summary(filters: ResolvedFilters, months: FilterOptions['months']) {
+  if (filters.dailyMonth) {
+    const label = months.find((m) => m.key === filters.dailyMonth)?.label ?? filters.dailyMonth;
+    return `Daily · ${label}`;
+  }
   if (filters.trendView === 'monthly') {
     if (!filters.selectedMonths.length) return 'Months · all';
     const labels = months.filter((m) => filters.selectedMonths.includes(m.key)).map((m) => m.label);

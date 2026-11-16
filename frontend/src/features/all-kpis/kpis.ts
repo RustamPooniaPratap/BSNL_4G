@@ -1,4 +1,4 @@
-import { count, hours, pct } from './format';
+import { count, minutes, pct } from './format';
 import { availabilityTone, problemTone, type Tone } from './status';
 import type { HierarchyLevel, KpiFilterOptions, KpiValues } from './types';
 
@@ -39,8 +39,8 @@ export const KPIS: KpiDef[] = [
   { id: 'availability', name: 'Availability', key: 'availability_pct', format: pct, higherIsBetter: true, unit: 'pts', tone: availabilityTone, trend: 'availability',
     siteSort: 'availability', target: 98.5,
     definition: (sites) => `Outage-weighted availability of ${sites} over the period: 100 × (1 − outage ÷ (1,440 min × reported site-days)); never an average of daily percentages. Missing values are left out, never 0%.` },
-  { id: 'outage', name: 'Outage hours', key: 'outage_hours', format: hours, higherIsBetter: false, unit: '%', tone: () => 'neutral', trend: 'outage', siteSort: '-outage',
-    definition: (sites) => `Outage of ${sites} over the reported site-days of the period (hours = outage minutes ÷ 60).` },
+  { id: 'outage', name: 'Outage minutes', key: 'outage_minutes', format: minutes, higherIsBetter: false, unit: '%', tone: () => 'neutral', trend: 'outage', siteSort: '-outage',
+    definition: (sites) => `Outage minutes of ${sites}, summed over their reported site-days of the period.` },
   { id: 'usd', name: 'USD Sites', key: 'usd_sites', ...counts, tone: (v) => problemTone(v), trend: 'outage', siteSort: '-outage', population: true,
     definition: (sites) => `USD Sites: distinct ${sites} with outage > 0 on at least one reported day of the period. A count of sites, not of outage events.` },
   { id: 'nsla', name: 'NSLA Sites', key: 'nsla_sites', ...counts, tone: (v) => problemTone(v, 'bad'), trend: 'outage', siteSort: 'availability', population: true,

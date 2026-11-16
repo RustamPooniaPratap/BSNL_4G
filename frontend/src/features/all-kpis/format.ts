@@ -5,7 +5,6 @@ export const NA = 'Not available';
 /** A percentage, always with two decimals (display only: the value itself is never rounded). */
 export const pct = (v: number | null | undefined) => (v == null ? NA : `${v.toFixed(2)}%`);
 export const count = (v: number | null | undefined) => (v == null ? NA : formatNumber(v));
-export const hours = (v: number | null | undefined) => (v == null ? NA : `${formatNumber(Math.round(v * 10) / 10)} h`);
 export const minutes = (v: number | null | undefined) => (v == null ? NA : `${formatNumber(Math.round(v))} min`);
 
 /** Class of a numeric table cell or header: right-aligned, tabular figures. */

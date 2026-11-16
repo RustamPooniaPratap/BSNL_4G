@@ -17,6 +17,8 @@ export interface SourceLabels {
   noteDetail: string;
   /** Chart description when both sources are shown (``firstCalculated``: label of the first calculated month). */
   description: (scope: string, firstCalculated: string | undefined) => string;
+  /** Monthly charts: label the shaded months and draw the line where the calculated months start (shading always shown). */
+  annotate: boolean;
 }
 
 export const SOURCE_LABELS: SourceLabels = {
@@ -26,6 +28,7 @@ export const SOURCE_LABELS: SourceLabels = {
   pickerNote: ' Months marked Excel are historical monthly totals (Excel source); period figures cover calculated months only.',
   noteDetail: 'all imported sites with a value; not a population view',
   description: (scope) => `${scope} for the months calculated from daily records; earlier months are the imported historical monthly totals (Excel source), every imported site with a value, outage-weighted.`,
+  annotate: true,
 };
 
 export const NEUTRAL_SOURCE_LABELS: SourceLabels = {
@@ -35,6 +38,7 @@ export const NEUTRAL_SOURCE_LABELS: SourceLabels = {
   pickerNote: ' Period figures cover the months calculated from daily records.',
   noteDetail: 'every site with a value; not a population view',
   description: (scope, first) => `${scope} for the months calculated from daily records${first ? `; months before ${first} show the monthly reporting data` : '; other months show the monthly reporting data'} (every site with a value, outage-weighted).`,
+  annotate: false,
 };
 
 export const SourceLabelsContext = createContext<SourceLabels>(SOURCE_LABELS);

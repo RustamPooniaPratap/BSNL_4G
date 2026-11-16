@@ -58,6 +58,8 @@ export interface ResolvedFilters extends DashboardFilterState {
   historyMonthList: string[];
   /** Every selected month key, historical then calculated (empty: every month of both). */
   selectedMonths: string[];
+  /** 4G Saturation / LWE pages, Daily view with months picked: the month whose days are shown (the latest picked). */
+  dailyMonth: string | null;
   /** Query parameters for snapshot endpoints (summary, breakdowns, records). */
   snapshotParams: URLSearchParams;
   /** Query parameters for the trend endpoint. */
@@ -121,9 +123,15 @@ export function useDashboardFilters(options: FilterOptions | null, _legacy: { de
     const snapshotParams = new URLSearchParams(base);
     if (date) snapshotParams.set('reporting_date', date);
     const trendParams = new URLSearchParams(base);
+    // Daily view, one month at a time (4G Saturation / LWE pages): with months picked, the days of the latest picked month
+    // (a past month in full; the reporting month up to its latest reporting date). Without a pick: the date range or dates.
+    const picked = [...historyMonthList, ...monthList].sort();
+    const dailyMonth = reportType && trendView === 'daily' && picked.length ? picked.at(-1)! : null;
+    const monthDays = dailyMonth ? dates.filter((d) => d.startsWith(dailyMonth)) : [];
+    const lastDay = (key: string) => { const [y, m] = key.split('-').map(Number); return `${key}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
     // Specific dates: request the span they cover; the chart shows only the chosen days.
-    const start = dayList[0] ?? from;
-    const end = dayList.at(-1) ?? to;
+    const start = dailyMonth ? (monthDays[0] ?? `${dailyMonth}-01`) : dayList[0] ?? from;
+    const end = dailyMonth ? (monthDays.at(-1) ?? lastDay(dailyMonth)) : dayList.at(-1) ?? to;
     if (start) trendParams.set('start_date', start);
     if (end) trendParams.set('end_date', end);
     const monthlyParams = new URLSearchParams(snapshotParams);
@@ -136,6 +144,10 @@ export function useDashboardFilters(options: FilterOptions | null, _legacy: { de
     } else if (trendView === 'weekly') {
       periodParams.set('period', 'weeks');
       if (weekList.length) periodParams.set('weeks', weekList.join(','));
+    } else if (dailyMonth && monthList.includes(dailyMonth)) {
+      // The period figures cover the month the daily chart shows (a month with figures from daily records).
+      periodParams.set('period', 'months');
+      periodParams.set('months', dailyMonth);
     } else if (dayList.length) {
       periodParams.set('period', 'days');
       periodParams.set('days', dayList.join(','));
@@ -148,7 +160,7 @@ export function useDashboardFilters(options: FilterOptions | null, _legacy: { de
     return {
       reportType, circle, scope, date, from, to,
       trend: read('trend'), days: dayList.join(','), weeks: weekList.join(','), months: monthList.join(','),
-      trendView, dayList, weekList, monthList, historyMonthList, selectedMonths: [...historyMonthList, ...monthList],
+      trendView, dayList, weekList, monthList, historyMonthList, selectedMonths: [...historyMonthList, ...monthList], dailyMonth,
       snapshotParams, trendParams, monthlyParams, periodParams,
     };
   }, [options, searchParams, scope]);

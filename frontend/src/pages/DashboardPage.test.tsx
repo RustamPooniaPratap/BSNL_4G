@@ -425,6 +425,45 @@ describe('Trend period', () => {
     });
   });
 
+  describe('Daily view, one month at a time (4G Saturation / LWE)', () => {
+    const trendSpan = () => [lastParams(mocked.fetchTrends).get('start_date'), lastParams(mocked.fetchTrends).get('end_date')];
+
+    it.each([['LWE'], ['4G+Saturation']])('shows the days of the only picked month (%s)', async (project) => {
+      renderPage(`/?report_type=${project}&months=2026-09`);
+      await screen.findByRole('button', { name: 'Trend period' });
+      await waitFor(() => expect(trendSpan()).toEqual(['2026-09-01', '2026-09-30']));  // a past month in full
+      expect(lastParams(mocked.fetchPeriod).get('period')).toBe('months');
+      expect(lastParams(mocked.fetchPeriod).get('months')).toBe('2026-09');
+      expect(screen.getByRole('button', { name: 'Trend period' })).toHaveTextContent('Daily · Sep-26');
+    });
+
+    it('shows the days of the latest picked month when several are picked', async () => {
+      renderPage('/?report_type=LWE&months=2026-08,2026-09');
+      await waitFor(() => expect(trendSpan()).toEqual(['2026-09-01', '2026-09-30']));
+    });
+
+    it('shows the reporting month up to its latest reporting date', async () => {
+      renderPage('/?report_type=LWE&months=2026-09,2026-10');
+      await waitFor(() => expect(trendSpan()).toEqual(['2026-10-01', '2026-10-03']));
+    });
+
+    it('keeps the latest available month with Months · all, and weekly / monthly keep the full period', async () => {
+      renderPage('/?report_type=LWE');
+      await waitFor(() => expect(trendSpan()).toEqual(['2026-10-01', '2026-10-03']));  // unchanged default range
+      expect(lastParams(mocked.fetchPeriod).get('period')).toBe('range');
+      mocked.fetchTrends.mockClear();
+      renderPage('/?report_type=LWE&trend=monthly&months=2026-08,2026-09');
+      await waitFor(() => expect(lastParams(mocked.fetchMonthly).get('months')).toBe('2026-08,2026-09'));
+      expect(lastParams(mocked.fetchPeriod).get('months')).toBe('2026-08,2026-09');
+      expect(trendSpan()).toEqual(['2026-10-01', '2026-10-03']);  // the monthly view does not change the daily request
+    });
+
+    it('leaves the Overview as it was', async () => {
+      renderPage('/?months=2026-09');
+      await waitFor(() => expect(trendSpan()).toEqual(['2026-10-01', '2026-10-03']));
+    });
+  });
+
   it('switches the chart to months and picks a month from the period picker', async () => {
     const user = userEvent.setup();
     renderPage();

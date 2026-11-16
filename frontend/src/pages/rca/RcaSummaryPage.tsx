@@ -12,7 +12,7 @@ import { RootCauseBreakdown } from '../../components/rca/RcaBreakdown';
 import { RcaOverviewTable } from '../../components/rca/RcaOverviewTable';
 import { RcaAnalysisTile, RcaKpiTile, RcaSection } from '../../components/rca/RcaTiles';
 import type { Tint } from '../../components/portfolio/PortfolioKpis';
-import { RankedBars, RcaFilterBar, Segmented, SiteScopeNote, SourceValue, type BarRow } from '../../components/rca/RcaShared';
+import { RankedBars, RcaFilterBar, Segmented, SourceValue, type BarRow } from '../../components/rca/RcaShared';
 import { FILTER_KEYS, formatMin, rcaCoverageText, shortProject, type FilterKey } from '../../lib/rca';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDate, formatNumber } from '../../lib/format';
@@ -50,9 +50,10 @@ export function RcaSummaryPage() {
   const query = new URLSearchParams();
   for (const key of FILTER_KEYS) {
     const v = params.get(key);
-    if (v && key !== 'q' && key !== 'status') query.set(key, v);
+    // No Site Scope here: Population is the site control, so an old site_scope in the URL never filters the records.
+    if (v && key !== 'q' && key !== 'status' && key !== 'site_scope') query.set(key, v);
   }
-  // Site metrics (sites, USD, NSLA) follow the global population; the Site Scope record filter stays separate.
+  // Site metrics (sites, USD, NSLA) follow the global population, the one site control of the RCA Summary.
   const { scope, sitesLabel } = usePopulation();
   const summary = useApiQuery(`rca-summary-${scope}-${query}`, (signal) => fetchRcaSummary(query, scope, signal));
   if (!view) return <Navigate to={{ pathname: '/rca/summary', search: location.search }} replace />;  // unknown subpage: the Overview
@@ -85,7 +86,6 @@ export function RcaSummaryPage() {
           }, { replace: true })} />} />
       ) : !options.error && <Skeleton className="h-16 w-full" />}
 
-      <SiteScopeNote scope={s?.site_scope} />
       {summary.error && <Alert variant="destructive" role="alert"><AlertDescription>{summary.error.message}</AlertDescription></Alert>}
       {!s && !summary.error && <Skeleton className="h-96 w-full" aria-label="Loading the RCA summary" />}
       {s && (

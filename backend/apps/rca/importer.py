@@ -172,14 +172,26 @@ def _circle_error_accountability(issues: list[dict]) -> dict:
     return {'total_rejected_rows': len(rejected), 'circles': result}
 
 
+def _has_period(start, end) -> bool:
+    """A reporting period the upload copy can be filed under: two dates, the end not before the start."""
+    return isinstance(start, date) and isinstance(end, date) and start <= end
+
+
 def _store(path: Path, batch: RcaImportBatch) -> None:
-    """Keep a copy of the uploaded workbook for audit (never modified). The stored name is generated, not the upload's."""
+    """Keep a copy of the uploaded workbook for audit (never modified), filed under its reporting period. The stored name
+    is generated, not the upload's. Without a valid period nothing is copied: ImportRejected (a 400), never a guessed date."""
+    if not _has_period(batch.period_start, batch.period_end):
+        raise ImportRejected('The upload has no valid reporting period (reporting date missing or invalid); the file was not stored.')
     folder = Path(settings.DATA_DIR) / 'processed' / 'rca_uploads' / f'{batch.period_start.isoformat()}_{batch.period_end.isoformat()}'
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f'{batch.pk}_{batch.checksum_sha256[:12]}{path.suffix.lower()}'
     shutil.copyfile(path, target)
-    batch.stored_path = str(target)
-    batch.save(update_fields=['stored_path'])
+    try:
+        batch.stored_path = str(target)
+        batch.save(update_fields=['stored_path'])
+    except Exception:
+        target.unlink(missing_ok=True)  # no copy without its batch record
+        raise
 
 
 def _period(batch: RcaImportBatch) -> tuple[date, date] | None:
@@ -224,10 +236,13 @@ def preview(path: Path, filename: str, *, user=None, details: dict | None = None
     try:
         parsed = parser.parse(path, filename, **expect)
     except parser.ParseError as exc:
-        batch = RcaImportBatch.objects.create(original_filename=filename, checksum_sha256=checksum, sheet_name=parser.SHEET_NAME,
-                                              status=RcaImportBatch.Status.FAILED, imported_by=user, error=str(exc), **fields)
-        if details:
-            _store(path, batch)
+        # A consolidated upload without an entered date takes its period from the rows, so an unreadable workbook has no
+        # period: the failed batch is recorded (with its error) but no copy is filed, and the parse error is returned.
+        with transaction.atomic():
+            batch = RcaImportBatch.objects.create(original_filename=filename, checksum_sha256=checksum, sheet_name=parser.SHEET_NAME,
+                                                  status=RcaImportBatch.Status.FAILED, imported_by=user, error=str(exc), **fields)
+            if details and _has_period(batch.period_start, batch.period_end):
+                _store(path, batch)
         raise ImportRejected(str(exc)) from exc
     rows, report = parsed['rows'], parsed['report']
     if kind == RcaImportBatch.UploadType.CONSOLIDATED:
@@ -293,15 +308,19 @@ def preview(path: Path, filename: str, *, user=None, details: dict | None = None
     })
     rejected = bool(details) and (not rows or bool(report.get('file_error')))
     error = report.get('file_error') or ('No row passed validation; nothing can be imported.' if rejected else '')
-    batch = RcaImportBatch.objects.create(
-        original_filename=filename, checksum_sha256=checksum, sheet_name=report['sheet'], imported_by=user,
-        report=report, rows=rows, counts={'total': report['rows_read'], 'valid': len(rows), 'rejected': report['rejected_rows']},
-        units=sorted({(r['project'], r['circle']) for r in rows}),
-        status=RcaImportBatch.Status.REJECTED if rejected else RcaImportBatch.Status.PREVIEWED,
-        error=error, **fields,
-    )
-    if details and batch.period_start:
-        _store(path, batch)
+    # A previewable upload must have a reporting period (entered, or the workbook's latest date); never a substituted one.
+    if details and rows and not rejected and not _has_period(fields.get('period_start'), fields.get('period_end')):
+        raise ImportRejected('The workbook has no valid reporting date: enter the reporting date, or check the Date column.')
+    with transaction.atomic():  # the batch and its stored copy together, or neither
+        batch = RcaImportBatch.objects.create(
+            original_filename=filename, checksum_sha256=checksum, sheet_name=report['sheet'], imported_by=user,
+            report=report, rows=rows, counts={'total': report['rows_read'], 'valid': len(rows), 'rejected': report['rejected_rows']},
+            units=sorted({(r['project'], r['circle']) for r in rows}),
+            status=RcaImportBatch.Status.REJECTED if rejected else RcaImportBatch.Status.PREVIEWED,
+            error=error, **fields,
+        )
+        if details and _has_period(batch.period_start, batch.period_end):
+            _store(path, batch)
     return batch
 
 

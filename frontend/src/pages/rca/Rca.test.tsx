@@ -478,22 +478,32 @@ describe('RCA in the sidebar', () => {
 });
 
 describe('RCA Site Scope', () => {
-  it('is one shared filter: sent to the API, kept across Summary tabs, explained when not All Sites', async () => {
+  it('is not on the RCA Summary: Population is its one site control, on every tab, and an old site_scope URL never filters', async () => {
     const user = userEvent.setup();
-    m.fetchRcaSummary.mockResolvedValue({ ...SUMMARY, site_scope: { scope: 'om_start', label: 'O&M Start Sites',
-      coverage: { total: 105, om_start: 100, not_started: 3, unclassified: 2 } } });
-    renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary' });
-    const scope = await screen.findByRole('combobox', { name: 'Site Scope' });
-    expect(scope).toHaveTextContent('All Sites');  // the default
-    expect(Object.fromEntries(m.fetchRcaSummary.mock.calls.at(-1)![0] as URLSearchParams)).not.toHaveProperty('site_scope');
-    await user.click(scope);
-    await user.click(await screen.findByRole('option', { name: 'O&M Start Sites' }));
-    await waitFor(() => expect((m.fetchRcaSummary.mock.calls.at(-1)![0] as URLSearchParams).get('site_scope')).toBe('om_start'));
-    expect(await screen.findByText(/Site Scope: O&M Start Sites\./)).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('100 of 105 records');
-    expect(screen.getByRole('status')).toHaveTextContent('2 records cannot be classified');
-    await user.click(screen.getByRole('link', { name: 'Circle-wise RCA Breakdown' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('site_scope=om_start');  // kept when changing tabs
+    renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary?site_scope=om_start&circle=RJ', population: true });
+    const population = await screen.findByRole('combobox', { name: 'Population' });
+    expect(screen.queryByRole('combobox', { name: 'Site Scope' })).not.toBeInTheDocument();
+    expect(population).toHaveTextContent('On-Air');
+    await waitFor(() => expect(m.fetchRcaSummary).toHaveBeenCalled());
+    const sent = () => m.fetchRcaSummary.mock.calls.at(-1)!;
+    expect((sent()[0] as URLSearchParams).get('circle')).toBe('RJ');  // the other filters are kept
+    expect(Object.fromEntries(sent()[0] as URLSearchParams)).not.toHaveProperty('site_scope');
+    expect(sent()[1]).toBe('on_air');
+    await waitFor(() => expect(m.fetchRcaOverview.mock.calls.at(-1)?.[1]).toBe('on_air'));
+    expect(Object.fromEntries(m.fetchRcaOverview.mock.calls.at(-1)![0] as URLSearchParams)).not.toHaveProperty('site_scope');
+    // Changing the Population refetches the summary (every analysis tab) and the Overview table with it.
+    await user.click(population);
+    await user.click(await screen.findByRole('option', { name: 'O&M Start' }));
+    await waitFor(() => expect(sent()[1]).toBe('om_start'));
+    await waitFor(() => expect(m.fetchRcaOverview.mock.calls.at(-1)?.[1]).toBe('om_start'));
+    for (const tab of ['Circle-wise RCA Breakdown', 'Root Cause Analysis', 'Project & Circle Analysis', 'Daily & Monthly Trends']) {
+      await user.click(screen.getByRole('link', { name: tab }));
+      expect(screen.getByRole('combobox', { name: 'Population' })).toHaveTextContent('O&M Start');
+      expect(screen.queryByRole('combobox', { name: 'Site Scope' })).not.toBeInTheDocument();
+      expect(sent()[1]).toBe('om_start');
+      expect(Object.fromEntries(sent()[0] as URLSearchParams)).not.toHaveProperty('site_scope');
+    }
+    expect(screen.queryByText(/^Site Scope:/)).not.toBeInTheDocument();
   });
 
   it('is on the RCA Register too and narrows its records on the server', async () => {

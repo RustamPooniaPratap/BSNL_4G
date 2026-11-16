@@ -4,8 +4,9 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/compon
 import { cn } from '@/lib/utils';
 import { PeriodStatusBadge } from '../../../components/reporting/ReportingStatus';
 import { useApiQuery } from '../../../hooks/useApiQuery';
+import { formatCompact } from '../../../lib/format';
 import { fetchKpiTrends } from '../api';
-import { count, hours, NA, pct } from '../format';
+import { count, minutes, NA, pct } from '../format';
 import { availabilityTone, toneText } from '../status';
 import type { Granularity, KpiTrendPoint } from '../types';
 import { KpiTable } from './KpiTable';
@@ -21,7 +22,7 @@ function formatSeries(key: string, value: unknown) {
   if (value == null) return NA;
   const v = Number(value);
   if (key === 'availability_pct') return pct(v);
-  if (key === 'outage_hours') return hours(v);
+  if (key === 'outage_minutes') return minutes(v);
   return `${count(v)} sites`;
 }
 
@@ -69,9 +70,9 @@ export function TrendPanel({ query, kind, period, initial = 'day', title: headin
               </>
             ) : (
               <>
-                <YAxis yAxisId="h" tick={CHART.tick} tickLine={false} axisLine={false} unit=" h" width={60} />
+                <YAxis yAxisId="h" tick={CHART.tick} tickLine={false} axisLine={false} unit=" min" width={72} tickFormatter={(v: number) => formatCompact(v)} />
                 <YAxis yAxisId="s" orientation="right" tick={CHART.tick} tickLine={false} axisLine={false} allowDecimals={false} width={44} />
-                <Bar yAxisId="h" dataKey="outage_hours" name="Outage hours" fill={CHART.accent} radius={[2, 2, 0, 0]} maxBarSize={36} isAnimationActive={false} />
+                <Bar yAxisId="h" dataKey="outage_minutes" name="Outage minutes" fill={CHART.accent} radius={[2, 2, 0, 0]} maxBarSize={36} isAnimationActive={false} />
                 <Line yAxisId="s" dataKey="usd_sites" name="USD Sites" stroke="var(--akp-warn)" strokeWidth={2} dot={false} isAnimationActive={false} />
                 <Line yAxisId="s" dataKey="nsla_sites" name="NSLA Sites" stroke={CHART.crit} strokeWidth={2} dot={false} isAnimationActive={false} />
               </>
@@ -95,7 +96,7 @@ function TrendTable({ points, kind }: { points: KpiTrendPoint[]; kind: 'availabi
           <TableHead>Period</TableHead><TableHead className="r">Days</TableHead>
           {kind === 'availability'
             ? <TableHead className="r">Availability</TableHead>
-            : <><TableHead className="r">Outage</TableHead><TableHead className="r">USD Sites</TableHead><TableHead className="r">NSLA Sites</TableHead><TableHead className="r">Below 60%</TableHead></>}
+            : <><TableHead className="r">Outage (min)</TableHead><TableHead className="r">USD Sites</TableHead><TableHead className="r">NSLA Sites</TableHead><TableHead className="r">Below 60%</TableHead></>}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -108,7 +109,7 @@ function TrendTable({ points, kind }: { points: KpiTrendPoint[]; kind: 'availabi
               <TableCell className={cn('r', toneText(availabilityTone(p.availability_pct)))}>{pct(p.availability_pct)}</TableCell>
             ) : (
               <>
-                <TableCell className="r">{hours(p.outage_hours)}</TableCell><TableCell className="r">{count(p.usd_sites)}</TableCell>
+                <TableCell className="r">{minutes(p.outage_minutes)}</TableCell><TableCell className="r">{count(p.usd_sites)}</TableCell>
                 <TableCell className="r">{count(p.nsla_sites)}</TableCell><TableCell className="r">{count(p.below_60_sites)}</TableCell>
               </>
             )}

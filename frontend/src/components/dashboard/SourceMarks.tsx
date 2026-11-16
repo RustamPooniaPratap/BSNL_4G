@@ -3,7 +3,7 @@ import type { MonthKind } from '../../lib/monthlyHistory';
 import { useSourceLabels } from '../../context/sourceLabels';
 import { DAILY_LABEL } from './constants';
 
-/** Top margin of a monthly chart that shows source marks: their labels sit above the plot, never on the data. */
+/** Top margin of a monthly chart whose source marks are labelled: the labels sit above the plot, never on the data. */
 export const SOURCE_LABEL_MARGIN = 18;
 const LABEL = { fontSize: 10, fill: 'var(--muted-foreground)' } as const;
 
@@ -20,8 +20,9 @@ export function SourceMarks({ labels, kinds }: { labels: string[]; kinds: MonthK
   return (
     <>
       <ReferenceArea x1={labels[first]} x2={labels[last]} fill="var(--muted-foreground)" fillOpacity={0.07} ifOverflow="extendDomain"
-        label={{ value: labels_.history, position: 'top', offset: 4, ...LABEL }} />
-      {daily > last && (
+        label={labels_.annotate ? { value: labels_.history, position: 'top', offset: 4, ...LABEL } : undefined} />
+      {/* The line where the calculated months start, and both labels, only where the page annotates the sources. */}
+      {labels_.annotate && daily > last && (
         <ReferenceLine x={labels[daily]} stroke="var(--muted-foreground)" strokeDasharray="2 3"
           label={{ value: DAILY_LABEL, position: 'top', offset: 4, ...LABEL }} />
       )}

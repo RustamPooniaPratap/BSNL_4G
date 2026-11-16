@@ -29,7 +29,7 @@ import re
 from dataclasses import dataclass
 
 APPROVED: dict[str, tuple[str, ...]] = {
-    'IaasP Power': ('Shadow issue','Low solar generation', 'EB power cut', 'Solar Panel fault','CCU fault', 'RM fail', 'MPPT Issue', 'Contactor faulty', 'Power cable faulty',
+    'IaasP Power': ('Shadow issue','Low solar generation', 'EB power cut', 'Solar Panel fault','CCU fault', 'RM fail', 'MPPT Issue', 'Contractor faulty', 'Power cable faulty',
                     'LVD issue','Meter Faulty', 'Backplane faulty', 'High V & Low V', 'SMPS Issue','EB Cable fault','EB Bill not paid','EB tx. Faulty','EB Disconnect','EB LT Cable Fault'),
     'IaasP Others': ('IaasP Theft', 'CT payment Issue', 'Owner issue',
                      'Natural Clamity', 'Tech Delay', 'IaasP Link'),

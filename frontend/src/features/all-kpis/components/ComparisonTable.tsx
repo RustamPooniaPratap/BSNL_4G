@@ -1,6 +1,6 @@
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { usePopulation } from '../../../context/population';
-import { count, hours, pct } from '../format';
+import { count, minutes, pct } from '../format';
 import type { KpiSummary, KpiValues } from '../types';
 import { KpiTable } from './KpiTable';
 import { ChangeText, Panel } from './Ui';
@@ -10,7 +10,7 @@ type Row = [string, keyof KpiValues, (v: number | null) => string, 'pts' | '%', 
 /** Labels name the selected population (``sites``: "On-Air sites" / "O&M Start sites"). */
 const rowsFor = (sites: string): Row[] => [
   [`Availability (${sites})`, 'availability_pct', pct, 'pts', true],
-  ['Outage hours', 'outage_hours', hours, '%', false],
+  ['Outage minutes', 'outage_minutes', minutes, '%', false],
   [`USD Sites (${sites})`, 'usd_sites', count, '%', false],
   [`NSLA Sites (${sites}, period uptime < 98.5%)`, 'nsla_sites', count, '%', false],
   ['Sites ≥ 98.5% (period)', 'above_98_5_sites', count, '%', true],

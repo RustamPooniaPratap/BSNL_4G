@@ -348,8 +348,13 @@ def _details(data) -> dict:
         errors['period_start'] = 'Enter a valid reporting date.'
     elif start and start > timezone.localdate():
         errors['period_start'] = 'The reporting date cannot be in the future.'
-    end = parser._date(data.get('period_end')) if data.get('period_end') else start
-    if start and end != start:
+    raw_end = data.get('period_end')
+    end = parser._date(raw_end) if raw_end else start
+    if raw_end and end is None:
+        errors['period_end'] = 'Enter a valid period end date.'
+    elif raw_end and not raw_start:
+        errors['period_start'] = 'Enter the reporting date (period start) with the period end.'
+    elif start and end != start:
         errors['period_end'] = 'An RCA upload is for one reporting date; periods are daily.'
     remarks = str(data.get('remarks') or '').strip()[:2000]
     if kind == RcaImportBatch.UploadType.CIRCLE:

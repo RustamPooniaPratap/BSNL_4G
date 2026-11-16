@@ -14,14 +14,14 @@ import { RcaPanel } from './components/RcaPanel';
 import { TrendPanel } from './components/TrendPanel';
 import { TrendsView } from './components/TrendsView';
 import { ChangeText, StatStrip } from './components/Ui';
-import { count, hours, NA, pct } from './format';
+import { count, minutes, NA, pct } from './format';
 import { isKpiId, KPI_BY_ID } from './kpis';
 import { availabilityTone, problemTone } from './status';
 import type { KpiSummary } from './types';
 import { TABS, useKpiFilters, type KpiTab } from './useKpiFilters';
 
 const VIEW_TITLES: Record<KpiTab, string> = {
-  overview: 'All KPIs – overview', trends: 'KPI trends', availability: 'Availability', outage: 'Outage hours', usd: 'USD Sites', nsla: 'NSLA Sites',
+  overview: 'All KPIs – overview', trends: 'KPI trends', availability: 'Availability', outage: 'Outage minutes', usd: 'USD Sites', nsla: 'NSLA Sites',
   below_98_5: 'Sites < 98.5%', below_60: 'Sites < 60%', ranking: 'Ranking', rca: 'Root cause analysis', drilldown: 'Circle / CI / IE / Site',
 };
 /**
@@ -125,24 +125,27 @@ const prevOf = (s: KpiSummary, key: keyof NonNullable<KpiSummary['previous']>, f
 const availabilityCards = (s: KpiSummary, sites: string): KpiCardSpec[] => [
   { label: 'Availability (selected period)', value: pct(s.current!.availability_pct), current: s.current!.availability_pct, previous: s.previous?.availability_pct, unit: 'pts', availability: true,
     higherIsBetter: true, tone: availabilityTone(s.current!.availability_pct), tab: 'availability',
-    note: s.current!.availability_pct == null ? 'No reported values in this period' : `Outage-weighted, ${sites}` },
+    note: s.current!.availability_pct == null ? 'No reported values in this period' : `${s.period?.label ?? 'Selected period'} · outage-weighted, ${sites}` },
 ];
 const outageCards = (s: KpiSummary, sites: string, om: boolean): KpiCardSpec[] => [
-  { label: 'Outage minutes', value: count(s.current!.outage_minutes == null ? null : Math.round(s.current!.outage_minutes)), current: s.current!.outage_minutes, previous: s.previous?.outage_minutes,
-    prev: prevOf(s, 'outage_minutes', (v) => count(v == null ? null : Math.round(v))), higherIsBetter: false, tab: 'outage' },
-  { label: 'Outage hours', value: hours(s.current!.outage_hours), current: s.current!.outage_hours, previous: s.previous?.outage_hours, prev: prevOf(s, 'outage_hours', hours), higherIsBetter: false, tab: 'outage' },
+  { label: 'Outage minutes', value: minutes(s.current!.outage_minutes), current: s.current!.outage_minutes, previous: s.previous?.outage_minutes,
+    prev: prevOf(s, 'outage_minutes', minutes), higherIsBetter: false, tab: 'outage' },
   { label: 'USD Sites', value: count(s.current!.usd_sites), current: s.current!.usd_sites, previous: s.previous?.usd_sites, prev: prevOf(s, 'usd_sites', count), higherIsBetter: false, tone: problemTone(s.current!.usd_sites), tab: 'usd',
     note: populationReason(s, s.current!.usd_sites, om) ?? `${sites} with outage > 0 on a day (sites, not outage events)` },
 ];
 const slaCards = (s: KpiSummary, sites: string, om: boolean): KpiCardSpec[] => [
   { label: 'NSLA Sites (< 98.5%)', value: count(s.current!.nsla_sites), current: s.current!.nsla_sites, previous: s.previous?.nsla_sites, prev: prevOf(s, 'nsla_sites', count), higherIsBetter: false, tone: problemTone(s.current!.nsla_sites, 'bad'), tab: 'nsla',
-    note: populationReason(s, s.current!.nsla_sites, om) ?? `NSLA (${sites}, period uptime < 98.5%)` },
+    note: populationReason(s, s.current!.nsla_sites, om) ?? `${sites} with uptime over ${s.period?.label ?? 'the period'} below 98.5%` },
   { label: 'Sites ≥ 98.5% (period)', value: count(s.current!.above_98_5_sites), current: s.current!.above_98_5_sites, previous: s.previous?.above_98_5_sites, prev: prevOf(s, 'above_98_5_sites', count), higherIsBetter: true,
     tone: s.current!.above_98_5_sites ? 'good' : 'neutral', tab: 'below_98_5' },
-  { label: 'Sites < 98.5% (period)', value: count(s.current!.below_98_5_sites), current: s.current!.below_98_5_sites, previous: s.previous?.below_98_5_sites, prev: prevOf(s, 'below_98_5_sites', count), higherIsBetter: false, tone: problemTone(s.current!.below_98_5_sites), tab: 'below_98_5' },
   { label: 'Sites < 60% (period)', value: count(s.current!.below_60_sites), current: s.current!.below_60_sites, previous: s.previous?.below_60_sites, prev: prevOf(s, 'below_60_sites', count), higherIsBetter: false, tone: problemTone(s.current!.below_60_sites, 'bad'), tab: 'below_60' },
 ];
-/** Daily / weekly / monthly availability: the latest point of each trend (all derived from daily records). */
+/**
+ * Daily / weekly / monthly availability: the latest point of each trend (all derived from daily records). Days and weeks
+ * stay within the selected period; months are whole calendar months (the trend API lists every month with data), so
+ * Monthly availability is the latest month, not the selected period. Sites < 98.5% is not a tile: it is the same count
+ * as NSLA Sites, site for site.
+ */
 function useLatest(query: URLSearchParams, granularity: 'day' | 'week' | 'month') {
   const params = new URLSearchParams(query);
   params.set('granularity', granularity);
@@ -158,15 +161,17 @@ function Overview({ s, f, query, onOpen, canRca, sites, om }: {
   const month = useLatest(query, 'month');
   const p = s.period?.label ?? '';
   const compareLabel = s.previous_period?.label;
-  const latestCard = (label: string, point: typeof day, what: string): KpiCardSpec => ({
-    label, value: point ? pct(point.availability_pct) : NA, tone: availabilityTone(point?.availability_pct), availability: Boolean(point), note: point ? `Latest ${what}: ${point.label}` : undefined, tab: 'availability',
+  const latestCard = (label: string, point: typeof day, note: string): KpiCardSpec => ({
+    label, value: point ? pct(point.availability_pct) : NA, tone: availabilityTone(point?.availability_pct), availability: Boolean(point), note: point ? note : undefined, tab: 'availability',
   });
   return (
     <>
       {/* Every overview KPI in one grid (reference tile grid): five per row on desktop, equal width and height. */}
       <section aria-label="Key indicators">
         <div className="akp-tiles akp-tiles5">
-          {[...availabilityCards(s, sites), latestCard('Daily availability', day, 'day'), latestCard('Weekly availability', week, 'week'), latestCard('Monthly availability', month, 'month'),
+          {[...availabilityCards(s, sites), latestCard('Daily availability', day, `Latest day of the selected period: ${day?.label}`),
+            latestCard('Weekly availability', week, `Latest week of the selected period: ${week?.label}`),
+            latestCard('Monthly availability', month, `Latest month with data: ${month?.label}, a calendar month (not limited to the selected period)`),
             ...outageCards(s, sites, om), ...slaCards(s, sites, om)].map((c) => <KpiCard key={c.label} spec={c} onOpen={onOpen} />)}
         </div>
       </section>

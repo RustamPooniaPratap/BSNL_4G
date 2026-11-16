@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { usePopulation } from '../../../context/population';
 import { useApiQuery } from '../../../hooks/useApiQuery';
 import { fetchKpiHierarchy, fetchKpiSites } from '../api';
-import { count, hours, pct } from '../format';
+import { count, minutes, pct } from '../format';
 import { availabilityTone, problemTone, toneText } from '../status';
 import type { HierarchyLevel, KpiGroupRow } from '../types';
 import type { useKpiFilters } from '../useKpiFilters';
@@ -83,7 +83,7 @@ function GroupTable({ level, query, onOpen }: { level: HierarchyLevel; query: UR
         <TableHeader>
           <TableRow>
             <TableHead>{NAMES[level]}</TableHead>{level !== 'circle' && <TableHead>Circle</TableHead>}<TableHead>Project</TableHead>
-            <TableHead className="r">Availability</TableHead><TableHead className="r">Outage</TableHead><TableHead className="r">USD Sites</TableHead>
+            <TableHead className="r">Availability</TableHead><TableHead className="r">Outage (min)</TableHead><TableHead className="r">USD Sites</TableHead>
             <TableHead className="r">NSLA Sites</TableHead><TableHead className="r">&lt; 98.5%</TableHead><TableHead className="r">&lt; 60%</TableHead>
             <TableHead className="w-6" aria-hidden="true" />
           </TableRow>
@@ -99,7 +99,7 @@ function GroupTable({ level, query, onOpen }: { level: HierarchyLevel; query: UR
               {level !== 'circle' && <TableCell>{r.circle}</TableCell>}
               <TableCell>{project(r.project)}</TableCell>
               <TableCell className={cn('r', toneText(availabilityTone(r.availability_pct)))}>{pct(r.availability_pct)}</TableCell>
-              <TableCell className="r">{hours(r.outage_hours)}</TableCell>
+              <TableCell className="r">{minutes(r.outage_minutes)}</TableCell>
               <TableCell className="r">{count(r.usd_sites)}</TableCell>
               <TableCell className="r">{count(r.nsla_sites)}</TableCell>
               <TableCell className="r">{count(r.below_98_5_sites)}</TableCell>
@@ -153,7 +153,7 @@ export function SitesTable({ query, defaultSort = 'availability', title = 'Site-
         <TableHeader>
           <TableRow>
             <TableHead>Site ID</TableHead><TableHead>Name</TableHead><TableHead>Circle</TableHead><TableHead>CI / Cluster</TableHead><TableHead>IE</TableHead>
-            <TableHead className="r">Availability</TableHead><TableHead className="r">Outage</TableHead>
+            <TableHead className="r">Availability</TableHead><TableHead className="r">Outage (min)</TableHead>
             <TableHead>SLA bucket</TableHead><TableHead>USD Site</TableHead><TableHead>NSLA Site</TableHead>
           </TableRow>
         </TableHeader>
@@ -166,7 +166,7 @@ export function SitesTable({ query, defaultSort = 'availability', title = 'Site-
               <TableCell className="max-w-40 truncate" title={r.ci}>{r.ci}</TableCell>
               <TableCell className="max-w-40 truncate" title={r.ie}>{r.ie}</TableCell>
               <TableCell className={cn('r', toneText(availabilityTone(r.availability_pct)))}>{r.availability_pct == null ? <span className="muted">No value</span> : pct(r.availability_pct)}</TableCell>
-              <TableCell className="r">{hours(r.outage_hours)}</TableCell>
+              <TableCell className="r">{minutes(r.outage_minutes)}</TableCell>
               <TableCell>{r.bucket_label ?? <span className="muted">No value</span>}</TableCell>
               <TableCell>{yesNo(r.usd, 't-warn')}</TableCell>
               <TableCell>{yesNo(r.nsla, 't-crit')}</TableCell>

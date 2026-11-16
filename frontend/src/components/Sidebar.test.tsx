@@ -22,7 +22,7 @@ describe('Sidebar order and groups', () => {
     await user.click(within(nav()).getByRole('button', { name: 'Alert' }));
     await user.click(within(nav()).getByRole('button', { name: "All KPI's" }));
     expect(links()).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance',
-      'All KPIs – Overview', 'KPI Trends (Month / Week)', 'Ranking', 'Availability', 'Outage Hours', 'USD Sites', 'NSLA Sites', 'Sites Below 98.5%',
+      'All KPIs – Overview', 'KPI Trends (Month / Week)', 'Ranking', 'Availability', 'Outage Minutes', 'USD Sites', 'NSLA Sites', 'Sites Below 98.5%',
       'Sites Below 60%', 'RCA', 'Circle / CI / IE / Site', 'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload Circle RCA',
       'Data Source', 'Data Source & Quality', 'Uptime Data Upload', 'CSV Arrival Tracking', 'Users & Roles', 'Organization',
       'Email Setup', 'Automations', 'Email History']);
@@ -105,11 +105,11 @@ describe('Sidebar order and groups', () => {
     await user.click(group);
     expect(within(nav()).queryByRole('link', { name: 'Availability' })).not.toBeInTheDocument();
     await user.click(group);
-    await user.click(within(nav()).getByRole('link', { name: 'Outage Hours' }));
+    await user.click(within(nav()).getByRole('link', { name: 'Outage Minutes' }));
     expect(screen.getByTestId('location')).toHaveTextContent('tab=outage');
     expect(screen.getByTestId('location')).toHaveTextContent(/project=4G(?:%20|\+)Saturation/);
     expect(screen.getByTestId('location')).toHaveTextContent('circle=MP');
-    expect(within(nav()).getByRole('link', { name: 'Outage Hours' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav()).getByRole('link', { name: 'Outage Minutes' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('navigates each existing KPI section to its matching tab query', async () => {
@@ -121,7 +121,7 @@ describe('Sidebar order and groups', () => {
       ['KPI Trends (Month / Week)', '/all-kpis?tab=trends'],
       ['Ranking', '/all-kpis?tab=ranking'],
       ['Availability', '/all-kpis?tab=availability'],
-      ['Outage Hours', '/all-kpis?tab=outage'],
+      ['Outage Minutes', '/all-kpis?tab=outage'],
       ['USD Sites', '/all-kpis?tab=usd'],
       ['NSLA Sites', '/all-kpis?tab=nsla'],
       ['Sites Below 98.5%', '/all-kpis?tab=below_98_5'],

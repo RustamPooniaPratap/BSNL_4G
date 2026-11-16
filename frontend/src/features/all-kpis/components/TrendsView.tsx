@@ -3,19 +3,20 @@ import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ReferenceLine, Res
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { useApiQuery } from '../../../hooks/useApiQuery';
+import { formatCompact } from '../../../lib/format';
 import { fetchKpiTrends } from '../api';
-import { count, hours, pct } from '../format';
+import { count, minutes, pct } from '../format';
 import { availabilityTone, toneText } from '../status';
 import type { Granularity, KpiTrendPoint } from '../types';
 import { KpiTable } from './KpiTable';
 import { ChangeText, Panel, Spark, Tabs } from './Ui';
 import { CHART } from './theme';
 
-type Key = 'availability_pct' | 'outage_hours' | 'usd_sites' | 'nsla_sites' | 'below_98_5_sites' | 'below_60_sites';
+type Key = 'availability_pct' | 'outage_minutes' | 'usd_sites' | 'nsla_sites' | 'below_98_5_sites' | 'below_60_sites';
 /** [label, field of the trend point, format, higher is better, change unit] — fields of /trends/, unchanged. */
 const ROWS: [string, Key, (v: number | null) => string, boolean, 'pts' | '%'][] = [
   ['Availability', 'availability_pct', pct, true, 'pts'],
-  ['Outage hours', 'outage_hours', hours, false, '%'],
+  ['Outage minutes', 'outage_minutes', minutes, false, '%'],
   ['USD Sites', 'usd_sites', count, false, '%'],
   ['NSLA Sites', 'nsla_sites', count, false, '%'],
   ['Sites < 98.5%', 'below_98_5_sites', count, false, '%'],
@@ -78,7 +79,7 @@ export function TrendsView({ query }: { query: URLSearchParams }) {
       {points.length > 0 && (
         <div className="akp-row">
           <MiniChart title="Availability" points={points} dataKey="availability_pct" line format={pct} />
-          <MiniChart title="Outage hours" points={points} dataKey="outage_hours" format={hours} />
+          <MiniChart title="Outage minutes" points={points} dataKey="outage_minutes" format={minutes} compact />
           <MiniChart title="USD Sites" points={points} dataKey="usd_sites" format={count} />
           <MiniChart title="NSLA Sites" points={points} dataKey="nsla_sites" format={count} />
         </div>
@@ -88,8 +89,8 @@ export function TrendsView({ query }: { query: URLSearchParams }) {
 }
 
 /** One KPI over the periods: a line with the 98.5% SLA line (availability), bars otherwise; provisional bars lighter. */
-function MiniChart({ title, points, dataKey, format, line }: {
-  title: string; points: KpiTrendPoint[]; dataKey: Key; format: (v: number | null) => string; line?: boolean;
+function MiniChart({ title, points, dataKey, format, line, compact }: {
+  title: string; points: KpiTrendPoint[]; dataKey: Key; format: (v: number | null) => string; line?: boolean; /** Large values (outage minutes): compact axis ticks. */ compact?: boolean;
 }) {
   const data = points.map((p) => ({ label: p.label, value: (p[dataKey] as number | null) ?? null, provisional: provisional(p) }));
   if (!data.some((d) => d.value != null)) return <Panel title={title} empty emptyMessage="Not available for these periods." />;
@@ -114,7 +115,7 @@ function MiniChart({ title, points, dataKey, format, line }: {
             <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
               <CartesianGrid stroke={CHART.grid} vertical={false} />
               <XAxis dataKey="label" tick={CHART.tick} tickLine={false} axisLine={{ stroke: 'var(--akp-axis)' }} interval="preserveStartEnd" minTickGap={12} />
-              <YAxis tick={CHART.tick} tickLine={false} axisLine={false} allowDecimals={false} width={52} />
+              <YAxis tick={CHART.tick} tickLine={false} axisLine={false} allowDecimals={false} width={52} tickFormatter={compact ? (v: number) => formatCompact(v) : undefined} />
               {tip}
               <Bar dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={36} isAnimationActive={false}>
                 {data.map((d) => <Cell key={d.label} fill="var(--akp-accent)" fillOpacity={d.provisional ? 0.45 : 1} />)}

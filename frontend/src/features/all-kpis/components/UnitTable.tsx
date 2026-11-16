@@ -3,7 +3,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/compon
 import { cn } from '@/lib/utils';
 import { useApiQuery } from '../../../hooks/useApiQuery';
 import { fetchKpiHierarchy } from '../api';
-import { count, hours, pct } from '../format';
+import { count, minutes, pct } from '../format';
 import type { KpiDef } from '../kpis';
 import { availabilityTone, problemTone, toneText } from '../status';
 import type { HierarchyLevel, KpiGroupRow, KpiPeriod, KpiValues } from '../types';
@@ -92,7 +92,7 @@ export function UnitTable({ level, query, previous, kpi, total, onOpen, title, n
     { id: 'status', head: 'Status', cell: (r) => { const t = availabilityTone(r.availability_pct); return <StatusPill tone={t}>{AVAILABILITY_STATUS[t]}</StatusPill>; } },
     { id: 'nsla', head: 'NSLA Sites', num: true, sort: (r) => r.nsla_sites, cell: (r) => count(r.nsla_sites) },
     { id: 'usd', head: 'USD Sites', num: true, sort: (r) => r.usd_sites, cell: (r) => count(r.usd_sites) },
-    { id: 'outage', head: 'Outage', num: true, sort: (r) => r.outage_hours, cell: (r) => hours(r.outage_hours) },
+    { id: 'outage', head: 'Outage (min)', num: true, sort: (r) => r.outage_minutes, cell: (r) => minutes(r.outage_minutes) },
     { id: 'b985', head: '< 98.5%', num: true, sort: (r) => r.below_98_5_sites, cell: (r) => count(r.below_98_5_sites) },
     { id: 'b60', head: '< 60%', num: true, sort: (r) => r.below_60_sites, cell: (r) => <span className={toneText(problemTone(r.below_60_sites, 'bad'))}>{count(r.below_60_sites)}</span> },
   ];
@@ -122,7 +122,7 @@ export function UnitTable({ level, query, previous, kpi, total, onOpen, title, n
     return [<TableCell key="s" className="r">{count(t.total_sites)}</TableCell>, <TableCell key="a" className="r">{pct(t.availability_pct)}</TableCell>,
       <TableCell key="st"><StatusPill tone={availabilityTone(t.availability_pct)}>{AVAILABILITY_STATUS[availabilityTone(t.availability_pct)]}</StatusPill></TableCell>,
       <TableCell key="n" className="r">{count(t.nsla_sites)}</TableCell>, <TableCell key="u" className="r">{count(t.usd_sites)}</TableCell>,
-      <TableCell key="o" className="r">{hours(t.outage_hours)}</TableCell>, <TableCell key="b" className="r">{count(t.below_98_5_sites)}</TableCell>,
+      <TableCell key="o" className="r">{minutes(t.outage_minutes)}</TableCell>, <TableCell key="b" className="r">{count(t.below_98_5_sites)}</TableCell>,
       <TableCell key="b6" className="r">{count(t.below_60_sites)}</TableCell>];
   };
   const lead = kpi ? 2 : 3;

@@ -367,7 +367,7 @@ function MonthlyView({ monthly, style }: { monthly: MonthlyResponse; style: Seri
       </dl>
       <div className="h-[clamp(224px,30vh,280px)]" role="img" aria-label="Line chart of monthly uptime">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: marked ? SOURCE_LABEL_MARGIN : 8, right: 12, bottom: 0, left: -8 }}>
+          <LineChart data={data} margin={{ top: marked && sourceLabels.annotate ? SOURCE_LABEL_MARGIN : 8, right: 12, bottom: 0, left: -8 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
             {/* Height for the longest angled label ("Nov-26 MTD"), so its start is not cut off below the axis. */}
             <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={52} />

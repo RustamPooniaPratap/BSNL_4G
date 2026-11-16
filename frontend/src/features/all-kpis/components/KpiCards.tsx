@@ -30,7 +30,7 @@ export interface KpiCardSpec {
   tab?: KpiTab;
 }
 
-/** The value with its unit set smaller ("98.745" + "%", "409.6" + " h"); text values are shown as they are. */
+/** The value with its unit set smaller ("98.745" + "%", "24,573" + " min"); text values are shown as they are. */
 function Value({ value }: { value: string }) {
   const m = /^(-?[\d,.]+)(\s?)(%|h|min)$/.exec(value);
   return <span className="v">{m ? <>{m[1]}<small>{m[2]}{m[3]}</small></> : value}</span>;

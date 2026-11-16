@@ -107,6 +107,7 @@ export function OutageChart(props: OutageChartProps) {
 function OverallOutage({ points, types, view, picked, showCombined, onShowCombined }: {
   points: Point[]; types: string[]; view: TrendView; picked?: boolean; showCombined: boolean; onShowCombined: (v: boolean) => void;
 }) {
+  const { annotate } = useSourceLabels();
   const isMonthly = view === 'monthly';
   const split = types.length > 1;
   // 4G and LWE always; the combined total only when asked for (it dwarfs the two networks).
@@ -125,7 +126,7 @@ function OverallOutage({ points, types, view, picked, showCombined, onShowCombin
       )}
       <div className="h-[clamp(208px,28vh,256px)]" role="img" aria-label={`Line chart of ${view} outage minutes`}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: isMonthly && points.some((p) => p.historical) ? SOURCE_LABEL_MARGIN : 4, right: 12, bottom: 0, left: -4 }}>
+          <LineChart data={data} margin={{ top: isMonthly && annotate && points.some((p) => p.historical) ? SOURCE_LABEL_MARGIN : 4, right: 12, bottom: 0, left: -4 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
             <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={false}
               minTickGap={isMonthly ? 0 : 16} interval={isMonthly ? 0 : undefined}

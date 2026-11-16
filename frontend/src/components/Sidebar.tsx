@@ -86,7 +86,7 @@ const entries: NavEntry[] = [
       kpiPage('trends', 'KPI Trends (Month / Week)', ChartLine, 'Overview & Reports'),
       kpiPage('ranking', 'Ranking', Trophy, 'Overview & Reports'),
       kpiPage('availability', 'Availability', Activity, 'Performance KPIs'),
-      kpiPage('outage', 'Outage Hours', Gauge, 'Performance KPIs'),
+      kpiPage('outage', 'Outage Minutes', Gauge, 'Performance KPIs'),
       kpiPage('usd', 'USD Sites', Radio, 'Performance KPIs'),
       kpiPage('nsla', 'NSLA Sites', ClipboardCheck, 'Performance KPIs'),
       kpiPage('below_98_5', 'Sites Below 98.5%', Layers3, 'Performance KPIs'),

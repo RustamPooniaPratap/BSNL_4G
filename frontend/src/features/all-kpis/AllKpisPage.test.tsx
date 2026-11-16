@@ -34,8 +34,8 @@ const OPTIONS: KpiFilterOptions = {
 const row = (circle: string, over: Partial<KpiValues> = {}) => ({ ...values(over), key: circle, project: '4G Saturation', circle });
 // Six circles, so the ranking shades the three lowest.
 const CIRCLES: KpiHierarchy = { level: 'circle', rows: [
-  row('RJ'), row('MP', { availability_pct: 99.5, outage_hours: 10 }), row('OD', { availability_pct: 97.1, outage_hours: 80 }), row('BH', { availability_pct: 95.2, outage_hours: 120 }),
-  row('UP', { availability_pct: 99.9, outage_hours: 2 }), row('KL', { availability_pct: 58.4, outage_hours: 500, below_60_sites: 9 }),
+  row('RJ'), row('MP', { availability_pct: 99.5, outage_minutes: 600, outage_hours: 10 }), row('OD', { availability_pct: 97.1, outage_minutes: 4800, outage_hours: 80 }), row('BH', { availability_pct: 95.2, outage_minutes: 7200, outage_hours: 120 }),
+  row('UP', { availability_pct: 99.9, outage_minutes: 120, outage_hours: 2 }), row('KL', { availability_pct: 58.4, outage_minutes: 30000, outage_hours: 500, below_60_sites: 9 }),
 ] };
 const PREVIOUS: KpiHierarchy = { level: 'circle', rows: [row('RJ', { availability_pct: 99.9 }), row('MP', { availability_pct: 98.0 })] };
 const point = (key: string, label: string, over: Partial<KpiTrendPoint> = {}): KpiTrendPoint => ({
@@ -63,15 +63,16 @@ describe("All KPI's", () => {
     expect(screen.queryByText(/O&M Start data is not available/)).not.toBeInTheDocument();  // On-Air population: nothing depends on it here
     expect(screen.queryByText(/handover/i)).not.toBeInTheDocument();  // not a project concept: no card, label or placeholder
     expect(screen.getByRole('group', { name: 'Availability (selected period)' })).toHaveTextContent('98.75%');
-    expect(screen.getByRole('group', { name: 'Outage hours' })).toHaveTextContent('410 h');
+    expect(screen.getByRole('group', { name: 'Outage minutes' })).toHaveTextContent('24,573 min');  // minutes from outage_minutes, never hours
+    expect(screen.queryByRole('group', { name: 'Outage hours' })).not.toBeInTheDocument();
   });
 
   it('shows the overview KPIs in one grid, without the banner, Site Portfolio or Data Completeness', async () => {
     renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis' });
     const grid = await screen.findByRole('region', { name: 'Key indicators' });
     const tiles = within(grid).getAllByRole('group').map((g) => g.getAttribute('aria-label'));
-    expect(tiles).toEqual(['Availability (selected period)', 'Daily availability', 'Weekly availability', 'Monthly availability', 'Outage minutes', 'Outage hours',
-      'USD Sites', 'NSLA Sites (< 98.5%)', 'Sites ≥ 98.5% (period)', 'Sites < 98.5% (period)', 'Sites < 60% (period)']);
+    expect(tiles).toEqual(['Availability (selected period)', 'Daily availability', 'Weekly availability', 'Monthly availability', 'Outage minutes',
+      'USD Sites', 'NSLA Sites (< 98.5%)', 'Sites ≥ 98.5% (period)', 'Sites < 60% (period)']);  // Sites < 98.5% = NSLA Sites: one tile
     expect(new Set(tiles).size).toBe(tiles.length);  // no duplicates
     expect(screen.queryByText(/4G & LWE Site Performance/)).not.toBeInTheDocument();  // the banner
     expect(screen.queryByRole('region', { name: 'Site Portfolio' })).not.toBeInTheDocument();
@@ -80,6 +81,21 @@ describe("All KPI's", () => {
     expect(screen.queryByText(/Data Completeness/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'View title' })).not.toBeInTheDocument();  // no heading card on the overview
     for (const gone of [/coverage/i, /missing site-days/i]) expect(screen.queryByText(gone)).not.toBeInTheDocument();
+  });
+
+  it('names the period of each availability tile: selected period, latest day / week of it, latest calendar month', async () => {
+    m.fetchKpiTrends.mockImplementation(async (p: URLSearchParams) => {
+      const g = p.get('granularity') as 'day' | 'week' | 'month';
+      const label = { day: '01 Nov', week: 'W1 Nov 2026', month: 'Nov 2026 (MTD)' }[g];
+      return { granularity: g, points: [point('k', label, { availability_pct: 97.25 })] };
+    });
+    renderWithWorkbook(<AllKpisPage />, { url: '/all-kpis' });
+    const grid = await screen.findByRole('region', { name: 'Key indicators' });
+    expect(within(grid).getByRole('group', { name: 'Availability (selected period)' })).toHaveTextContent('01 Nov 2026 · outage-weighted');
+    expect(await within(grid).findByText('Latest day of the selected period: 01 Nov')).toBeInTheDocument();
+    expect(within(grid).getByText('Latest week of the selected period: W1 Nov 2026')).toBeInTheDocument();
+    expect(within(grid).getByText(/Latest month with data: Nov 2026 \(MTD\), a calendar month \(not limited to the selected period\)/)).toBeInTheDocument();
+    expect(within(grid).queryByRole('group', { name: 'Sites < 98.5% (period)' })).not.toBeInTheDocument();
   });
 
   it('has no heading card on any view: the KPI views keep their definition line and the O&M Start data check', async () => {
@@ -140,13 +156,14 @@ describe("All KPI's", () => {
   it('opens a KPI view from the menu with this period against the previous and the units ranked by it', async () => {
     const user = userEvent.setup();
     renderWithWorkbook(<><Sidebar /><AllKpisPage /><Location /></>, { url: '/all-kpis' });
-    await user.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Outage Hours' }));
+    await user.click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Outage Minutes' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('tab=outage'));
-    const strip = await screen.findByRole('group', { name: 'Outage hours: this period against the previous' });
-    expect(strip).toHaveTextContent('410 h');  // the existing hours format (whole hours)
-    const table = await screen.findByRole('region', { name: 'Circle-wise · Outage hours table' });
+    const strip = await screen.findByRole('group', { name: 'Outage minutes: this period against the previous' });
+    expect(strip).toHaveTextContent('24,573 min');  // canonical outage minutes (display rounding only)
+    expect(strip).not.toHaveTextContent(/\d h\b/);
+    const table = await screen.findByRole('region', { name: 'Circle-wise · Outage minutes table' });
     await waitFor(() => expect(within(table).getAllByRole('button', { name: /^Open Circle/ }).map((b) => b.textContent)).toEqual(['UP', 'MP', 'OD', 'BH', 'RJ', 'KL']));  // lowest outage first
-    expect(screen.getByRole('img', { name: /Outage hours: weakest/ })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /Outage minutes: weakest/ })).toBeInTheDocument();
   });
 
   it('lists the sites of a threshold KPI through the existing bucket filter', async () => {

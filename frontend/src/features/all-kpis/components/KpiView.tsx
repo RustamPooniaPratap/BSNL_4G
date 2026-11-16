@@ -62,8 +62,6 @@ export function KpiView({ kpi, s, f, query, options, sites, reason }: {
   if (kpi.id === 'availability') {
     const tone = availabilityTone(cur);
     items.push({ label: 'SLA threshold', value: '98.5%', sub: 'existing threshold' }, { label: 'Status', value: <StatusPill tone={tone}>{AVAILABILITY_STATUS[tone]}</StatusPill> });
-  } else if (kpi.id === 'outage') {
-    items.push({ label: 'Outage minutes', value: count(s.current?.outage_minutes == null ? null : Math.round(s.current.outage_minutes)), sub: 'this period' });
   } else {
     items.push({ label: `${sites} with a value`, value: count(s.current?.sites_with_values), sub: 'sites with availability in the period' });
   }
