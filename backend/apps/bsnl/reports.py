@@ -26,6 +26,7 @@ from apps.dashboard import metrics
 from apps.dashboard.workbook import MINUTES_PER_DAY
 
 from .common import BUCKETS, Period, d_long, d_short, fmt, rca_rows, report_period, whole_minutes
+from .classification import responsibility_label
 from .models import Bucket, DistributionRecipient, ReportType
 
 SCOPE = metrics.DEFAULT_SCOPE  # On-Air, the portal's default population
@@ -402,14 +403,15 @@ def build(ds, report_type: str, circle: dict | None, *, project: str = '', pairs
         s = F.sites.iloc[i]
         cause, bk = top_cause(by_site_cur.get(keys_cur[i], []))
         nm_rows.append([s['site_id'], _names(F.sites['ie_name'].iloc[[i]]).iloc[0], s['report_type'], float(F.uptime[i]), TARGET,
-                        'Yes' if F.usd[i] else '', whole_minutes(F.outage[i]), cause, bk])
+                        'Yes' if F.usd[i] else '', whole_minutes(F.outage[i]), cause, responsibility_label(bk)])
     R.table(f'Sites not meeting SLA ({len(nm_idx)})',
             [Col('Site'), Col('NE'), Col('Category'), Col('Uptime %', True, _num(3)), Col('Target %', True, _num(2)), Col('USD'),
              Col('Outage Minutes', True, _num(0)), Col('Main RCA'), Col('Bucket')], nm_rows, 'Not meeting SLA')
 
     tb = sum(A.bk_minutes.values()) or 1e-9
     R.table('Outage Minutes by RCA bucket', [Col('Bucket'), Col('Outage Minutes', True, _num(0)), Col('Share', True, lambda v, r: fmt(v, 1) + '%'), Col('SLA treatment')],
-            [[b, whole_minutes(A.bk_minutes[b]), A.bk_minutes[b] / tb * 100, 'Claim exclusion' if b in EXCLUDABLE else 'Counts against SLA' if b == Bucket.OWN else 'Close RCA']
+            [[responsibility_label(b), whole_minutes(A.bk_minutes[b]), A.bk_minutes[b] / tb * 100,
+              'Claim exclusion' if b in EXCLUDABLE else 'Counts against SLA' if b == Bucket.OWN else 'Unclassified' if b == Bucket.UNCLASSIFIED else 'Close RCA']
              for b in BUCKETS], 'RCA buckets')
 
     if report_type == ReportType.WEEKLY:

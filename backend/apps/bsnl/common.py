@@ -2,7 +2,7 @@
 
 Buckets (reference ``autoBucket`` / ``bucketOf``, adapted to the portal's approved RCA taxonomy, decision 17 Nov 2026):
 an RCA record's approved Final Bucket (apps.rca.taxonomy) is mapped by RcaBucketMapping; a blank Final Bucket is
-Pending; a Final Bucket outside the approved taxonomy is Pending too (its RCA is not classified yet).
+Unclassified; a Final Bucket outside the approved taxonomy or without a valid mapping is Unclassified too.
 
 Periods (reference ``d1Start`` / ``weekRange``), on the portal's daily data instead of outage timestamps:
 - D-1: the latest complete reporting date of the data (the reference uses the last full day of the dump).
@@ -18,9 +18,10 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from apps.rca import taxonomy
 
-from .models import Bucket, RcaBucketMapping
+from .classification import get_bucket_classification, load_bucket_mapping
+from .models import Bucket
 
-BUCKETS = (Bucket.OWN, Bucket.CUSTOMER, Bucket.THIRD_PARTY, Bucket.PENDING)
+BUCKETS = (Bucket.OWN, Bucket.CUSTOMER, Bucket.THIRD_PARTY, Bucket.PENDING, Bucket.UNCLASSIFIED)
 # The decision of 17 Nov 2026 (BSNL-attributable Final Buckets); seeded by migration 0002 and editable afterwards.
 DEFAULT_CUSTOMER_FINALS = ('BSNL OFC', 'BSNL Media')
 MONTHS = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
@@ -29,17 +30,12 @@ TIMEZONE = 'Asia/Kolkata'
 
 
 def bucket_map() -> dict[str, str]:
-    """Approved Final Bucket -> responsibility bucket (unmapped approved buckets count as Own, as the reference's
-    fallback)."""
-    mapped = dict(RcaBucketMapping.objects.values_list('final_bucket', 'bucket'))
-    return {final: mapped.get(final, Bucket.OWN) for final in taxonomy.APPROVED}
+    """Load the normalized authoritative mapping once for a report/request."""
+    return load_bucket_mapping()
 
 
 def bucket_of(final_bucket: str, mapping: dict[str, str]) -> str:
-    final = taxonomy.approved_final(final_bucket)
-    if final is None:
-        return Bucket.PENDING
-    return mapping[final]
+    return get_bucket_classification(final_bucket, mapping).mapped_bucket
 
 
 # --- Periods ---------------------------------------------------------------------------------------------------------

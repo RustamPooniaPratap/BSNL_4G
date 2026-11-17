@@ -38,7 +38,14 @@ from django.db.models import Count, Max, Min, OuterRef, Q, QuerySet, Subquery, S
 
 from rest_framework.exceptions import ValidationError
 
-
+from apps.bsnl.classification import (
+    filter_by_responsibility,
+    get_bucket_classification,
+    grouped_responsibility_totals,
+    load_bucket_mapping,
+    responsibility_label,
+    responsibility_options,
+)
 
 from . import taxonomy
 from .parser import text_key
@@ -127,7 +134,7 @@ def in_scope(pairs) -> QuerySet:
 
 
 
-def filtered(params, pairs=None) -> QuerySet:
+def filtered(params, pairs=None, mapping: dict[str, str] | None = None) -> QuerySet:
 
     """Records matching the query parameters (date / date_from / date_to, project, circle, buckets, category, q),
 
@@ -205,6 +212,10 @@ def filtered(params, pairs=None) -> QuerySet:
         status = params['status']
 
         qs = qs.filter(Q(workflow__isnull=True) | Q(workflow__status='')) if status == 'not_recorded' else qs.filter(workflow__status=status)
+
+    responsibility = [value.strip() for value in (params.get('responsibility') or '').split(',') if value.strip()]
+    if responsibility:
+        qs = filter_by_responsibility(qs, responsibility, mapping)
 
     q = (params.get('q') or '').strip()
 
@@ -321,6 +332,8 @@ def options(pairs=None) -> dict:
 
         'bucket_2': bucket_2,
 
+        'responsibilities': responsibility_options(),
+
         'categories': [{'value': str(c.pk), 'label': c.name} for c in RcaCauseCategory.objects.all()],
 
         'statuses': [{'value': v, 'label': label} for v, label in RcaWorkflow.Status.choices],
@@ -375,10 +388,10 @@ def workflow_json(workflow: RcaWorkflow | None) -> dict | None:
 
 
 
-def record_json(rec: RcaRecord, *, full: bool = False) -> dict:
+def record_json(rec: RcaRecord, *, full: bool = False, mapping: dict[str, str] | None = None) -> dict:
 
     workflow = getattr(rec, 'workflow', None)  # None until someone records follow-up
-
+    classification = get_bucket_classification(rec.final_bucket, mapping if mapping is not None else load_bucket_mapping())
     data = {
 
         'id': rec.pk, 'reporting_date': rec.reporting_date.isoformat(), 'project': rec.project, 'project_raw': rec.project_raw,
@@ -390,6 +403,8 @@ def record_json(rec: RcaRecord, *, full: bool = False) -> dict:
         'outage_minutes': rec.outage_minutes, 'final_bucket': rec.final_bucket, 'final_bucket_unclassified': not rec.final_bucket_key,
 
         'bucket_2': rec.bucket_2, 'bucket_2_unclassified': not rec.bucket_2_key,
+        'ownership': classification.ownership, 'responsibility_bucket_2': classification.bucket_2,
+        'mapped_bucket': classification.mapped_bucket,
 
         'rca_text': rec.rca_text, 'rca_unclassified': not rec.rca_key,
 
@@ -435,7 +450,8 @@ def record_json(rec: RcaRecord, *, full: bool = False) -> dict:
 
 def register(params, pairs=None) -> dict:
 
-    qs = filtered(params, pairs).select_related('workflow')
+    mapping = load_bucket_mapping()
+    qs = filtered(params, pairs, mapping).select_related('workflow')
 
     ordering = ORDERINGS.get(params.get('ordering') or 'outage_desc', ORDERINGS['outage_desc'])
 
@@ -452,10 +468,8 @@ def register(params, pairs=None) -> dict:
     total = qs.count()
 
     rows = qs.order_by(*ordering)[(page - 1) * size: page * size]
-
     return {'count': total, 'page': page, 'page_size': size, 'pages': max(1, -(-total // size)),
-
-            'results': [record_json(r) for r in rows]}
+            'results': [record_json(r, mapping=mapping) for r in rows]}
 
 
 
@@ -498,7 +512,9 @@ def summary(params, pairs=None) -> dict:
 
     population_scope = parse_scope(params.get('scope'))
 
-    qs = filtered(params, pairs)
+    mapping = load_bucket_mapping()
+    qs = filtered(params, pairs, mapping)
+    responsibility = grouped_responsibility_totals(qs, mapping)
 
     totals = qs.aggregate(records=Count('id'), minutes=Sum('outage_minutes'),
 
@@ -682,7 +698,7 @@ def summary(params, pairs=None) -> dict:
 
     scope = sitescope.parse(params.get('site_scope'))
 
-    unscoped = filtered({**dict(params.items()), 'site_scope': sitescope.ALL}, pairs) if scope != sitescope.ALL else qs
+    unscoped = filtered({**dict(params.items()), 'site_scope': sitescope.ALL}, pairs, mapping) if scope != sitescope.ALL else qs
 
     bounds = qs.aggregate(earliest=Min('reporting_date'), latest=Max('reporting_date'))
     rca_dates = (bounds['earliest'], bounds['latest']) if bounds['earliest'] or bounds['latest'] else None
@@ -785,7 +801,10 @@ def summary(params, pairs=None) -> dict:
 
         },
 
-        'top_records': [record_json(r) for r in top],
+        'top_records': [record_json(r, mapping=mapping) for r in top],
+
+        'responsibility': [{'bucket': bucket, 'label': responsibility_label(bucket), **totals}
+                           for bucket, totals in responsibility.items()],
 
     }
 

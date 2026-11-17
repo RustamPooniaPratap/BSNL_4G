@@ -3,7 +3,7 @@
 Only what the portal did not already hold is stored here. Sites, daily uptime and RCA records stay in their own apps
 (sitedata, rca) and are read, never copied:
 
-- RcaBucketMapping: the approved RCA Final Bucket -> responsibility bucket (Own / Customer / Third party / Pending).
+- RcaBucketMapping: the approved RCA Final Bucket -> responsibility bucket (Own / Customer / Third party / Pending / Unclassified).
 - DistributionRecipient: the reference's "Distribution Master" (To / Cc per Circle and report type).
 - CircleLetterProfile: the reference's "BSNL Circle Contacts" and "Sender Details" sheets, one row per Circle.
 - ReportRun: every report email sent (or attempted), scheduled or manual, with its result.
@@ -22,6 +22,7 @@ class Bucket(models.TextChoices):
     CUSTOMER = 'Customer', 'Customer (BSNL)'
     THIRD_PARTY = 'Third party', 'Third party'
     PENDING = 'Pending', 'Pending'
+    UNCLASSIFIED = 'Unclassified', 'Unclassified'
 
 
 class ReportType(models.TextChoices):
@@ -32,7 +33,7 @@ class ReportType(models.TextChoices):
 
 
 class RcaBucketMapping(models.Model):
-    """Responsibility bucket of one approved Final Bucket (apps.rca.taxonomy.APPROVED). Blank Final Buckets are Pending."""
+    """Responsibility bucket of one approved Final Bucket (apps.rca.taxonomy.APPROVED)."""
     final_bucket = models.CharField(max_length=100, unique=True)
     bucket = models.CharField(max_length=12, choices=Bucket.choices)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')

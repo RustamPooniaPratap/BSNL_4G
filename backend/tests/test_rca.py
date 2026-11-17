@@ -3,14 +3,22 @@
 Synthetic workbooks only (the real RCA workbook is checked against the live database separately).
 """
 import tempfile
-from datetime import datetime
+import io
+from datetime import date, datetime
+from types import SimpleNamespace
 from pathlib import Path
+from unittest import mock
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
+import numpy as np
+import pandas as pd
 from openpyxl import Workbook
+from openpyxl import load_workbook
 
+from apps.bsnl.models import RcaBucketMapping
 from apps.rca import importer, parser
 from apps.rca.models import RcaCauseMapping, RcaEvent, RcaImportBatch, RcaRecord, RcaWorkflow
 from tests.auth_helpers import portal_user
@@ -77,6 +85,103 @@ class RcaTestCase(TestCase):
 
     def imported(self, **kwargs) -> RcaImportBatch:
         return importer.commit(importer.preview(self.path(**kwargs), 'Book1_RCA.xlsx', user=self.admin), user=self.admin)
+
+
+class ResponsibilityMappingTests(RcaTestCase):
+    def test_pending_mapping_is_returned_aggregated_and_filterable(self):
+        record = RcaRecord.objects.create(
+            reporting_date=date(2026, 10, 21), project='4G Saturation', project_raw='4G Saturation',
+            circle='MP', circle_raw='Madhya Pradesh', site_id='UVMP101', site_key='UVMP101',
+            final_bucket='TCS', final_bucket_key='tcs', bucket_2='RAC Card', bucket_2_key='raccard',
+            rca_text='Card failure', rca_key='card failure', outage_minutes=3.5,
+        )
+        RcaBucketMapping.objects.filter(final_bucket='TCS').update(bucket='Pending', updated_by=self.admin)
+        self.client.force_login(self.admin)
+
+        pending = self.client.get(reverse('rca-records'), {'responsibility': 'Pending'}).json()
+        self.assertEqual((pending['count'], pending['results'][0]['ownership'],
+                          pending['results'][0]['responsibility_bucket_2'], pending['results'][0]['mapped_bucket']),
+                         (1, 'Pending', 'Pending', 'Pending'))
+        self.assertEqual(pending['results'][0]['bucket_2'], record.bucket_2)
+        self.assertEqual(self.client.get(reverse('rca-records'), {'responsibility': 'Unclassified'}).json()['count'], 0)
+
+        summary = self.client.get(reverse('rca-summary')).json()
+        responsibility = {row['bucket']: row['records'] for row in summary['responsibility']}
+        self.assertEqual((responsibility['Pending'], responsibility['Unclassified']), (1, 0))
+
+    def test_rca_overview_site_split_uses_third_party_mapping(self):
+        RcaRecord.objects.create(
+            reporting_date=date(2026, 10, 21), project='4G Saturation', project_raw='4G Saturation',
+            circle='MP', circle_raw='Madhya Pradesh', site_id='UVMP101', site_key='UVMP101',
+            final_bucket='TCS', final_bucket_key='tcs', bucket_2='RAC Card', bucket_2_key='raccard',
+            rca_text='Card failure', rca_key='card failure', outage_minutes=30,
+        )
+        ds = SimpleNamespace(
+            sites=pd.DataFrame([{'site_id': 'UVMP101', 'site_name': 'Test Site', 'circle': 'MP',
+                                 'report_type': '4G Saturation', 'ci_name': 'CI'}]),
+            outage=np.array([[0.0]]), dates=[date(2026, 10, 21)], latest_date=date(2026, 10, 21),
+            position=lambda _day: 0,
+        )
+        with mock.patch('apps.rca.overview.dataset', return_value=ds), \
+             mock.patch('apps.dashboard.metrics.population', return_value={}), \
+             mock.patch('apps.dashboard.metrics.population_flags', return_value=np.array([True])), \
+             mock.patch('apps.dashboard.metrics.site_uptime', return_value=np.array([100.0])):
+            from apps.rca.overview import get_rca_overview
+            result = get_rca_overview({'date': '2026-10-21', 'tab': 'site'})
+
+        self.assertEqual(result['rows'][0]['split']['third_party_min'], 30)
+        self.assertEqual(result['total_row']['split']['third_party_min'], 30)
+
+    def test_register_uses_current_mapping_without_overwriting_source_bucket_2(self):
+        record = RcaRecord.objects.create(
+            reporting_date=date(2026, 10, 21), project='4G Saturation', project_raw='4G Saturation',
+            circle='MP', circle_raw='Madhya Pradesh', site_id='UVMP101', site_key='UVMP101',
+            final_bucket='TCS', final_bucket_key='tcs', bucket_2='RAC Card', bucket_2_key='raccard',
+            rca_text='Card failure', rca_key='card failure', outage_minutes=3.5,
+        )
+        self.client.force_login(self.admin)
+
+        third_party = self.client.get(reverse('rca-records'), {'responsibility': 'Third party'}).json()
+        self.assertEqual((third_party['count'], third_party['results'][0]['mapped_bucket']), (1, 'Third party'))
+        self.assertEqual(third_party['results'][0]['bucket_2'], 'RAC Card')
+
+        RcaBucketMapping.objects.filter(final_bucket='TCS').update(bucket='Customer', updated_by=self.admin)
+        customer = self.client.get(reverse('rca-records'), {'responsibility': 'Customer'}).json()
+        self.assertEqual((customer['count'], customer['results'][0]['ownership']), (1, 'Customer'))
+        self.assertEqual(customer['results'][0]['responsibility_bucket_2'], 'Customer')
+        self.assertEqual(customer['results'][0]['bucket_2'], 'RAC Card')
+        self.assertEqual(record.bucket_2, 'RAC Card')
+
+    def test_consolidated_workbook_exports_current_responsibility(self):
+        record = RcaRecord.objects.create(
+            reporting_date=date(2026, 10, 21), project='4G Saturation', project_raw='4G Saturation',
+            circle='MP', circle_raw='Madhya Pradesh', site_id='UVMP101', site_key='UVMP101',
+            final_bucket='TCS', final_bucket_key='tcs', bucket_2='RAC Card', bucket_2_key='raccard',
+            rca_text='Card failure', rca_key='card failure', outage_minutes=3.5,
+        )
+        RcaBucketMapping.objects.filter(final_bucket='TCS').update(bucket='Pending', updated_by=self.admin)
+        summary = {
+            'kpis': {
+                'records': 1, 'affected_sites': 1, 'outage_minutes': 3.5, 'records_with_minutes': 1,
+                'rca_applicable_records': 1, 'incomplete_records': 0, 'incomplete_by_field': {'final_bucket': 0, 'bucket_2': 0, 'rca': 0},
+                'completeness_pct': 100, 'rca_not_applicable': {'label': 'Other Media', 'records': 0, 'outage_minutes': None},
+            },
+            'projects': [], 'circles': [], 'final_buckets': [], 'bucket_2': [],
+            'responsibility': [{'bucket': 'Pending', 'label': 'Pending', 'records': 1, 'outage_minutes': 3.5}],
+        }
+        from apps.rca import report
+        content = report.build(
+            cycle=SimpleNamespace(name='Test', reporting_date=record.reporting_date, end=record.reporting_date),
+            records=[record], summary=summary, units=[], uploads=[],
+            state={'label': 'Test status', 'outstanding': [], 'received': 0, 'required': 0, 'records_checksum': 'test'},
+            label='DRAFT',
+            version=None, generated_at=timezone.now(), generated_by=None,
+        )
+        book = load_workbook(io.BytesIO(content), data_only=True)
+        sheet = book['RCA Master']
+        responsibility_col = next(cell.column for cell in sheet[1] if cell.value == 'Responsibility')
+        self.assertEqual(sheet.cell(2, responsibility_col).value, 'Pending')
+        self.assertTrue(any(cell.value == 'Responsibility (current mapping)' for row in book['Summary'].iter_rows() for cell in row))
 
 
 class ParserTests(RcaTestCase):

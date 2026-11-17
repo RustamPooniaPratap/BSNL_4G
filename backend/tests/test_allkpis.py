@@ -4,6 +4,7 @@ from datetime import date, datetime
 from django.urls import reverse
 
 from apps.rca.models import RcaRecord
+from apps.bsnl.models import RcaBucketMapping
 from apps.rca.parser import text_key
 from apps.sitedata import portfolio, uptime_master
 from tests.auth_helpers import SignedInTestCase, portal_user
@@ -98,7 +99,7 @@ class AllKpisTests(SignedInTestCase, SiteDataTestCase):
         east = self.get('allkpis-summary', ie='MP::CI East::IE MP', date_from='2026-10-01', date_to='2026-10-03')['current']
         self.assertEqual(east['total_sites'], 2)
 
-    def test_rca_uses_the_approved_final_bucket_mapping_and_ownership_is_not_configured(self):
+    def test_rca_uses_the_current_responsibility_mapping_and_unmapped_values_are_unclassified(self):
         for bucket in ('bsnl ofc', 'TCS', 'BBNL OFC'):  # BBNL OFC is a Sub Bucket, not a Final Bucket: Not mapped
             RcaRecord.objects.create(reporting_date=date(2026, 10, 2), project=G4, project_raw=G4, circle='MP', circle_raw='MP', site_id='UVMP101',
                                      site_key='UVMP101', occurrence=RcaRecord.objects.count() + 1, final_bucket=bucket, final_bucket_key=text_key(bucket),
@@ -107,7 +108,24 @@ class AllKpisTests(SignedInTestCase, SiteDataTestCase):
         counts = {b['bucket']: b['records'] for b in r['buckets']}
         self.assertEqual((counts['BSNL OFC'], counts['TCS'], r['not_mapped']['records']), (1, 1, 1))
         self.assertEqual(len(r['buckets']), 10)
-        self.assertFalse(r['ownership']['configured'])
+        ownership = {b['bucket']: b['records'] for b in r['ownership']['buckets']}
+        self.assertEqual((ownership['Customer'], ownership['Third party'], ownership['Unclassified']), (1, 1, 1))
+        self.assertTrue(r['ownership']['configured'])
+
+        RcaBucketMapping.objects.filter(final_bucket='TCS').update(bucket='Pending', updated_by=self.admin)
+        pending = self.get('allkpis-rca', date_from='2026-10-01', date_to='2026-10-03', responsibility='Pending')
+        pending_counts = {b['bucket']: b['records'] for b in pending['ownership']['buckets']}
+        pending_buckets = {b['bucket']: b['records'] for b in pending['buckets']}
+        self.assertEqual((pending['records'], pending_counts['Pending'], pending_buckets['TCS']), (1, 1, 1))
+
+        RcaBucketMapping.objects.filter(final_bucket='TCS').update(bucket='Own', updated_by=self.admin)
+        changed = self.get('allkpis-rca', date_from='2026-10-01', date_to='2026-10-03')
+        changed_ownership = {b['bucket']: b['records'] for b in changed['ownership']['buckets']}
+        self.assertEqual((changed_ownership['Own'], changed_ownership['Third party']), (1, 0))
+        self.assertEqual(changed['records'], r['records'])
+
+        customer = self.get('allkpis-rca', date_from='2026-10-01', date_to='2026-10-03', responsibility='Customer')
+        self.assertEqual((customer['records'], customer['buckets'][4]['records']), (1, 1))
 
     def test_access_follows_existing_permissions_and_circles(self):
         from apps.accounts import services as access
@@ -132,5 +150,5 @@ class AllKpisTests(SignedInTestCase, SiteDataTestCase):
         for body in responses:
             self.assertNotIn('handover', json.dumps(body).lower())
         pending = responses[1]['pending']
-        self.assertEqual(list(pending), ['rca_ownership'])  # the RCA ownership status stays "Not configured"
-        self.assertTrue(pending['rca_ownership'].startswith('Not configured'))
+        self.assertEqual(list(pending), ['rca_ownership'])
+        self.assertIn('current Final Bucket mapping', pending['rca_ownership'])

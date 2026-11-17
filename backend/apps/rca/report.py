@@ -4,7 +4,7 @@ Sheets: "Report" (status label, period, version, expected data received), "Cover
 circle with its accepted records and source files), "Uploads" (each upload for the period with its imported,
 updated, skipped and rejected counts), "Summary" (the RCA Summary computed from the same records) and
 "RCA Master" (one row per accepted record: the twelve source columns as written, then the record's
-applicability and provenance, including the upload it came from).
+current responsibility classification, applicability and provenance, including the upload it came from).
 Missing values stay blank, never 0; Other Media records are labelled RCA-not-applicable, apart from records
 with missing RCA information.
 """
@@ -17,11 +17,13 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from apps.bsnl.classification import get_bucket_classification, load_bucket_mapping, responsibility_label
+
 from .services import MISSING_LABEL, NOT_APPLICABLE_LABEL, RCA_NOT_APPLICABLE
 
 SOURCE_HEADER = ['Date', 'Project', 'Circle', 'Site ID', 'Site Name', 'OA', 'BA', 'O&M Start (Yes/No)', 'Outage Min.',
                  'Final Bucket', 'Bucket - 2', 'RCA']
-EXTRA_HEADER = ['RCA applicability', 'Circle code', 'Record source', 'Source file', 'Source row', 'Upload ID', 'Record ID']
+EXTRA_HEADER = ['RCA applicability', 'Responsibility', 'Circle code', 'Record source', 'Source file', 'Source row', 'Upload ID', 'Record ID']
 BOLD = Font(bold=True)
 HEAD_FILL = PatternFill('solid', fgColor='E8EEF7')
 FINAL_FILL = PatternFill('solid', fgColor='D9F2E3')
@@ -146,22 +148,25 @@ def build(*, cycle, records: list, summary: dict, units: list[dict], uploads: li
     line = _table(ws, line, 'Final Bucket (as written; spellings grouped by case and spacing)', ['Final Bucket', 'Records', 'Outage minutes', 'Note'],
                   [[i['label'], i['records'], i['outage_minutes'], 'RCA not applicable' if i['rca_not_applicable'] else 'Unclassified' if i['unclassified'] else '']
                    for i in summary['final_buckets']])
-    _table(ws, line, 'Bucket - 2 (RCA-applicable records only)', ['Bucket - 2', 'Records', 'Outage minutes', 'Note'],
-           [[i['label'], i['records'], i['outage_minutes'], 'Unclassified' if i['unclassified'] else ''] for i in summary['bucket_2']])
+    line = _table(ws, line, 'Bucket - 2 (RCA-applicable records only)', ['Bucket - 2', 'Records', 'Outage minutes', 'Note'],
+                  [[i['label'], i['records'], i['outage_minutes'], 'Unclassified' if i['unclassified'] else ''] for i in summary['bucket_2']])
+    _table(ws, line, 'Responsibility (current mapping)', ['Responsibility', 'Records', 'Outage minutes'],
+           [[responsibility_label(item['bucket']), item['records'], item['outage_minutes']] for item in summary['responsibility']])
     _widths(ws, [52, 14, 16, 16, 30, 34, 20])
 
     # RCA Master --------------------------------------------------------------------------------
     ws = book.create_sheet('RCA Master')
     _header(ws, 1, SOURCE_HEADER + EXTRA_HEADER)
+    mapping = load_bucket_mapping()
     for row, r in enumerate(records, start=2):
         values = [r.reporting_date, r.project_raw, r.circle_raw, r.site_id, r.site_name, r.oa, r.ba, r.om_start_raw, r.outage_minutes,
-                  r.final_bucket, r.bucket_2, r.rca_text, applicability(r), r.circle,
+                  r.final_bucket, r.bucket_2, r.rca_text, applicability(r), get_bucket_classification(r.final_bucket, mapping).mapped_bucket, r.circle,
                   'Imported' if r.source == 'import' else 'Recorded in the portal', r.source_file, r.source_row, r.batch_id, r.pk]
         for col, value in enumerate(values, start=1):
             cell = ws.cell(row=row, column=col, value=None if value == '' else value)
             if col == 1:
                 cell.number_format = 'dd-mmm-yyyy'
-    _widths(ws, [12, 14, 16, 14, 22, 14, 14, 10, 11, 16, 18, 48, 34, 10, 20, 30, 10, 10, 10])
+    _widths(ws, [12, 14, 16, 14, 22, 14, 14, 10, 11, 16, 18, 48, 34, 18, 10, 20, 30, 10, 10, 10])
     ws.freeze_panes = 'A2'
     if records:
         ws.auto_filter.ref = f'A1:{get_column_letter(len(SOURCE_HEADER) + len(EXTRA_HEADER))}{len(records) + 1}'

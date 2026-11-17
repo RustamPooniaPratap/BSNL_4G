@@ -10,8 +10,8 @@ Everything is computed from existing data through existing interfaces, without c
   a period's population is the sites effective on its last date. Without O&M Start dates in the matrix the O&M Start
   population is not available (never estimated). Every response carries the ``population`` block.
 - Shared formulas reused as they are: ``metrics.uptime_pct`` (outage-weighted availability), ``metrics.bucket_ids``
-  (threshold buckets), ``metrics.WEEKS``, ``metrics.team_names``; RCA: ``rca.services.filtered`` and the approved
-  Final Bucket mapping ``rca.taxonomy.approved_final`` (the approved master, case and whitespace ignored).
+  (threshold buckets), ``metrics.WEEKS``, ``metrics.team_names``; RCA records use ``rca.services.filtered`` and
+  responsibility classification comes from the current mapping in ``apps.bsnl.classification``.
 
 USD and NSLA use the shared per-site rules of the dashboard (approved rule B-3, ``metrics.usd_dates`` / ``nsla_dates``)
 over the selected population, exactly as the dashboard:
@@ -35,6 +35,13 @@ import numpy as np
 import pandas as pd
 from rest_framework.exceptions import ValidationError
 
+from apps.bsnl.classification import (
+    get_bucket_classification,
+    load_bucket_mapping,
+    responsibility_label,
+    responsibility_options,
+    responsibility_buckets,
+)
 from apps.dashboard import metrics
 from apps.dashboard.metrics import BUCKET_IDS, BUCKETS, MINUTES_PER_DAY, WEEKS, bucket_ids, team_names, uptime_pct
 from apps.dashboard.scope import restrict
@@ -56,6 +63,7 @@ class Selection:
     sites: set[str]
     buckets: set[str]
     final_buckets: set[str]
+    responsibilities: set[str]
 
 
 def _list(params, name: str) -> set[str]:
@@ -108,7 +116,8 @@ def selection(params, ds) -> Selection:
     if start and end and (end - start).days > 370:
         raise ValidationError({'date_to': 'Choose at most about a year.'})
     return Selection(start, end, _list(params, 'project'), {c.upper() for c in _list(params, 'circle')}, _list(params, 'ci'), _list(params, 'ie'),
-                     {s.upper() for s in _list(params, 'site')}, _list(params, 'bucket') & set(BUCKET_IDS), _list(params, 'final_bucket'))
+                     {s.upper() for s in _list(params, 'site')}, _list(params, 'bucket') & set(BUCKET_IDS), _list(params, 'final_bucket'),
+                     _list(params, 'responsibility'))
 
 
 def _ci_keys(sites: pd.DataFrame) -> pd.Series:
@@ -278,7 +287,8 @@ def summary(params, user) -> dict:
         'current': current, 'previous': previous, 'om_start': om, 'previous_om_start': p_om, 'population': pop,
         'definitions': {'usd_sites': metrics.usd_rule(scope), 'nsla_sites': metrics.nsla_rule(scope)},
         'pending': {
-            'rca_ownership': 'Not configured: no approved mapping from Final Buckets to Own / Customer / Third Party / Pending.',
+            'rca_ownership': 'Responsibility classification uses the current Final Bucket mapping.'
+            if load_bucket_mapping() else 'No Final Bucket responsibility mapping is configured; records classify as Unclassified.',
         },
     }
 
@@ -414,13 +424,19 @@ def rca(params, user) -> dict:
     from apps.rca import taxonomy
     from apps.rca.breakdown import COLUMNS
     from django.db.models import Count, Sum
+    from apps.bsnl.classification import UNCLASSIFIED
 
     scope = _scope(params)
     ds = dataset(user, scope)
     sel = selection(params, ds)
+    mapping = load_bucket_mapping()
     if sel.start is None:
-        return {'buckets': [], 'records': 0, 'population': metrics.population(scope)}
-    qs = services.filtered({'date_from': sel.start.isoformat(), 'date_to': sel.end.isoformat()}, pairs_for(user, 'rca_summary', 'view'))
+        return {'buckets': [], 'records': 0, 'population': metrics.population(scope),
+                'ownership': {'configured': bool(mapping), 'message': 'Responsibility classification uses the current Final Bucket mapping.',
+                              'buckets': []}}
+    qs = services.filtered({'date_from': sel.start.isoformat(), 'date_to': sel.end.isoformat(),
+                            'responsibility': ','.join(sel.responsibilities)},
+                           pairs_for(user, 'rca_summary', 'view'), mapping)
     if sel.projects:
         qs = qs.filter(project__in=sel.projects)
     if sel.circles:
@@ -431,6 +447,8 @@ def rca(params, user) -> dict:
     labels = [label for label, _ in COLUMNS]
     by_bucket, by_circle, unmapped = Counter(), {}, Counter()
     minutes = Counter()
+    ownership_counts = Counter()
+    ownership_minutes = Counter()
     for r in qs.values('circle', 'final_bucket_key', 'final_bucket').annotate(n=Count('id'), m=Sum('outage_minutes')):
         column = taxonomy.approved_final(r['final_bucket_key']) if r['final_bucket_key'] else None
         if sel.final_buckets and (column or 'Not mapped') not in sel.final_buckets:
@@ -439,9 +457,18 @@ def rca(params, user) -> dict:
         by_bucket[name] += r['n']
         minutes[name] += r['m'] or 0
         by_circle.setdefault(r['circle'], Counter())[name] += r['n']
+        responsibility = get_bucket_classification(r['final_bucket_key'], mapping).mapped_bucket
+        ownership_counts[responsibility] += r['n']
+        ownership_minutes[responsibility] += r['m'] or 0
         if not column:
             unmapped[r['final_bucket'] or '(blank)'] += r['n']
     total = sum(by_bucket.values())
+    ownership_total = sum(ownership_counts.values())
+    ownership = [{'bucket': bucket, 'label': responsibility_label(bucket), 'records': ownership_counts[bucket],
+                  'outage_minutes': round(ownership_minutes[bucket], 2),
+                  'share_pct': round(100.0 * ownership_counts[bucket] / ownership_total, 1) if ownership_total else None}
+                 for bucket in responsibility_buckets()]
+    unclassified_records = ownership_counts[UNCLASSIFIED]
     return {
         'period': {'start': sel.start.isoformat(), 'end': sel.end.isoformat(), 'label': period_label(sel.start, sel.end)},
         'records': total,
@@ -449,7 +476,10 @@ def rca(params, user) -> dict:
                      'share_pct': round(100.0 * by_bucket.get(b, 0) / total, 1) if total else None} for b in labels],
         'not_mapped': {'records': by_bucket.get('Not mapped', 0), 'values': [{'final_bucket': k, 'records': v} for k, v in unmapped.most_common()]},
         'by_circle': [{'circle': c, 'records': sum(v.values()), 'buckets': {b: v.get(b, 0) for b in labels}} for c, v in sorted(by_circle.items())],
-        'ownership': {'configured': False, 'message': 'Not configured: no approved mapping from Final Buckets to Own / Customer / Third Party / Pending.'},
+        'ownership': {'configured': bool(mapping),
+                      'message': f'{unclassified_records} record(s) currently classify as Unclassified.'
+                      if unclassified_records else 'Responsibility classification uses the current Final Bucket mapping.',
+                      'buckets': ownership},
         'population': metrics.population(scope),
     }
 
@@ -489,6 +519,7 @@ def filters(params, user) -> dict:
         'site_count': int(len(by_site)),
         'buckets': [{'key': b, 'label': label} for b, label, *_ in BUCKETS],
         'final_buckets': [label for label, _ in COLUMNS] + ['Not mapped'],
+        'responsibilities': [{'key': option['value'], 'label': option['label']} for option in responsibility_options()],
         'scopes': [{'value': k, 'label': label} for k, label in metrics.SCOPES.items()],
         'default_scope': metrics.DEFAULT_SCOPE,
         'population': metrics.population(scope),

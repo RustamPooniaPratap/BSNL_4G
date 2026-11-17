@@ -639,25 +639,37 @@ def profile_detail(request, circle_code: str):
 @parser_classes([JSONParser])
 @permission_classes([IsPortalUser])
 def bucket_mapping(request):
-    """The approved Final Buckets and their responsibility bucket (blank Final Bucket: Pending)."""
+    """The approved Final Buckets and their current responsibility classification."""
     if request.method == 'PUT':
         require(request.user, LETTERS, 'manage', None)
         items = request.data.get('mapping')
         if not isinstance(items, list):
             raise ValidationError({'mapping': 'Send the mapping rows.'})
-        valid = set(taxonomy.APPROVED)
+        from .classification import normalize_responsibility_bucket
+        normalized_items = []
+        seen = set()
         for item in items:
-            if not isinstance(item, dict) or item.get('final_bucket') not in valid or item.get('bucket') not in Bucket.values:
-                raise ValidationError({'mapping': 'Each row needs an approved Final Bucket and a bucket (Own, Customer, Third party, Pending).'})
+            if not isinstance(item, dict):
+                raise ValidationError({'mapping': 'Each row must contain an approved Final Bucket and a responsibility bucket.'})
+            final = taxonomy.approved_final(item.get('final_bucket'))
+            bucket = normalize_responsibility_bucket(item.get('bucket'))
+            if final is None or bucket is None:
+                raise ValidationError({'mapping': 'Each row needs an approved Final Bucket and a valid responsibility bucket.'})
+            key = taxonomy.match_key(final)
+            if key in seen:
+                raise ValidationError({'mapping': f'Duplicate Final Bucket mapping: {final}.'})
+            seen.add(key)
+            normalized_items.append({'final_bucket': final, 'bucket': bucket})
         with transaction.atomic():
-            for item in items:
+            for item in normalized_items:
                 RcaBucketMapping.objects.update_or_create(final_bucket=item['final_bucket'],
                                                           defaults={'bucket': item['bucket'], 'updated_by': request.user})
-        audit('bsnl_bucket_mapping_saved', request, rows=len(items))
+        audit('bsnl_bucket_mapping_saved', request, rows=len(normalized_items))
     else:
         if not (can(request.user, LETTERS, 'view') or can(request.user, REPORTS, 'view')):
             raise PermissionDenied('You do not have access to the BSNL Module.')
+    from .classification import mapping_for_approved_finals
     from .common import bucket_map
-    return Response({'mapping': [{'final_bucket': f, 'bucket': b} for f, b in bucket_map().items()],
+    return Response({'mapping': [{'final_bucket': f, 'bucket': b} for f, b in mapping_for_approved_finals(bucket_map()).items()],
                      'buckets': list(Bucket.values), 'can_manage': can(request.user, LETTERS, 'manage'),
-                     'rule': 'A blank or unapproved Final Bucket counts as Pending.'})
+                     'rule': 'Blank, unapproved, or unmapped Final Buckets are Unclassified.'})

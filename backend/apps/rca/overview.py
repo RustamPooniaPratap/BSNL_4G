@@ -1,4 +1,4 @@
-"""RCA Overview service: 4 KPI attribution cards (Own, Customer, Third Party, Pending)
+"""RCA Overview service: responsibility KPIs from the current Final Bucket mapping
 and 4-tab table (Circle-wise, CI-wise, IE-wise, Site-wise) with the exact 8 confirmed columns.
 """
 from __future__ import annotations
@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 from django.db.models import Count, Q, Sum
 
+from apps.bsnl.classification import load_bucket_mapping, get_bucket_classification
 from apps.dashboard.metrics import Selection, mtd_positions, site_uptime
 from apps.dashboard.workbook import WorkbookError
 from apps.sitedata.dashboard_source import dataset
@@ -19,40 +20,27 @@ from . import parser, services, sitescope
 from .models import RcaRecord
 
 
-def categorize_bucket(final_bucket: str) -> str:
-    """Categorize an RCA Final Bucket into Own, Customer, Third Party, or Pending."""
-    fb = (final_bucket or '').strip().casefold()
-    if not fb or fb in ('-', '--', 'na', 'n/a', 'blank', 'null', 'none', 'others', 'other media', 'other', 'bb'):
-        return 'Pending'
-    if any(k in fb for k in ('iaasp', 'theft')):
-        return 'Third Party'
-    if any(k in fb for k in ('bsnl', 'bbnl', 'vsat', 'etr', 'ssa', 'cpan')):
-        return 'Customer'
-    if any(k in fb for k in ('tcs', 'hfcl', 'dmw', 'ceragon', 'ptpl', 'tech delay')):
-        return 'Own'
-    return 'Pending'
-
-
-def compute_kpis(rca_qs) -> dict[str, Any]:
-    """Calculate the 4 KPI cards above the table."""
+def compute_kpis(rca_qs, mapping: dict[str, str]) -> dict[str, Any]:
+    """Calculate responsibility totals from the current Final Bucket mapping."""
     kpis = {
         'own': {'records': 0, 'outage_minutes': 0.0, 'share_pct': 0.0},
         'customer': {'records': 0, 'outage_minutes': 0.0, 'share_pct': 0.0},
         'third_party': {'records': 0, 'outage_minutes': 0.0, 'share_pct': 0.0},
         'pending': {'records': 0, 'outage_minutes': 0.0, 'share_pct': 0.0},
+        'unclassified': {'records': 0, 'outage_minutes': 0.0, 'share_pct': 0.0},
         'total_records': 0,
         'total_minutes': 0.0,
     }
-    for r in rca_qs.values('final_bucket').annotate(cnt=Count('id'), mins=Sum('outage_minutes')):
-        cat = categorize_bucket(r['final_bucket'])
-        key = 'third_party' if cat == 'Third Party' else cat.lower()
+    keys = {'Own': 'own', 'Customer': 'customer', 'Third party': 'third_party', 'Pending': 'pending', 'Unclassified': 'unclassified'}
+    for r in rca_qs.order_by().values('final_bucket_key').annotate(cnt=Count('id'), mins=Sum('outage_minutes')):
+        key = keys[get_bucket_classification(r['final_bucket_key'], mapping).mapped_bucket]
         kpis[key]['records'] += r['cnt']
         kpis[key]['outage_minutes'] += (r['mins'] or 0.0)
         kpis['total_records'] += r['cnt']
         kpis['total_minutes'] += (r['mins'] or 0.0)
 
     tot_m = kpis['total_minutes']
-    for key in ('own', 'customer', 'third_party', 'pending'):
+    for key in keys.values():
         kpis[key]['outage_minutes'] = round(kpis[key]['outage_minutes'], 1)
         kpis[key]['share_pct'] = round(100.0 * kpis[key]['outage_minutes'] / tot_m, 1) if tot_m > 0 else 0.0
     kpis['total_minutes'] = round(kpis['total_minutes'], 1)
@@ -78,13 +66,14 @@ def get_rca_overview(params: dict[str, Any], pairs: list[tuple[str, str]] | None
     search_q = (params.get('q') or '').strip().casefold()
 
     # 1. RCA filtered records for KPIs and attribution split
-    rca_qs = services.filtered(params, pairs)
-    kpis = compute_kpis(rca_qs)
+    mapping = load_bucket_mapping()
+    rca_qs = services.filtered(params, pairs, mapping)
+    kpis = compute_kpis(rca_qs, mapping)
 
     # Site-level RCA attribution split { site_key: { 'Own': mins, 'Customer': mins, ... } }
     site_attribution = defaultdict(lambda: defaultdict(float))
-    for r in rca_qs.values('site_key', 'final_bucket').annotate(mins=Sum('outage_minutes')):
-        cat = categorize_bucket(r['final_bucket'])
+    for r in rca_qs.order_by().values('site_key', 'final_bucket_key').annotate(mins=Sum('outage_minutes')):
+        cat = get_bucket_classification(r['final_bucket_key'], mapping).mapped_bucket
         site_attribution[r['site_key']][cat] += (r['mins'] or 0.0)
 
     # 2. Uptime dataset and date scope
@@ -184,26 +173,29 @@ def get_rca_overview(params: dict[str, Any], pairs: list[tuple[str, str]] | None
         else:
             status = 'Not Meeting SLA'
 
-        own_m = cust_m = third_m = pend_m = 0.0
+        own_m = cust_m = third_m = pend_m = unclassified_m = 0.0
         for idx in indices:
             sk = str(sub_sites.iloc[idx]['site_id']).strip().upper()
             att = site_attribution.get(sk, {})
             own_m += att.get('Own', 0.0)
             cust_m += att.get('Customer', 0.0)
-            third_m += att.get('Third Party', 0.0)
+            third_m += att.get('Third party', 0.0)
             pend_m += att.get('Pending', 0.0)
+            unclassified_m += att.get('Unclassified', 0.0)
 
-        tot_split_m = own_m + cust_m + third_m + pend_m
+        tot_split_m = own_m + cust_m + third_m + pend_m + unclassified_m
         if tot_split_m > 0:
             split = {
                 'own': round(100.0 * own_m / tot_split_m, 1),
                 'customer': round(100.0 * cust_m / tot_split_m, 1),
                 'third_party': round(100.0 * third_m / tot_split_m, 1),
                 'pending': round(100.0 * pend_m / tot_split_m, 1),
+                'unclassified': round(100.0 * unclassified_m / tot_split_m, 1),
                 'own_min': round(own_m, 1),
                 'customer_min': round(cust_m, 1),
                 'third_party_min': round(third_m, 1),
                 'pending_min': round(pend_m, 1),
+                'unclassified_min': round(unclassified_m, 1),
             }
         else:
             split = None
@@ -276,23 +268,26 @@ def get_rca_overview(params: dict[str, Any], pairs: list[tuple[str, str]] | None
     total_status = 'N/A' if total_uptime is None else ('Meeting SLA' if total_uptime > 98.5 else 'Not Meeting SLA')
 
     # Total attribution split
-    tot_own = tot_cust = tot_third = tot_pend = 0.0
+    tot_own = tot_cust = tot_third = tot_pend = tot_unclassified = 0.0
     for r in all_rows:
         if r['split']:
             tot_own += r['split'].get('own_min', 0.0)
             tot_cust += r['split'].get('customer_min', 0.0)
             tot_third += r['split'].get('third_party_min', 0.0)
             tot_pend += r['split'].get('pending_min', 0.0)
-    sum_m = tot_own + tot_cust + tot_third + tot_pend
+            tot_unclassified += r['split'].get('unclassified_min', 0.0)
+    sum_m = tot_own + tot_cust + tot_third + tot_pend + tot_unclassified
     total_split = {
         'own': round(100.0 * tot_own / sum_m, 1),
         'customer': round(100.0 * tot_cust / sum_m, 1),
         'third_party': round(100.0 * tot_third / sum_m, 1),
         'pending': round(100.0 * tot_pend / sum_m, 1),
+        'unclassified': round(100.0 * tot_unclassified / sum_m, 1),
         'own_min': round(tot_own, 1),
         'customer_min': round(tot_cust, 1),
         'third_party_min': round(tot_third, 1),
         'pending_min': round(tot_pend, 1),
+        'unclassified_min': round(tot_unclassified, 1),
     } if sum_m > 0 else None
 
     total_row = {

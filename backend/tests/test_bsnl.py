@@ -18,6 +18,7 @@ from openpyxl import load_workbook
 from apps.accounts.models import AccessAssignment, Role, RolePermission
 from apps.alerts.mailer import MailError
 from apps.bsnl import common, delivery, documents, letters, reports, scheduler
+from apps.bsnl.classification import get_bucket_classification
 from apps.bsnl.common import Period
 from apps.bsnl.models import (BsnlLetter, CircleLetterProfile, DistributionRecipient, LetterEvent, LetterStatus, RcaBucketMapping,
                               ReportRun)
@@ -133,20 +134,43 @@ class BucketTests(BsnlTestCase):
         self.assertEqual(RcaBucketMapping.objects.get(final_bucket='BSNL OFC').bucket, 'Customer')
         self.assertEqual(RcaBucketMapping.objects.get(final_bucket='BSNL Media').bucket, 'Customer')
         self.assertEqual(RcaBucketMapping.objects.get(final_bucket='IaasP Power').bucket, 'Own')
+        self.assertEqual(RcaBucketMapping.objects.get(final_bucket='IaasP Others').bucket, 'Own')
+        for final in ('Others', 'TCS', 'DMW', 'HFCL'):
+            self.assertEqual(RcaBucketMapping.objects.get(final_bucket=final).bucket, 'Third party')
         mapping = common.bucket_map()
         self.assertEqual(common.bucket_of('bsnl  ofc', mapping), 'Customer')  # case and spaces ignored (taxonomy)
         self.assertEqual(common.bucket_of('IaaSP Power', mapping), 'Own')
-        self.assertEqual(common.bucket_of('', mapping), 'Pending')
-        self.assertEqual(common.bucket_of('-', mapping), 'Pending')
-        self.assertEqual(common.bucket_of('Something else', mapping), 'Pending')
+        self.assertEqual(common.bucket_of('', mapping), 'Unclassified')
+        self.assertEqual(common.bucket_of(None, mapping), 'Unclassified')
+        self.assertEqual(common.bucket_of('-', mapping), 'Unclassified')
+        self.assertEqual(common.bucket_of('Something else', mapping), 'Unclassified')
+
+    def test_classification_fields_share_the_current_mapping_and_missing_rows_are_unclassified(self):
+        mapped = get_bucket_classification('  iAaSp   pOwEr ')
+        self.assertEqual((mapped.ownership, mapped.bucket_2, mapped.mapped_bucket), ('Own', 'Own', 'Own'))
+
+        RcaBucketMapping.objects.filter(final_bucket='IaasP Power').update(bucket='Customer', updated_by=self.admin)
+        changed = get_bucket_classification('iaasp power')
+        self.assertEqual((changed.ownership, changed.bucket_2, changed.mapped_bucket), ('Customer', 'Customer', 'Customer'))
+
+        RcaBucketMapping.objects.filter(final_bucket='IaasP Power').delete()
+        missing = get_bucket_classification('IaasP Power')
+        self.assertEqual((missing.ownership, missing.bucket_2, missing.mapped_bucket), ('Unclassified', 'Unclassified', 'Unclassified'))
 
     def test_admin_can_override_the_mapping_and_others_cannot(self):
         url = reverse('bsnl-bucket-mapping')
         response = self.client.put(url, {'mapping': [{'final_bucket': 'IaasP Others', 'bucket': 'Third party'}]}, content_type='application/json')
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(common.bucket_of('IaasP Others', common.bucket_map()), 'Third party')
+        pending = self.client.put(url, {'mapping': [{'final_bucket': 'IaasP Others', 'bucket': 'Pending'}]}, content_type='application/json')
+        self.assertEqual(pending.status_code, 200, pending.content)
+        self.assertEqual(next(row['bucket'] for row in pending.json()['mapping'] if row['final_bucket'] == 'IaasP Others'), 'Pending')
         bad = self.client.put(url, {'mapping': [{'final_bucket': 'Not a bucket', 'bucket': 'Own'}]}, content_type='application/json')
         self.assertEqual(bad.status_code, 400)
+        duplicate = self.client.put(url, {'mapping': [
+            {'final_bucket': 'IaasP Power', 'bucket': 'Own'}, {'final_bucket': '  iaasp   power ', 'bucket': 'Customer'},
+        ]}, content_type='application/json')
+        self.assertEqual(duplicate.status_code, 400)
         self.client.force_login(portal_user('noc', 'noc_lead'))
         self.assertEqual(self.client.get(url).status_code, 200)
         self.assertEqual(self.client.put(url, {'mapping': []}, content_type='application/json').status_code, 403)
@@ -450,6 +474,24 @@ class LetterWorkflowTests(BsnlTestCase):
         none = self.client.post(reverse('bsnl-letter-open'), {**self.body, 'circle': 'KL'}, content_type='application/json')
         self.assertEqual(none.status_code, 400)
         self.assertEqual(BsnlLetter.objects.count(), 2)
+
+    def test_historical_letter_keeps_mapping_snapshot_and_draft_regeneration_uses_current_mapping(self):
+        historical = self.open().json()['letter']
+        historical_id = historical['id']
+        self.assertEqual(historical['annexure'][0]['bucket'], 'Customer')
+        self.client.post(reverse('bsnl-letter-approve', args=[historical_id]))
+        status_url = reverse('bsnl-letter-status', args=[historical_id])
+        self.client.post(status_url, {'status': 'Sent', 'note': 'Sent outside the portal'}, content_type='application/json')
+        self.client.post(status_url, {'status': 'Acknowledged'}, content_type='application/json')
+
+        draft = self.open(project=G4).json()['letter']
+        self.assertEqual(draft['annexure'][0]['bucket'], 'Customer')
+        RcaBucketMapping.objects.filter(final_bucket='BSNL OFC').update(bucket='Pending', updated_by=self.admin)
+
+        saved = self.client.get(reverse('bsnl-letter-detail', args=[historical_id])).json()['letter']
+        self.assertEqual((saved['status'], saved['annexure'][0]['bucket']), ('Acknowledged', 'Customer'))
+        regenerated = self.client.post(reverse('bsnl-letter-regenerate', args=[draft['id']])).json()['letter']
+        self.assertEqual((regenerated['status'], regenerated['annexure'], regenerated['outage_count']), ('Draft', [], 0))
 
     def test_legacy_generated_letter_content_is_displayed_in_minutes_without_rewriting_it(self):
         created = self.open().json()['letter']
