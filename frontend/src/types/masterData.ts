@@ -19,14 +19,13 @@ export interface MasterPermissions {
   view: boolean; add: boolean; edit: boolean; export: boolean;
   /** Columns that can be changed on existing rows / filled in on new rows; required on new rows. */
   editable: string[]; addable: string[]; required: string[];
-  /** Daily Performance: every save is an authorized correction and needs a reason. Read-only datasets (Site Master,
-   *  Monthly Performance, Escalation Matrix) never have edit or add. */
+  /** Daily Performance: every save is an authorized correction and needs a reason. */
   reason_required?: boolean;
 }
 
 /** One Data Panel save: changed cells of existing rows and new rows, written together or not at all. */
 export interface MasterSaveRequest {
-  changes: { id: number; values: Record<string, string> }[];
+  changes: { id: number; values: Record<string, string>; updated_at?: string }[];
   additions: { values: Record<string, string> }[];
   /** Reason for the correction (required where permissions.reason_required); kept with every changed value. */
   reason?: string;
@@ -49,6 +48,10 @@ export interface MasterOptions {
   choices: Record<string, string[]>;
 }
 
-export type MasterRow = Record<string, string | number | boolean | null> & { _id: number };
+export type MasterCell = string | number | boolean | null;
+export type MasterRow = Record<string, MasterCell> & { _id: number; updated_at?: string | null };
 
-export interface MasterPage { total: number; page: number; page_size: number; pages: number; rows: MasterRow[] }
+export interface MasterPage {
+  total: number; page: number; page_size: number; pages: number; rows: MasterRow[];
+  manual_overrides?: Record<string, Record<string, MasterCell>>;
+}

@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, useLocation } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
+import { canOpen, homePath } from '../context/auth';
 import { CI_USER, authValue, renderWithWorkbook } from '../test/renderWithWorkbook';
 import { Sidebar } from './Sidebar';
 
@@ -24,7 +25,7 @@ describe('Sidebar order and groups', () => {
     expect(links()).toEqual(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance',
       'All KPIs – Overview', 'KPI Trends (Month / Week)', 'Ranking', 'Availability', 'Outage Minutes', 'USD Sites', 'NSLA Sites', 'Sites Below 98.5%',
       'Sites Below 60%', 'RCA', 'Circle / CI / IE / Site', 'RCA Register', 'RCA Summary', 'RCA Submissions', 'Upload Circle RCA',
-      'Data Source', 'Data Source & Quality', 'Uptime Data Upload', 'CSV Arrival Tracking', 'Users & Roles', 'Organization',
+      'Data Source', 'Data Source & Quality', 'Uptime Data Upload', 'CSV Arrival Tracking', 'Users & Roles', 'Organization', 'API Master',
       'Email Setup', 'Automations', 'Email History']);
     expect(within(nav()).getByText('Data')).toBeInTheDocument();
     expect(within(nav()).getByText('Administration')).toBeInTheDocument();
@@ -45,6 +46,24 @@ describe('Sidebar order and groups', () => {
     expect(within(nav()).getByRole('link', { name: 'RCA Summary' })).toHaveAttribute('href', '/rca/summary');  // outside: no carried filters
   });
 
+  it('groups the BSNL Module pages and opens the group of the current page', async () => {
+    const user = userEvent.setup();
+    renderWithWorkbook(<Sidebar />, { url: '/bsnl/letters' });
+    expect(within(nav()).getByRole('link', { name: 'BSNL Letters' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav()).getByRole('link', { name: 'Auto Email Reports' })).toHaveAttribute('href', '/bsnl/auto-email-reports');
+    await user.click(within(nav()).getByRole('button', { name: 'BSNL Module' }));
+    expect(within(nav()).queryByRole('link', { name: 'BSNL Letters' })).not.toBeInTheDocument();
+  });
+
+  it('shows the BSNL Module only to users holding its permissions', () => {
+    renderWithWorkbook(<Sidebar />, { url: '/portfolio', auth: authValue({ user: CI_USER }) });
+    expect(within(nav()).queryByRole('button', { name: 'BSNL Module' })).not.toBeInTheDocument();
+    expect(canOpen(CI_USER, '/bsnl/letters')).toBe(false);
+    const viewer = { ...CI_USER, permissions: { ...CI_USER.permissions, bsnl_letters: ['view'] } };
+    expect(canOpen(viewer, '/bsnl/letters')).toBe(true);
+    expect(canOpen(viewer, '/bsnl/auto-email-reports')).toBe(false);
+  });
+
   it('has one Organization entry under Administration, active on every Organization tab', () => {
     renderWithWorkbook(<Sidebar />, { url: '/admin/organization/code-mapping' });
     expect(within(nav()).getByRole('link', { name: 'Organization' })).toHaveAttribute('aria-current', 'page');
@@ -55,6 +74,7 @@ describe('Sidebar order and groups', () => {
     renderWithWorkbook(<Sidebar />, { url: '/portfolio', auth: authValue({ user: CI_USER }) });
     expect(within(nav()).queryByRole('link', { name: 'Organization' })).not.toBeInTheDocument();
     expect(within(nav()).queryByRole('button', { name: 'Alert' })).not.toBeInTheDocument();
+    expect(within(nav()).queryByRole('link', { name: 'API Master' })).not.toBeInTheDocument();  // Admins only
   });
 
   it('shows no RCA Summary pages to a CI user', () => {
@@ -154,6 +174,10 @@ describe('Sidebar order and groups', () => {
     await user.click(within(nav()).getByRole('button', { name: 'Data Management' }));
     await user.click(within(nav()).getByRole('button', { name: 'Data Arrival & Follow-up' }));
     const href = (name: string) => within(nav()).getByRole('link', { name }).getAttribute('href');
+    await user.click(within(nav()).getByRole('button', { name: 'Ticket Management' }));
+    expect(Object.fromEntries(['Ticket Dashboard', 'All Tickets', 'Upload Excel'].map((n) => [n, href(n)]))).toEqual({
+      'Ticket Dashboard': '/tickets', 'All Tickets': '/tickets/all', 'Upload Excel': '/tickets/upload',
+    });
     expect(Object.fromEntries(['Site Portfolio', 'Master Data', 'Overview', '4G Saturation', 'LWE', 'Threshold Analysis', 'Team Performance', 'Data Source',
       'Data Source & Quality', 'Uptime Data Upload', 'CSV Arrival Tracking', 'Users & Roles'].map((n) => [n, href(n)]))).toEqual({
       'Site Portfolio': '/portfolio', 'Master Data': '/master-data', Overview: '/', '4G Saturation': '/?report_type=4G+Saturation', LWE: '/?report_type=LWE',
@@ -161,6 +185,17 @@ describe('Sidebar order and groups', () => {
       'Uptime Data Upload': '/data/upload-csv',
       'CSV Arrival Tracking': '/daily-ingestion', 'Users & Roles': '/admin/users',
     });
+  });
+
+  it('shows only Upload Excel to a user with upload-only ticket access', () => {
+    const uploader = { ...CI_USER, permissions: { ticket_management: ['upload'] } };
+    renderWithWorkbook(<Sidebar />, { url: '/tickets/upload', auth: authValue({ user: uploader }) });
+    const group = document.getElementById('nav-group-tickets')!;
+    expect(within(group).getByRole('link', { name: 'Upload Excel' })).toBeInTheDocument();
+    expect(within(group).queryByRole('link', { name: 'Ticket Dashboard' })).not.toBeInTheDocument();
+    expect(within(group).queryByRole('link', { name: 'All Tickets' })).not.toBeInTheDocument();
+    expect(canOpen(uploader, '/tickets/123')).toBe(false);
+    expect(homePath(uploader)).toBe('/tickets/upload');
   });
 
   it('lists only the Uptime Data Upload under Uptime Data (Add Row and Add Site were removed)', () => {

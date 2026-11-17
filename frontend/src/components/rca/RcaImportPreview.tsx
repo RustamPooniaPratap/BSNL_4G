@@ -36,6 +36,7 @@ export function RcaImportPreview({ batch, busy, onCommit, onDiscard }: {
     ['New records', r.new_rows + restored, false], ['Already stored (duplicates)', r.unchanged_rows, false],
     ['Differ from stored', r.conflict_rows, true], ['Stored, not in workbook', missingRows, true],
   ];
+  if (r.sample_rows_skipped) tiles.push(['Sample rows skipped', r.sample_rows_skipped, false]);
 
   return (
     <Card className="gap-3 rounded-xl px-4 py-3" aria-label="Import preview">

@@ -46,6 +46,7 @@ import type { ArrivalTracker, RawRowsPage, RawUpload, RawUploadDetails, RawUploa
 import type { MasterDatasets, MasterOptions, MasterPage, MasterSaveRequest, MasterSaveResult } from '../types/masterData';
 import type { AlertAccount, AlertAutomation, AlertAutomationInput, AlertHistory, AlertMessage, AlertOptions, AlertPreview, AlertWorker } from '../types/alerts';
 import type { OrgAccessUser, OrgAlias, OrgAssociation, OrgChange, OrgCircle, OrgProject, OrgRemoval, OrgSiteIdMapping, OrganizationCatalog } from '../types/organization';
+import type { TicketDashboardResponse, TicketDetailResponse, TicketImportBatch, TicketOptions, TicketPage } from '../types/tickets';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
@@ -350,6 +351,7 @@ export const commitRcaImport = (id: number, choices: { conflict_action?: '' | 's
 export const discardRcaImport = (id: number) => send<RcaImportBatch>(`/rca/imports/${id}/discard/`);
 export const rcaIssuesUrl = (id: number) => `${API_BASE_URL}/rca/imports/${id}/issues.csv`;
 export const rcaImportWorkbookUrl = (id: number) => `${API_BASE_URL}/rca/imports/${id}/report.xlsx`;
+export const rcaTemplateUrl = () => `${API_BASE_URL}/rca/template.xlsx`;
 export const fetchRcaCycles = (signal?: AbortSignal) => request<RcaCycleList>('/rca/cycles/', undefined, { signal });
 export const fetchRcaCycle = (id: number, signal?: AbortSignal, siteScope = '') =>
   request<RcaCycleDetail>(`/rca/cycles/${id}/`, siteScope ? new URLSearchParams({ site_scope: siteScope }) : undefined, { signal });
@@ -360,6 +362,28 @@ export const fetchRcaCauses = (signal?: AbortSignal) => request<RcaCauses>('/rca
 export const createRcaCategory = (name: string, description = '') => send<{ id: number; name: string }>('/rca/causes/categories/', { name, description });
 export const mapRcaCauses = (keys: string[], category: number) => send<RcaCauses>('/rca/causes/mappings/', { keys, category });
 export const unmapRcaCauses = (keys: string[]) => send<RcaCauses>('/rca/causes/mappings/', { keys }, 'DELETE');
+
+// --- OFC Ticket Management ---------------------------------------------------------------------
+
+export const fetchTicketOptions = (signal?: AbortSignal) => request<TicketOptions>('/tickets/options/', undefined, { signal });
+export const fetchTicketDashboard = (params: URLSearchParams, signal?: AbortSignal) =>
+  request<TicketDashboardResponse>('/tickets/dashboard/', params, { signal });
+export const fetchTickets = (params: URLSearchParams, signal?: AbortSignal) =>
+  request<TicketPage>('/tickets/', params, { signal });
+export const fetchTicket = (id: number, signal?: AbortSignal) =>
+  request<TicketDetailResponse>(`/tickets/${id}/`, undefined, { signal });
+export async function previewTicketImport(file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  return request<TicketImportBatch>('/tickets/imports/preview/', undefined, { method: 'POST', body: form });
+}
+export const commitTicketImport = (id: number, options: { accept_invalid?: boolean; confirm_duplicate?: boolean } = {}) =>
+  send<TicketImportBatch>(`/tickets/imports/${id}/commit/`, options);
+export const closeTicket = (id: number, remarks: string) => send<{ ticket: TicketDetailResponse['ticket'] }>(`/tickets/${id}/close/`, { remarks });
+export const reopenTicket = (id: number, reason: string) => send<{ ticket: TicketDetailResponse['ticket'] }>(`/tickets/${id}/reopen/`, { reason });
+export const retryTicketNotification = (id: number) =>
+  send<{ ticket: TicketDetailResponse['ticket'] }>(`/tickets/notifications/${id}/retry/`);
+export const ticketTemplateUrl = () => `${API_BASE_URL}/tickets/template.xlsx`;
 
 // --- Raw daily CSV uploads (Uptime Data -> Uptime Data Upload) ------------------------------------------
 
@@ -453,6 +477,8 @@ export const fetchMasterRecords = (key: string, params: URLSearchParams, signal?
 /** Download link of the filtered records (the browser sends the session cookie). */
 /** Data Panel: every pending change of one dataset in one transaction (Add / Edit only; there is no delete). */
 export const saveMasterData = (key: string, body: MasterSaveRequest) => send<MasterSaveResult>(`/master-data/${key}/save/`, body as unknown as Record<string, unknown>);
+export const revertMasterOverrides = (key: string, id: number, fields: string[], updated_at?: string | null) =>
+  send<{ restored: string[] }>(`/master-data/${key}/${id}/revert-overrides/`, { fields, updated_at });
 export const masterExportUrl = (key: string, params: URLSearchParams) => `${API_BASE_URL}/master-data/${key}/export/?${params}`;
 
 // --- Alert & Email Automation (Administration › Alert) ----------------------------------------
@@ -624,3 +650,18 @@ export const rollbackPersonnelMerge = (data: { merge_audit_id: number; reason: s
 
 export const fetchMergeAuditList = (params?: { page?: number; page_size?: number }) =>
   request<PaginatedResult<PersonnelMergeAuditItem>>('/organization/hierarchy/merge-audit/', toQuery(params));
+
+/** GET a file from the API with the session (the server's message is thrown as an ApiError, never a broken file). */
+export async function fetchFile(path: string, params?: URLSearchParams, signal?: AbortSignal) {
+  const query = params && params.toString() ? `?${params}` : '';
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}${query}`, { credentials: 'include', signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw unreachable();
+  }
+  if (!response.ok) throw await parseError(response);
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  return { blob: await response.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'download' };
+}

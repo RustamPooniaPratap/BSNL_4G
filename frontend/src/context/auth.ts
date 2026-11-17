@@ -23,7 +23,7 @@ export function useAuth(): AuthContextValue {
 }
 
 /** Pages that stay with the Admin role (the backend refuses their APIs to everyone else). */
-export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/hierarchy', '/teams/ci-ie', '/teams/top', '/workbook', '/data/database', '/admin/users', '/admin/users/roles', '/admin/users/assignments', '/admin/users/history', '/admin/organization', '/admin/organization/circles', '/admin/organization/mapping', '/admin/organization/access', '/admin/organization/code-mapping', '/admin/organization/history', '/rca/submissions', '/rca/mappings', '/admin/alerts/email', '/admin/alerts/automations', '/admin/alerts/history'];
+export const ADMIN_ONLY_PATHS = ['/daily-ingestion', '/teams', '/teams/hierarchy', '/teams/ci-ie', '/teams/top', '/workbook', '/data/database', '/admin/users', '/admin/users/roles', '/admin/users/assignments', '/admin/users/history', '/admin/organization', '/admin/organization/circles', '/admin/organization/mapping', '/admin/organization/access', '/admin/organization/code-mapping', '/admin/organization/history', '/rca/submissions', '/rca/mappings', '/admin/alerts/email', '/admin/alerts/automations', '/admin/alerts/history', '/admin/api-master', '/admin/api-master/registry'];
 
 /**
  * The permission ('module.action', see Users & Roles › Roles & Permissions) each other page needs. A user opens the page
@@ -33,9 +33,11 @@ const PAGE_PERMISSIONS: Record<string, string> = {
   '/': 'dashboard.view', '/portfolio': 'dashboard.view', '/thresholds': 'dashboard.view', '/thresholds/buckets': 'dashboard.view',
   '/data-source': 'dashboard.view', '/master-data': 'data_*.view', '/all-kpis': 'dashboard.view',
   '/data/upload-csv': 'csv_upload.upload',
+  '/tickets': 'ticket_management.view', '/tickets/all': 'ticket_management.view', '/tickets/upload': 'ticket_management.upload',
+  '/bsnl/auto-email-reports': 'bsnl_reports.view', '/bsnl/letters': 'bsnl_letters.view',
   '/rca': 'rca_register.view', '/rca/import': 'rca_upload.upload', '/rca/summary': 'rca_summary.view',
 };
-const PREFIXES = ['/master-data', '/rca/summary'];
+const PREFIXES = ['/master-data', '/rca/summary', '/tickets'];
 
 export function pagePermission(path: string): string | undefined {
   return PAGE_PERMISSIONS[path] ?? PAGE_PERMISSIONS[PREFIXES.find((p) => path.startsWith(`${p}/`)) ?? ''];
@@ -62,5 +64,5 @@ export function canOpen(user: AuthUser | null | undefined, path: string): boolea
 
 /** The first page the user may open (for users without the dashboard, e.g. an upload-only role). */
 export function homePath(user: AuthUser | null | undefined): string | null {
-  return ['/', '/rca/import', '/data/upload-csv', '/rca', '/master-data', '/rca/summary', '/rca/import/consolidated'].find((p) => canOpen(user, p)) ?? null;
+  return ['/', '/rca/import', '/data/upload-csv', '/tickets/upload', '/tickets', '/rca', '/master-data', '/rca/summary', '/rca/import/consolidated', '/bsnl/auto-email-reports', '/bsnl/letters'].find((p) => canOpen(user, p)) ?? null;
 }

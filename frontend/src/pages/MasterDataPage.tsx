@@ -15,7 +15,7 @@ import { Segmented } from '../components/rca/RcaShared';
 import { PageHeading } from '../context/pageHeader';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { formatDate } from '../lib/format';
-import { ApiError, POPULATION_DATASETS, fetchMasterDatasets, fetchMasterOptions, fetchMasterRecords, masterExportUrl, masterParams, saveMasterData } from '../services/api';
+import { ApiError, POPULATION_DATASETS, fetchMasterDatasets, fetchMasterOptions, fetchMasterRecords, masterExportUrl, masterParams, revertMasterOverrides, saveMasterData } from '../services/api';
 import { PopulationNote, PopulationSelect } from '../components/PopulationSelect';
 import { usePopulation } from '../context/population';
 import { POPULATION_PARAM, populationSites, type Population } from '../lib/population';
@@ -71,7 +71,7 @@ export function MasterDataPage() {
 
   return (
     <div className="space-y-3">
-      <PageHeading title="Master Data" subtitle="Central database explorer of the site data layer and the RCA register. Search, filter and export each dataset. The Site Master, Monthly Performance and Escalation Matrix come from the Consolidation Matrix and the monthly calculation and are read-only; daily values can be corrected (with a reason) and RCA records edited where your role allows (no deletion)." />
+      <PageHeading title="Master Data" subtitle="Central database explorer of the site data layer and the RCA register. Search, filter and export each dataset. Site Master and Escalation Matrix values can be edited where your role allows; manual field overrides persist across later matrix imports until explicitly reverted. Monthly Performance remains read-only; daily values can be corrected (with a reason), and RCA records edited where your role allows." />
       <nav aria-label="Master Data datasets" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1 shadow-xs">
         {/* Only tabs with a dataset this user may view (the server lists only those). */}
         {TABS.filter((t) => !meta.data || t === tab || t.datasets.some((k) => meta.data!.datasets.some((d) => d.key === k))).map((t) => (
@@ -160,6 +160,21 @@ function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, 
       setBusy(false);
     }
   };
+  const revert = async (id: number, fields: string[], updatedAt?: string | null): Promise<boolean> => {
+    setMessage(null);
+    setBusy(true);
+    try {
+      const result = await revertMasterOverrides(ds.key, id, fields, updatedAt);
+      setSaved((n) => n + 1);
+      setMessage({ ok: true, text: `Restored ${result.restored.length} field${result.restored.length === 1 ? '' : 's'} from the latest matrix value.` });
+      return true;
+    } catch (e) {
+      setMessage({ ok: false, text: `${(e as Error).message} Nothing was changed.` });
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
   const { guard, dialog } = useUnsavedGuard(edits.dirty, save, edits.discard);
   // Filters, paging, sorting and the view switch ask first when changes are pending.
   const set = (changes: Record<string, string | null>) => guard(() => setNow(changes));
@@ -218,7 +233,8 @@ function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, 
       <DataGrid title={ds.label} columns={ds.columns} visible={visible} onVisible={setVisible} page={records.data} loading={records.loading} error={records.error}
         sort={params.get('sort') ?? ''} onSort={(s) => set({ sort: s })} pageSizes={meta.page_sizes}
         onPage={(p) => set({ page: String(p) })} onPageSize={(n) => set({ page_size: String(n) })}
-        editing={editMode ? { edits, editable: perms.editable, addable: perms.addable, required: perms.required } : null}
+        editing={editMode ? { edits, editable: perms.editable, addable: perms.addable, required: perms.required, choices: options?.choices } : null}
+        onRevert={editMode && !edits.dirty && !busy ? revert : undefined}
         toolbar={editMode ? (
           <EditBar edits={edits} canAdd={perms.add} busy={busy} message={message} onSave={() => { void save(); }}
             reason={perms.reason_required ? { value: reason, onChange: (v) => { setReason(v); setReasonError(undefined); }, error: reasonError } : null}
@@ -227,7 +243,7 @@ function DatasetView({ ds, meta, options, params, set: setNow, reset: resetNow, 
         actions={(
           <>
             {(perms.edit || perms.add) && !editMode && (
-              <Button size="sm" variant="outline" className="h-8" onClick={() => setEditMode(true)}><Pencil /> Edit</Button>
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setEditMode(true)}><Pencil /> Edit Mode</Button>
             )}
             {perms.export && (
               <>

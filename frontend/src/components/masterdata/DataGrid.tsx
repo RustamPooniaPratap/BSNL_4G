@@ -18,6 +18,7 @@ export interface GridEditing {
   editable: string[];
   addable: string[];
   required: string[];
+  choices?: Record<string, string[]>;
 }
 
 const NUMERIC = ['number', 'pct', 'minutes'];
@@ -57,18 +58,26 @@ function moveFocus(from: HTMLElement, how: Move) {
 }
 
 /** One editable cell: Enter, F2, a double click or typing opens the editor; Enter / Tab commit and move on, Esc cancels. */
-function EditableCell({ value, display, kind, label, cellId, changed, error, required, onCommit, width }: {
+function EditableCell({ value, display, kind, label, cellId, changed, error, required, choices, matrixValue, onCommit, width }: {
   value: string; display: string; kind: MasterColumn['kind']; label: string; cellId: string; changed: boolean; error?: string;
-  required?: boolean; onCommit: (value: string) => void; width?: number;
+  required?: boolean; choices?: string[]; matrixValue?: string | number | boolean | null; onCommit: (value: string) => void; width?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const editingRef = useRef(false);
   const cellRef = useRef<HTMLTableCellElement>(null);
-  const start = (initial?: string) => { setDraft(initial ?? value); setEditing(true); };
-  const finish = (save: boolean, then?: Move) => {
+  const start = (initial?: string) => {
+    if (editingRef.current) return;
+    editingRef.current = true;
+    setDraft(initial ?? value);
+    setEditing(true);
+  };
+  const finish = (save: boolean, then?: Move, restoreFocus = true) => {
+    if (!editingRef.current) return;
+    editingRef.current = false;
     if (save && draft !== value) onCommit(draft);
     setEditing(false);
-    requestAnimationFrame(() => {
+    if (restoreFocus) requestAnimationFrame(() => {
       if (!cellRef.current) return;
       if (then) moveFocus(cellRef.current, then);
       else cellRef.current.focus();
@@ -88,23 +97,26 @@ function EditableCell({ value, display, kind, label, cellId, changed, error, req
     else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
   };
   const common = {
-    autoFocus: true, 'aria-label': label, onKeyDown: onInputKey, onBlur: () => { if (editing) finish(true); },
+    autoFocus: true, 'aria-label': label, onKeyDown: onInputKey, onBlur: () => finish(true, undefined, false),
     className: 'h-6 w-full min-w-24 rounded border border-primary bg-background px-1 text-xs outline-none',
   };
   return (
     <td ref={cellRef} data-cell={cellId} tabIndex={0} onKeyDown={onCellKey} onDoubleClick={() => { if (!editing) start(); }}
-      title={error ?? (changed ? 'Changed: not saved yet' : 'Double-click, Enter or type to edit')} aria-invalid={error ? true : undefined}
+      title={error ?? (changed ? 'Changed: not saved yet' : matrixValue !== undefined ? `Manual override; latest matrix value: ${String(matrixValue ?? '—')}` : 'Double-click, Enter or type to edit')} aria-invalid={error ? true : undefined}
       aria-label={editing ? undefined : `${label}: ${display}`} style={width ? { maxWidth: width } : undefined}
       className={cn('max-w-72 truncate border-r border-b px-2.5 py-1 outline-none focus:ring-2 focus:ring-primary focus:ring-inset',
         NUMERIC.includes(kind) && 'text-right', changed && 'bg-amber-100 font-medium', error && 'bg-red-50 ring-1 ring-destructive ring-inset',
         required && !value && !error && 'bg-emerald-100/70')}>
       {editing ? (
-        kind === 'bool' ? (
+        kind === 'bool' || (choices?.length ?? 0) > 0 ? (
           <select {...common} value={draft} onChange={(e) => setDraft(e.target.value)}>
-            <option value="">—</option><option value="Yes">Yes</option><option value="No">No</option>
+            <option value="">—</option>
+            {(kind === 'bool' ? ['Yes', 'No'] : [...new Set([...(choices ?? []), ...(value && !choices?.includes(value) ? [value] : [])])])
+              .map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
         ) : (
-          <input {...common} type={kind === 'date' || kind === 'month' ? 'date' : 'text'} inputMode={NUMERIC.includes(kind) ? 'decimal' : undefined}
+          <input {...common} type={kind === 'date' ? 'date' : kind === 'month' ? 'month' : NUMERIC.includes(kind) ? 'number' : 'text'}
+            step={NUMERIC.includes(kind) ? 'any' : undefined}
             value={draft} onChange={(e) => setDraft(e.target.value)} />
         )
       ) : display}
@@ -118,7 +130,7 @@ function EditableCell({ value, display, kind, label, cellId, changed, error, req
  * the server (``onSort`` / ``onPage``); nothing is loaded beyond the page shown. With ``editing`` (Data Panel Add / Edit
  * permissions) cells can be changed in place and new rows filled in; changes stay in the browser until saved.
  */
-export function DataGrid({ title, columns, visible, onVisible, page, loading, error, sort, onSort, pageSizes, onPage, onPageSize, actions, editing, toolbar }: {
+export function DataGrid({ title, columns, visible, onVisible, page, loading, error, sort, onSort, pageSizes, onPage, onPageSize, actions, editing, toolbar, onRevert }: {
   title: string; columns: MasterColumn[]; visible: string[]; onVisible: (keys: string[]) => void; page: MasterPage | null; loading: boolean;
   error: Error | null; sort: string; onSort: (sort: string) => void; pageSizes: number[]; onPage: (page: number) => void; onPageSize: (size: number) => void;
   actions?: React.ReactNode;
@@ -126,11 +138,13 @@ export function DataGrid({ title, columns, visible, onVisible, page, loading, er
   editing?: GridEditing | null;
   /** Shown under the title bar (e.g. the unsaved-changes bar). */
   toolbar?: React.ReactNode;
+  onRevert?: (id: number, fields: string[], updatedAt?: string | null) => Promise<boolean>;
 }) {
   const [detail, setDetail] = useState<MasterRow | null>(null);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const drag = useRef<{ key: string; x: number; w: number } | null>(null);
   const shown = columns.filter((c) => visible.includes(c.key));
+  const manualOverrides = page?.manual_overrides ?? {};
   const sortKey = sort.replace(/^-/, '');
   const startResize = (e: MouseEvent, key: string) => {
     e.preventDefault();
@@ -206,6 +220,7 @@ export function DataGrid({ title, columns, visible, onVisible, page, loading, er
                     {shown.map((c, ci) => (editing.addable.includes(c.key) ? (
                       <EditableCell key={c.key} cellId={`${i}:${ci}`} value={n.values[c.key] ?? ''} display={n.values[c.key] ?? ''} kind={c.kind}
                         label={`New record ${i + 1}: ${c.label}`} changed={!!n.values[c.key]} error={errs?.[c.key]} required={editing.required.includes(c.key)}
+                        choices={editing.choices?.[c.key]}
                         onCommit={(v) => editing.edits.setNewCell(n.tmp, c.key, v)} width={widths[c.key]} />
                     ) : <td key={c.key} className="border-r border-b px-2.5 py-1 text-muted-foreground">—</td>))}
                   </tr>
@@ -232,7 +247,8 @@ export function DataGrid({ title, columns, visible, onVisible, page, loading, er
                         return (
                           <EditableCell key={c.key} cellId={`${rowIndex}:${ci}`} value={pending ?? cellText(r[c.key], c.kind)}
                             display={pending !== undefined ? (pending || '—') : formatCell(r[c.key], c.kind)} kind={c.kind} label={`${c.label} of record ${r._id}`}
-                            changed={pending !== undefined} error={errs?.[c.key]} onCommit={(v) => editing.edits.setCell(r, c, v)} width={widths[c.key]} />
+                            changed={pending !== undefined} error={errs?.[c.key]} choices={editing.choices?.[c.key]} matrixValue={manualOverrides[String(r._id)]?.[c.key]}
+                            onCommit={(v) => editing.edits.setCell(r, c, v)} width={widths[c.key]} />
                         );
                       }
                       return (
@@ -273,7 +289,20 @@ export function DataGrid({ title, columns, visible, onVisible, page, loading, er
               {columns.map((c) => (
                 <div key={c.key} className="contents">
                   <dt className="text-muted-foreground">{c.label}</dt>
-                  <dd className="break-words">{formatCell(detail[c.key], c.kind)}</dd>
+                  <dd className="break-words">
+                    {formatCell(detail[c.key], c.kind)}
+                    {manualOverrides[String(detail._id)]?.[c.key] !== undefined && (
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        <span>Manual override · Matrix value: {formatCell(manualOverrides[String(detail._id)][c.key], c.kind)}</span>
+                        {editing && onRevert && (
+                          <button type="button" className="ml-2 font-medium text-primary underline-offset-2 hover:underline"
+                            onClick={() => { void onRevert(detail._id, [c.key], detail.updated_at).then((ok) => { if (ok) setDetail(null); }); }}>
+                            Use matrix value
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </dd>
                 </div>
               ))}
             </dl>

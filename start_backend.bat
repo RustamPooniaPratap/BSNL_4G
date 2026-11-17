@@ -66,11 +66,13 @@ if not errorlevel 1 (
 
 cd /d "%BACKEND%"
 
-rem Read-only check: reports unapplied migrations, applies nothing.
+rem Do not start against a stale schema: the API can fail when a new model's table is missing.
 python manage.py migrate --check >nul 2>&1
 if errorlevel 1 (
-    echo [WARNING] There are unapplied migrations, or the database cannot be reached.
-    echo           Run health_log.bat for the database status. Migrations are not applied automatically.
+    echo [ERROR] Migration check failed: migrations may be unapplied, or the database may be unreachable.
+    echo         Run health_log.bat to diagnose the database, then apply migrations from backend:
+    echo             python manage.py migrate
+    goto :fail
 )
 
 echo Starting Django on http://localhost:%BACKEND_PORT%/  (API: http://localhost:%BACKEND_PORT%/api/)

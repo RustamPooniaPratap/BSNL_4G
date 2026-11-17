@@ -4,7 +4,8 @@ import type { RcaImportBatch, RcaImportReport } from '../../types/rca';
 import { RcaImportPreview } from './RcaImportPreview';
 
 const REPORT: RcaImportReport = {
-  filename: 'Oct.xlsx', sheet: 'Sheet1', rows_read: 10, valid_rows: 6, rejected_rows: 4, blank_rows: 0, unknown_columns: [], dates: { '2026-10-21': 6 },
+  filename: 'Oct.xlsx', sheet: 'RCA_Data', rows_read: 10, valid_rows: 6, rejected_rows: 4, blank_rows: 0, sample_rows_skipped: 1,
+  unknown_columns: [], dates: { '2026-10-21': 6 },
   projects: { '4G Saturation': 6 }, projects_raw: { '4G Satu': 6 }, circles: { '4G Saturation|OD': 6 }, circle_names: { 'Odisha -> OD': 6 },
   distinct_sites: 3, outage_minutes: 100, final_buckets: {}, bucket_2: {}, distinct_rca: 3, label_variants: {},
   severity_counts: { error: 4, warning: 2, info: 1 }, issue_counts: { duplicate_record: 3, final_bucket_not_approved: 1 }, issues: [],
@@ -47,6 +48,7 @@ const BATCH: RcaImportBatch = {
 describe('RcaImportPreview validation priorities', () => {
   it('shows circle totals and opens exact rejected-row details without naming personnel', () => {
     render(<RcaImportPreview batch={BATCH} busy={false} onCommit={vi.fn()} onDiscard={vi.fn()} />);
+    expect(within(screen.getByText('Sample rows skipped').parentElement!).getByText('1')).toBeInTheDocument();
     const section = screen.getByLabelText('Circle-wise Error Accountability');
     expect(section).toHaveTextContent('4 rejected rows, counted once each. Warnings are excluded.');
     expect(section).toHaveTextContent('OD');

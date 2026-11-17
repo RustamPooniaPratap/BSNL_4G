@@ -249,6 +249,7 @@ export interface RcaImportReport {
   valid_rows: number;
   rejected_rows: number;
   blank_rows: number;
+  sample_rows_skipped?: number;
   unknown_columns: string[];
   dates: Record<string, number>;
   projects: Record<string, number>;
@@ -276,7 +277,7 @@ export interface RcaImportReport {
   is_correction?: boolean;
   /** Final Bucket labels (as written) found in no stored record, with their row counts. */
   new_final_buckets?: Record<string, number>;
-  /** The data sheet found by its header and its header row. */
+  /** The required RCA_Data sheet and its row-2 header. */
   header_row?: number;
   /** Duplicates: rows with the same site, date, Final Bucket and Sub Bucket as an earlier row (description and outage ignored). */
   duplicates?: {

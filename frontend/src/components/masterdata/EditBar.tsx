@@ -28,11 +28,12 @@ export function EditBar({ edits, canAdd, busy, message, onSave, onDone, reason }
     <div className="space-y-1.5 border-b bg-amber-50/60 px-4 py-2" role="region" aria-label="Unsaved changes">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className={cn('font-medium', edits.dirty ? 'text-amber-900' : 'text-muted-foreground')} aria-live="polite">
-          {edits.dirty ? `Unsaved: ${parts.join(' · ')}` : 'Editing: double-click a cell (or select it and type). Changed cells are highlighted until saved.'}
+          {edits.dirty ? `Unsaved: ${parts.join(' · ')}` : 'Double-click an editable cell or select it and type. Changes stay here until saved; later matrix imports retain manual overrides until reverted.'}
         </span>
         <div className="ml-auto flex flex-wrap gap-1.5">
+          <span className="inline-flex items-center rounded-full bg-primary/10 px-2 font-semibold text-primary">EDIT MODE</span>
           {canAdd && <Button size="sm" variant="outline" className="h-7" onClick={edits.addRow} disabled={busy}><Plus /> Add row</Button>}
-          <Button size="sm" variant="outline" className="h-7" onClick={edits.discard} disabled={busy || !edits.dirty}><Undo2 /> Discard</Button>
+          <Button size="sm" variant="outline" className="h-7" onClick={edits.discard} disabled={busy || !edits.dirty}><Undo2 /> Discard Changes</Button>
           <Button size="sm" className="h-7" onClick={onSave} disabled={busy || !edits.dirty || reasonMissing}
             title={reasonMissing && edits.dirty ? 'Give the reason for the correction first' : undefined}>{busy ? <Loader2 className="animate-spin" /> : <Save />} Save Changes</Button>
           <Button size="sm" variant="ghost" className="h-7" onClick={onDone} disabled={busy || edits.dirty} title={edits.dirty ? 'Save or discard the changes first' : undefined}>Done</Button>

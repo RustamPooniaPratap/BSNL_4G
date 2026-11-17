@@ -40,6 +40,13 @@ const AlertEmailSetupPage = lazy(() => import('./pages/alerts/AlertEmailSetupPag
 const AlertAutomationsPage = lazy(() => import('./pages/alerts/AlertAutomationsPage').then((m) => ({ default: m.AlertAutomationsPage })));
 const AlertHistoryPage = lazy(() => import('./pages/alerts/AlertHistoryPage').then((m) => ({ default: m.AlertHistoryPage })));
 const OrganizationPage = lazy(() => import('./pages/OrganizationPage').then((m) => ({ default: m.OrganizationPage })));
+const ApiMasterPage = lazy(() => import('./features/api-master/ApiMasterPage').then((m) => ({ default: m.ApiMasterPage })));
+const TicketDashboardPage = lazy(() => import('./features/tickets/TicketDashboardPage').then((m) => ({ default: m.TicketDashboardPage })));
+const TicketListPage = lazy(() => import('./features/tickets/TicketListPage').then((m) => ({ default: m.TicketListPage })));
+const TicketUploadPage = lazy(() => import('./features/tickets/TicketUploadPage').then((m) => ({ default: m.TicketUploadPage })));
+const AutoEmailReportsPage = lazy(() => import('./features/bsnl/AutoEmailReportsPage').then((m) => ({ default: m.AutoEmailReportsPage })));
+const BsnlLettersPage = lazy(() => import('./features/bsnl/BsnlLettersPage').then((m) => ({ default: m.BsnlLettersPage })));
+const TicketDetailPage = lazy(() => import('./features/tickets/TicketDetailPage').then((m) => ({ default: m.TicketDetailPage })));
 
 /** The signed-in application: every page here needs a session; Admin-only pages check the role too. */
 function PortalRoutes() {
@@ -74,8 +81,15 @@ function PortalRoutes() {
               <Route path="/daily-ingestion" element={<RequireAdmin><CsvArrivalPage /></RequireAdmin>} />
               <Route path="/admin/users/*" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
               <Route path="/master-data/*" element={<RequirePage><MasterDataPage /></RequirePage>} />
+              <Route path="/tickets" element={<RequirePage><TicketDashboardPage /></RequirePage>} />
+              <Route path="/tickets/all" element={<RequirePage><TicketListPage /></RequirePage>} />
+              <Route path="/tickets/upload" element={<RequirePage><TicketUploadPage /></RequirePage>} />
+              <Route path="/tickets/:ticketId" element={<RequirePage><TicketDetailPage /></RequirePage>} />
+              <Route path="/bsnl/auto-email-reports" element={<RequirePage><AutoEmailReportsPage /></RequirePage>} />
+              <Route path="/bsnl/letters" element={<RequirePage><BsnlLettersPage /></RequirePage>} />
               <Route path="/all-kpis" element={<RequirePage><AllKpisPage /></RequirePage>} />
               <Route path="/admin/organization/*" element={<RequireAdmin><OrganizationPage /></RequireAdmin>} />
+              <Route path="/admin/api-master/*" element={<RequireAdmin><ApiMasterPage /></RequireAdmin>} />
               <Route path="/admin/alerts" element={<Navigate to="/admin/alerts/email" replace />} />
               <Route path="/admin/alerts/email" element={<RequireAdmin><AlertEmailSetupPage /></RequireAdmin>} />
               <Route path="/admin/alerts/automations" element={<RequireAdmin><AlertAutomationsPage /></RequireAdmin>} />

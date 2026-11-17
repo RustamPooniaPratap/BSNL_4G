@@ -68,6 +68,7 @@ describe('Upload RCA Data', () => {
     m.commitRcaImport.mockResolvedValue(DONE);
     renderWithWorkbook(<RcaImportPage mode="consolidated" />, { url: '/rca/import', auth: authValue({ user: NOC }) });
     expect(await screen.findByText(/uploaded as noc\.lead/)).toBeInTheDocument();  // the uploader is the signed-in account
+    expect(screen.getByRole('link', { name: 'Download RCA Template' })).toHaveAttribute('href', expect.stringContaining('/rca/template.xlsx'));
     const validate = screen.getByRole('button', { name: 'Validate workbook' });
     expect(validate).toBeDisabled();
     await user.type(screen.getByLabelText(/Report name/), 'October 2026 RCA Report');
@@ -159,6 +160,7 @@ describe('Upload RCA Data', () => {
     await user.upload(screen.getByLabelText('RCA workbook'), new File(['x'], 'Oct_RCA.xlsx'));
     await user.click(screen.getByRole('button', { name: 'Validate workbook' }));
     expect(await screen.findByText('The workbook could not be validated')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Download RCA Template' })).toHaveLength(2);
     expect(steps()).toEqual(['Upload: current', 'Validate & Preview: failed', 'Confirm Import: todo', 'Results: todo']);
     m.previewRcaImport.mockResolvedValue(PREVIEW);
     m.commitRcaImport.mockRejectedValueOnce(new api.ApiError('The database is unavailable.', 503));
@@ -193,6 +195,7 @@ describe('Upload RCA Data', () => {
     renderWithWorkbook(<Routes><Route path="/rca/import" element={<RequirePage><RcaImportPage mode="circle" /></RequirePage>} /></Routes>,
       { url: '/rca/import', auth: authValue({ user: CI_OD }) });
     expect(await screen.findByRole('heading', { name: 'Upload Circle RCA' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Download RCA Template' })).toHaveAttribute('href', expect.stringContaining('/rca/template.xlsx'));
     expect(screen.queryByLabelText(/Report name/)).not.toBeInTheDocument();
     expect(await screen.findByText('Still needed: reporting date, RCA workbook.')).toBeInTheDocument();  // the only grant is preselected
     expect(screen.getByRole('combobox', { name: /Project/ })).toHaveTextContent('4G Saturation');

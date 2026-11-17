@@ -17,11 +17,13 @@ export interface NewRow { tmp: number; values: Record<string, string> }
  */
 export function useDataEdits() {
   const [changes, setChanges] = useState<Record<number, Record<string, string>>>({});
+  const [versions, setVersions] = useState<Record<number, string>>({});
   const [additions, setAdditions] = useState<NewRow[]>([]);
   const [errors, setErrors] = useState<MasterSaveErrors | null>(null);
   const [nextTmp, setNextTmp] = useState(1);
 
   const setCell = useCallback((row: MasterRow, column: MasterColumn, value: string) => {
+    setVersions((current) => row.updated_at && current[row._id] === undefined ? { ...current, [row._id]: row.updated_at } : current);
     setChanges((current) => {
       const rowChanges = { ...(current[row._id] ?? {}) };
       if (value === cellText(row[column.key], column.kind)) delete rowChanges[column.key];  // back to the stored value
@@ -43,6 +45,7 @@ export function useDataEdits() {
   const removeNew = useCallback((tmp: number) => setAdditions((rows) => rows.filter((r) => r.tmp !== tmp)), []);
   const discard = useCallback(() => {
     setChanges({});
+    setVersions({});
     setAdditions([]);
     setErrors(null);
   }, []);
@@ -50,7 +53,9 @@ export function useDataEdits() {
   const cells = useMemo(() => Object.values(changes).reduce((n, r) => n + Object.keys(r).length, 0), [changes]);
   const rows = Object.keys(changes).length;
   const payload = (): MasterSaveRequest => ({
-    changes: Object.entries(changes).map(([id, values]) => ({ id: Number(id), values })),
+    changes: Object.entries(changes).map(([id, values]) => ({
+      id: Number(id), values, ...(versions[Number(id)] ? { updated_at: versions[Number(id)] } : {}),
+    })),
     // Oldest first, so the server's indexes match the order the rows were added in.
     additions: [...additions].reverse().map((r) => ({ values: Object.fromEntries(Object.entries(r.values).filter(([, v]) => v !== '')) })),
   });

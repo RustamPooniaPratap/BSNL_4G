@@ -16,7 +16,7 @@ import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatBytes } from '../../lib/dataEntry';
 import { formatDateTime, formatNumber } from '../../lib/format';
 import { formatMin, periodText } from '../../lib/rca';
-import { commitRcaImport, discardRcaImport, fetchRcaImport, fetchRcaImports, previewRcaImport, rcaImportWorkbookUrl, rcaIssuesUrl } from '../../services/api';
+import { commitRcaImport, discardRcaImport, fetchRcaImport, fetchRcaImports, previewRcaImport, rcaImportWorkbookUrl, rcaIssuesUrl, rcaTemplateUrl } from '../../services/api';
 import { activeCirclesOf, useOrganization } from '../../hooks/useOrganization';
 import type { RcaImportBatch, RcaProjectScope, RcaUploadDetails, RcaUploadType } from '../../types/rca';
 
@@ -200,7 +200,7 @@ export function RcaImportPage({ mode }: { mode: RcaUploadType }) {
           </div>
           <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             <p className="flex items-center gap-1.5 font-medium text-foreground"><Info className="size-3.5" aria-hidden="true" /> How the workbook is checked</p>
-            <p className="mt-1">The data sheet (e.g. “RCA Backup”) is found by its columns: Date, Project, Circle, Site ID, Site Name, OA, BA, O&amp;M Start (Yes/No), Outage Min., Final Bucket, Bucket - 2, RCA.</p>
+            <p className="mt-1">The workbook must contain a sheet named “RCA_Data”. Its first 12 columns, in order, must be: Date, Project, Circle, Site ID, Site Name, OA, BA, O&amp;M Start (Yes/No), Outage Min., Final Bucket, Bucket - 2, RCA. Extra sheets and columns after these are ignored; the reserved sample row is skipped.</p>
             {circleMode ? (
               <p className="mt-1">Every row must be of the selected project, circle and reporting date, with a Site ID of that circle in the Up-Time Report; other rows are rejected, and a file holding another date is refused. Only stored records of this circle and date are ever offered for withdrawal.</p>
             ) : (
@@ -210,13 +210,26 @@ export function RcaImportPage({ mode }: { mode: RcaUploadType }) {
         </Card>
 
         <Card className="gap-3 rounded-xl px-4 py-3 lg:col-span-3" aria-label="RCA workbook file">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">Start with the approved workbook structure.</p>
+            <Button asChild size="sm" variant="outline">
+              <a href={rcaTemplateUrl()} download><Download aria-hidden="true" /> Download RCA Template</a>
+            </Button>
+          </div>
           <FileDropZone inputId="rca-file" inputLabel="RCA workbook" accept=".xlsx,.xlsm" kind="Excel workbook" file={file} status={fileStatus} busy={busy}
             spinning={busy} title="Upload your RCA workbook" dropTitle="Drop the workbook to select it"
             description="Drag and drop the completed RCA workbook here, or browse files from your computer." oneFileMessage="Drop one workbook at a time."
             hint={<>The daily RCA workbook as .xlsx or .xlsm{maxBytes ? `, up to ${formatBytes(maxBytes)}` : ''}. The server checks every row before anything is imported, and nothing is saved until you confirm.</>}
             requiredError={show('file')} check={checkFile} onFile={changeFile} />
           {error?.phase === 'validate' && (
-            <Alert variant="destructive" role="alert"><CircleAlert /><AlertTitle>The workbook could not be validated</AlertTitle><AlertDescription>{error.message}</AlertDescription></Alert>
+            <Alert variant="destructive" role="alert"><CircleAlert /><AlertTitle>The workbook could not be validated</AlertTitle>
+              <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+                <span>{error.message}</span>
+                <Button asChild size="sm" variant="outline">
+                  <a href={rcaTemplateUrl()} download><Download aria-hidden="true" /> Download RCA Template</a>
+                </Button>
+              </AlertDescription>
+            </Alert>
           )}
           <div className="mt-auto flex flex-wrap items-center justify-end gap-3 border-t pt-3">
             {missing.length > 0 && <p className="mr-auto text-xs text-muted-foreground">Still needed: {missing.join(', ')}.</p>}

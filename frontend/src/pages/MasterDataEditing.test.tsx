@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '../services/api';
@@ -9,7 +9,7 @@ import { MasterDataPage } from './MasterDataPage';
 
 vi.mock('../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/api')>()),
-  fetchMasterDatasets: vi.fn(), fetchMasterOptions: vi.fn(), fetchMasterRecords: vi.fn(), saveMasterData: vi.fn(),
+  fetchMasterDatasets: vi.fn(), fetchMasterOptions: vi.fn(), fetchMasterRecords: vi.fn(), saveMasterData: vi.fn(), revertMasterOverrides: vi.fn(),
 }));
 const m = vi.mocked(api);
 vi.setConfig({ testTimeout: 30000 });
@@ -19,7 +19,20 @@ const READER: MasterPermissions = { view: true, export: false, edit: false, add:
 /** Daily Performance: changes are authorized corrections and need a reason. */
 const EDITOR: MasterPermissions = { view: true, export: false, edit: true, add: true, editable: ['availability_pct', 'outage_minutes'],
   addable: ['project', 'circle', 'site_id', 'date', 'availability_pct', 'outage_minutes'], required: ['site_id', 'date'], reason_required: true };
-/** Site Master: read-only (the Consolidation Matrix is authoritative). */
+const SITE_EDITOR: MasterPermissions = {
+  view: true, export: true, edit: true, add: false,
+  editable: ['site_name', 'oa', 'on_air', 'on_air_date', 'latitude'], addable: [], required: [],
+};
+const ESCALATION_EDITOR: MasterPermissions = {
+  view: true, export: true, edit: true, add: false,
+  editable: ['ci_name', 'commissioning_date'], addable: [], required: [],
+};
+const RCA_EDITOR: MasterPermissions = {
+  view: true, export: true, edit: true, add: true,
+  editable: ['final_bucket', 'rca_text'], addable: ['reporting_date', 'project', 'circle', 'site_id', 'rca_text', 'final_bucket'],
+  required: ['reporting_date', 'project', 'circle', 'site_id', 'rca_text'],
+};
+/** A viewer without an Edit grant sees Site Master in its default read-only mode. */
 const sitesMeta = (permissions: MasterPermissions): MasterDatasets => ({
   page_sizes: [25, 50], weeks: [],
   datasets: [{ key: 'uptime_sites', label: 'Site Master', description: 'Sites.', time: false,
@@ -52,7 +65,7 @@ const grid = async () => screen.findByRole('region', { name: 'Daily Performance'
 /** Double-click a cell, type a new value and press Enter (as in a spreadsheet). */
 const typeInto = async (user: ReturnType<typeof userEvent.setup>, label: string, value: string) => {
   await user.dblClick(screen.getByRole('cell', { name: new RegExp(`^${label}`) }));
-  const input = screen.getByRole('textbox', { name: label });
+  const input = screen.getByLabelText(label);
   await user.clear(input);
   await user.type(input, `${value}{Enter}`);
 };
@@ -71,6 +84,155 @@ describe('Master Data editing', () => {
     expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
   });
 
+  it('edits text, dropdown, boolean, date and numeric Site Master cells and saves them together', async () => {
+    const user = userEvent.setup();
+    m.fetchMasterDatasets.mockResolvedValue({
+      page_sizes: [25, 50], weeks: [],
+      datasets: [{
+        key: 'uptime_sites', label: 'Site Master', description: 'Manual overrides persist across matrix imports.', time: false,
+        columns: [col('site_id', 'Site ID'), col('site_name', 'Site name'), col('oa', 'OA'), col('on_air', 'On-Air', 'bool'),
+          col('on_air_date', 'On-Air date', 'date'), col('latitude', 'Latitude', 'number')],
+        filters: { site: true, choices: [] }, permissions: SITE_EDITOR,
+      }],
+    });
+    m.fetchMasterOptions.mockResolvedValue({ projects: ['4G Saturation'], circles: ['MP'], choices: { oa: ['Sehore', 'Bhopal'] } });
+    m.fetchMasterRecords.mockResolvedValue({
+      total: 1, page: 1, page_size: 50, pages: 1, manual_overrides: {},
+      rows: [{ _id: 7, updated_at: '2026-11-16T09:30:00+00:00', site_id: 'UVMP1', site_name: 'Alpha', oa: 'Sehore',
+        on_air: false, on_air_date: '2026-10-01', latitude: 23.2 }],
+    });
+    m.saveMasterData.mockResolvedValue({ saved: true, updated: 1, added: 0, ids: [7] });
+    renderWithWorkbook(<MasterDataPage />, { url: '/master-data' });
+    const region = await screen.findByRole('region', { name: 'Site Master' });
+    await user.click(within(region).getByRole('button', { name: 'Edit Mode' }));
+    expect(screen.getByText('EDIT MODE')).toBeInTheDocument();
+
+    await user.dblClick(screen.getByRole('cell', { name: /Site name of record 7/ }));
+    const name = screen.getByRole('textbox', { name: 'Site name of record 7' });
+    await user.clear(name);
+    await user.type(name, 'Manual Alpha{Enter}');
+
+    await user.dblClick(screen.getByRole('cell', { name: /OA of record 7/ }));
+    const oa = screen.getByRole('combobox', { name: 'OA of record 7' });
+    await user.selectOptions(oa, 'Bhopal');
+    await user.keyboard('{Enter}');
+
+    await user.dblClick(screen.getByRole('cell', { name: /On-Air of record 7/ }));
+    const onAir = screen.getByRole('combobox', { name: 'On-Air of record 7' });
+    await user.selectOptions(onAir, 'Yes');
+    await user.keyboard('{Enter}');
+
+    await user.dblClick(screen.getByRole('cell', { name: /On-Air date of record 7/ }));
+    const date = screen.getByLabelText('On-Air date of record 7');
+    fireEvent.change(date, { target: { value: '2026-11-10' } });
+    fireEvent.keyDown(date, { key: 'Enter', code: 'Enter' });
+
+    await user.dblClick(screen.getByRole('cell', { name: /Latitude of record 7/ }));
+    const latitude = screen.getByRole('spinbutton', { name: 'Latitude of record 7' });
+    await user.clear(latitude);
+    await user.type(latitude, '24.5{Enter}');
+
+    expect(screen.getByRole('region', { name: 'Unsaved changes' })).toHaveTextContent('5 changed cells in 1 row');
+    await user.click(screen.getByRole('button', { name: /Save Changes/ }));
+    await waitFor(() => expect(m.saveMasterData).toHaveBeenCalledWith('uptime_sites', {
+      changes: [{ id: 7, values: { site_name: 'Manual Alpha', oa: 'Bhopal', on_air: 'Yes', on_air_date: '2026-11-10', latitude: '24.5' },
+        updated_at: '2026-11-16T09:30:00+00:00' }],
+      additions: [],
+    }));
+  });
+
+  it('shows CI-wise Edit Mode and saves only the authorized matrix fields', async () => {
+    const user = userEvent.setup();
+    m.fetchMasterDatasets.mockResolvedValue({
+      page_sizes: [25, 50], weeks: [],
+      datasets: [{
+        key: 'escalation', label: 'CI-wise Consolidation & Escalation Matrix', description: 'Matrix overrides persist across imports.',
+        time: false, columns: [col('site_id', 'BSNL Site ID'), col('ci_name', 'CI'), col('commissioning_date', 'Commissioning', 'date')],
+        filters: { site: true, choices: [] }, permissions: ESCALATION_EDITOR,
+      }],
+    });
+    m.fetchMasterRecords.mockResolvedValue({
+      total: 1, page: 1, page_size: 50, pages: 1, manual_overrides: {},
+      rows: [{ _id: 12, updated_at: '2026-11-16T09:30:00+00:00', site_id: 'UVMP12', ci_name: 'CI East', commissioning_date: '2025-01-01' }],
+    });
+    m.saveMasterData.mockResolvedValue({ saved: true, updated: 1, added: 0, ids: [12] });
+    renderWithWorkbook(<MasterDataPage />, { url: '/master-data/escalation' });
+    const region = await screen.findByRole('region', { name: 'CI-wise Consolidation & Escalation Matrix' });
+    await user.click(within(region).getByRole('button', { name: 'Edit Mode' }));
+    await user.dblClick(screen.getByRole('cell', { name: /CI of record 12/ }));
+    const input = screen.getByRole('textbox', { name: 'CI of record 12' });
+    await user.clear(input);
+    await user.type(input, 'Manual CI{Enter}');
+    await user.dblClick(screen.getByRole('cell', { name: /Commissioning of record 12/ }));
+    const date = screen.getByLabelText('Commissioning of record 12');
+    fireEvent.change(date, { target: { value: '2025-02-01' } });
+    fireEvent.keyDown(date, { key: 'Enter', code: 'Enter' });
+    expect(screen.getByRole('region', { name: 'Unsaved changes' })).toHaveTextContent('2 changed cells in 1 row');
+    await user.click(screen.getByRole('button', { name: /Save Changes/ }));
+    await waitFor(() => expect(m.saveMasterData).toHaveBeenCalledWith('escalation', {
+      changes: [{ id: 12, values: { ci_name: 'Manual CI', commissioning_date: '2025-02-01' }, updated_at: '2026-11-16T09:30:00+00:00' }], additions: [],
+    }));
+    expect(await screen.findByText('Saved to the database: 1 record updated, 0 added.')).toBeInTheDocument();
+  });
+
+  it('keeps RCA Data Edit Mode and saving behavior intact', async () => {
+    const user = userEvent.setup();
+    m.fetchMasterDatasets.mockResolvedValue({
+      page_sizes: [25, 50], weeks: [],
+      datasets: [{
+        key: 'rca', label: 'RCA Data', description: 'RCA records.', time: true,
+        columns: [col('final_bucket', 'Final Bucket'), col('rca_text', 'RCA')],
+        filters: { site: true, choices: [] }, permissions: RCA_EDITOR,
+      }],
+    });
+    m.fetchMasterOptions.mockResolvedValue({ projects: [], circles: [], months: [], choices: {} });
+    m.fetchMasterRecords.mockResolvedValue({
+      total: 1, page: 1, page_size: 50, pages: 1,
+      rows: [{ _id: 3, final_bucket: 'TCS', rca_text: 'Power issue' }],
+    });
+    m.saveMasterData.mockResolvedValue({ saved: true, updated: 1, added: 0, ids: [3] });
+    renderWithWorkbook(<MasterDataPage />, { url: '/master-data/rca' });
+    const region = await screen.findByRole('region', { name: 'RCA Data' });
+    await user.click(within(region).getByRole('button', { name: 'Edit Mode' }));
+    await user.dblClick(screen.getByRole('cell', { name: /RCA of record 3/ }));
+    const input = screen.getByRole('textbox', { name: 'RCA of record 3' });
+    await user.clear(input);
+    await user.type(input, 'Fiber cut{Enter}');
+    await user.click(screen.getByRole('button', { name: /Save Changes/ }));
+    await waitFor(() => expect(m.saveMasterData).toHaveBeenCalledWith('rca', {
+      changes: [{ id: 3, values: { rca_text: 'Fiber cut' } }], additions: [],
+    }));
+  });
+
+  it('uses Enter, Tab and Shift+Tab for cell navigation, and Discard restores the server value', async () => {
+    const user = userEvent.setup();
+    m.fetchMasterDatasets.mockResolvedValue({
+      page_sizes: [25, 50], weeks: [],
+      datasets: [{ key: 'uptime_sites', label: 'Site Master', description: 'Sites.', time: false,
+        columns: [col('site_id', 'Site ID'), col('site_name', 'Site name'), col('oa', 'OA')],
+        filters: { site: true, choices: [] }, permissions: SITE_EDITOR }],
+    });
+    m.fetchMasterOptions.mockResolvedValue({ projects: [], circles: [], choices: { oa: ['Sehore'] } });
+    m.fetchMasterRecords.mockResolvedValue({ total: 1, page: 1, page_size: 50, pages: 1,
+      rows: [{ _id: 1, site_id: 'UVMP1', site_name: 'Alpha', oa: 'Sehore', project: '4G Saturation', circle: 'MP' }] });
+    renderWithWorkbook(<MasterDataPage />, { url: '/master-data' });
+    const region = await screen.findByRole('region', { name: 'Site Master' });
+    await user.click(within(region).getByRole('button', { name: 'Edit Mode' }));
+    const nameCell = screen.getByRole('cell', { name: /Site name of record 1/ });
+    nameCell.focus();
+    await user.keyboard('{Enter}');
+    const name = screen.getByRole('textbox', { name: 'Site name of record 1' });
+    await user.clear(name);
+    await user.type(name, 'Draft{Tab}');
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('aria-label', 'OA of record 1: Sehore'));
+    await user.keyboard('{Enter}');
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('aria-label', 'Site name of record 1: Draft'));
+    await user.click(screen.getByRole('button', { name: /Discard Changes/ }));
+    expect(screen.getByRole('cell', { name: 'Site name of record 1: Alpha' })).toBeInTheDocument();
+    expect(m.saveMasterData).not.toHaveBeenCalled();
+  });
+
   it('corrects several values with a mandatory reason, saves them together and reloads from the database', async () => {
     const user = userEvent.setup();
     m.fetchMasterDatasets.mockResolvedValue(meta(EDITOR));
@@ -78,7 +240,7 @@ describe('Master Data editing', () => {
     renderWithWorkbook(<MasterDataPage />, { url: URL_DAILY });
     const region = await grid();
     await within(region).findByText('Alpha');
-    await user.click(within(region).getByRole('button', { name: 'Edit' }));
+    await user.click(within(region).getByRole('button', { name: 'Edit Mode' }));
     await typeInto(user, 'Availability of record 1', '99.5');
     await typeInto(user, 'Outage minutes of record 2', '30');
     expect(screen.getByRole('cell', { name: /Availability of record 1/ }).className).toContain('bg-amber-100');  // unsaved
@@ -104,7 +266,7 @@ describe('Master Data editing', () => {
     renderWithWorkbook(<MasterDataPage />, { url: URL_DAILY });
     const region = await grid();
     await within(region).findByText('Alpha');
-    await user.click(within(region).getByRole('button', { name: 'Edit' }));
+    await user.click(within(region).getByRole('button', { name: 'Edit Mode' }));
     await typeInto(user, 'Availability of record 1', '50');
     await user.click(screen.getByRole('button', { name: /Add row/ }));
     await typeInto(user, 'New record 1: Site ID', 'UVXX1');
@@ -127,7 +289,7 @@ describe('Master Data editing', () => {
     renderWithWorkbook(<MasterDataPage />, { url: URL_DAILY });
     const region = await grid();
     await within(region).findByText('Alpha');
-    await user.click(within(region).getByRole('button', { name: 'Edit' }));
+    await user.click(within(region).getByRole('button', { name: 'Edit Mode' }));
     await typeInto(user, 'Availability of record 1', '50');
     await user.type(reasonBox(), 'x');
     await user.click(screen.getByRole('button', { name: /Save Changes/ }));
@@ -141,7 +303,7 @@ describe('Master Data editing', () => {
     renderWithWorkbook(<MasterDataPage />, { url: URL_DAILY });
     const region = await grid();
     await within(region).findByText('Alpha');
-    await user.click(within(region).getByRole('button', { name: 'Edit' }));
+    await user.click(within(region).getByRole('button', { name: 'Edit Mode' }));
     await typeInto(user, 'Availability of record 1', '42');
     // Switching the Uptime Master view would reload the table: the page asks first.
     await user.click(screen.getByRole('button', { name: 'Site Master' }));

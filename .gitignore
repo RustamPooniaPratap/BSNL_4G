@@ -43,6 +43,7 @@ pnpm-debug.log*
 ![Dd]ata/raw/.gitkeep
 [Dd]ata/reference/*
 ![Dd]ata/reference/.gitkeep
+![Dd]ata/reference/RCA_Upload_Template.xlsx
 [Dd]ata/processed/*
 ![Dd]ata/processed/.gitkeep
 

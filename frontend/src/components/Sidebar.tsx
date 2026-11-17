@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Activity, BriefcaseBusiness, ChevronRight, LayoutGrid, Database, FileSpreadsheet, FolderCog, Gauge, HardDrive, Inbox,
-  LayoutDashboard, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy, Table2, ListTree, MapPinned, ChartLine, Building2, TableProperties, BellRing, Mail, Workflow, History,
+  LayoutDashboard, Radio, Sheet, SquarePen, UserCog, Users, ClipboardList, ClipboardCheck, ChartBar, FileUp, Layers3, UserCheck, Trophy, Table2, ListTree, MapPinned, ChartLine, Building2, TableProperties, BellRing, Mail, Workflow, History, Plug, Landmark, FileSignature,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { canOpen, hasPermission, useAuth } from '../context/auth';
@@ -117,6 +117,22 @@ const entries: NavEntry[] = [
       { ...page('/rca/import/consolidated', 'Upload Consolidated RCA', Layers3), show: (u) => !!u?.rca_upload?.consolidated },
     ],
   },
+  { kind: 'heading', heading: 'Operations' },
+  {
+    kind: 'group', id: 'tickets', label: 'Ticket Management', icon: ClipboardList,
+    items: [
+      page('/tickets', 'Ticket Dashboard', LayoutDashboard),
+      page('/tickets/all', 'All Tickets', Table2),
+      page('/tickets/upload', 'Upload Excel', FileUp),
+    ],
+  },
+  {
+    kind: 'group', id: 'bsnl-module', label: 'BSNL Module', icon: Landmark,
+    items: [
+      page('/bsnl/auto-email-reports', 'Auto Email Reports', Mail),
+      page('/bsnl/letters', 'BSNL Letters', FileSignature),
+    ],
+  },
   { kind: 'heading', heading: 'Data' },
   {
     kind: 'group', id: 'data-management', label: 'Data Management', icon: FolderCog,
@@ -128,7 +144,8 @@ const entries: NavEntry[] = [
   },
   { kind: 'group', id: 'csv-arrival', label: 'Data Arrival & Follow-up', icon: Inbox, items: [page('/daily-ingestion', 'CSV Arrival Tracking', Inbox)] },
   { kind: 'section', heading: 'Administration', items: [{ ...page('/admin/users', 'Users & Roles', UserCog), isActive: (p) => p === '/admin/users' || p.startsWith('/admin/users/') },
-    { ...page('/admin/organization', 'Organization', Building2), isActive: (p) => p === '/admin/organization' || p.startsWith('/admin/organization/') }] },
+    { ...page('/admin/organization', 'Organization', Building2), isActive: (p) => p === '/admin/organization' || p.startsWith('/admin/organization/') },
+    { ...page('/admin/api-master', 'API Master', Plug), isActive: (p) => p === '/admin/api-master' || p.startsWith('/admin/api-master/') }] },
   {
     kind: 'group', id: 'alert', label: 'Alert', icon: BellRing,
     items: [page('/admin/alerts/email', 'Email Setup', Mail), page('/admin/alerts/automations', 'Automations', Workflow), page('/admin/alerts/history', 'Email History', History)],
