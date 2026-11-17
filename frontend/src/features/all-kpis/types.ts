@@ -44,10 +44,14 @@ export interface KpiSites { total: number; page: number; page_size?: number; pag
 
 export interface KpiRca {
   period?: KpiPeriod; records: number;
-  buckets: { bucket: string; records: number; outage_minutes: number; share_pct: number | null }[];
+  buckets: { bucket: string; label: string; records: number; outage_minutes: number; share_pct: number | null }[];
   not_mapped?: { records: number; values: { final_bucket: string; records: number }[] };
   by_circle?: { circle: string; records: number; buckets: Record<string, number> }[];
-  ownership?: { configured: boolean; message: string };
+  ownership?: {
+    configured: boolean;
+    message: string;
+    buckets: { bucket: string; label: string; records: number; outage_minutes: number; share_pct: number | null }[];
+  };
 }
 
 export interface KpiFilterOptions {
@@ -56,5 +60,5 @@ export interface KpiFilterOptions {
   cis: { key: string; label: string; circle: string }[];
   ies: { key: string; label: string; ci: string; circle: string }[];
   sites: { key: string; label: string }[]; site_count: number;
-  buckets: { key: string; label: string }[]; final_buckets: string[];
+  buckets: { key: string; label: string }[]; final_buckets: string[]; responsibilities: { key: string; label: string }[];
 }

@@ -18,6 +18,7 @@ import { useApiQuery } from '../../hooks/useApiQuery';
 import { activeCirclesOf, useOrganization } from '../../hooks/useOrganization';
 import { approvedFinalBuckets, approvedSubBuckets } from '../../lib/rcaTaxonomy';
 import { formatDate, formatNumber } from '../../lib/format';
+import { useRcaBucketMappingRevision } from '../../lib/rcaBucketMapping';
 import { createRcaRecord, fetchRcaOptions, fetchRcaRecords } from '../../services/api';
 import type { RcaOptions, RcaRecordInput } from '../../types/rca';
 
@@ -32,14 +33,15 @@ export function RcaRegisterPage() {
   const [params, setParams] = useSearchParams();
   const [version, setVersion] = useState(0);
   const [creating, setCreating] = useState(false);
-  const options = useApiQuery(`rca-options-${version}`, (signal) => fetchRcaOptions(signal));
+  const mappingRevision = useRcaBucketMappingRevision();
+  const options = useApiQuery(`rca-options-${mappingRevision}-${version}`, (signal) => fetchRcaOptions(signal));
   const query = new URLSearchParams();
   for (const key of [...FILTER_KEYS, 'page', 'ordering']) {
     const v = params.get(key);
     if (v) query.set(key, v);
   }
   query.set('page_size', String(PAGE_SIZE));
-  const records = useApiQuery(`rca-records-${query}-${version}`, (signal) => fetchRcaRecords(query, signal));
+  const records = useApiQuery(`rca-records-${query}-${mappingRevision}-${version}`, (signal) => fetchRcaRecords(query, signal));
   const recordId = params.get('record') ? Number(params.get('record')) : null;
 
   const update = (changes: Record<string, string>, replace = true) => setParams((cur) => {
@@ -87,7 +89,7 @@ export function RcaRegisterPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        {['Date', 'Site ID', 'Site name', 'Project', 'Circle', 'Outage', 'Final Bucket', 'Bucket - 2', 'RCA', 'Cause category', 'Follow-up'].map((h) => (
+                        {['Date', 'Site ID', 'Site name', 'Project', 'Circle', 'Outage', 'Final Bucket', 'Responsibility', 'Bucket - 2', 'RCA', 'Cause category', 'Follow-up'].map((h) => (
                           <TableHead key={h} className={h === 'Outage' ? 'text-right' : undefined}>{h}</TableHead>
                         ))}
                       </TableRow>
@@ -105,6 +107,7 @@ export function RcaRegisterPage() {
                           <TableCell>{r.circle}</TableCell>
                           <TableCell className="text-right tabular-nums">{formatMin(r.outage_minutes)}</TableCell>
                           <TableCell><SourceValue value={r.final_bucket} unclassified={r.final_bucket_unclassified} /></TableCell>
+                          <TableCell>{r.mapped_bucket}</TableCell>
                           <TableCell><SourceValue value={r.bucket_2} unclassified={r.bucket_2_unclassified} notApplicable={!r.rca_applicable} /></TableCell>
                           <TableCell className="max-w-72 truncate" title={r.rca_text}><SourceValue value={r.rca_text} unclassified={r.rca_unclassified} /></TableCell>
                           <TableCell>{r.category ? r.category.name : <span className="text-xs text-muted-foreground italic">Unreviewed</span>}</TableCell>

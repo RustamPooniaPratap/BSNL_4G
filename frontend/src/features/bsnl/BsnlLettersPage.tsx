@@ -7,11 +7,13 @@ import {
 } from './api';
 import { ConfirmButton, DistributionMaster, Messages, StatusPill } from './shared';
 import { errorText, fmt, saveBlob, useAction } from './utils';
+import { announceRcaBucketMappingUpdate, useRcaBucketMappingRevision } from '../../lib/rcaBucketMapping';
 import type { BucketMapping, CircleProfile, LetterDetail, LetterOptions, LetterOverview, LetterPeriodKind, LetterStatus } from './types';
 import './bsnl.css';
 
 const PERIODS: { id: LetterPeriodKind; label: string }[] = [{ id: 'd1', label: 'D-1' }, { id: 'week', label: 'Last week' }, { id: 'period', label: 'Selected From–To' }];
 const day = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+const bucketLabel = (bucket: string) => bucket === 'Third party' ? 'Third Party' : bucket;
 const STATUS_ACTIONS: Partial<Record<LetterStatus, string>> = {
   Draft: 'Return to Draft', Sent: 'Mark as sent outside the portal', Acknowledged: 'Mark acknowledged by BSNL',
   'Exclusion accepted': 'Exclusion accepted', 'Exclusion rejected': 'Exclusion rejected',
@@ -34,6 +36,7 @@ export function BsnlLettersPage() {
   useEffect(() => { loadedId.current = letter?.id ?? null; }, [letter]);
   const [loadError, setLoadError] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const mappingRevision = useRcaBucketMappingRevision();
   const action = useAction();
 
   useEffect(() => {
@@ -58,7 +61,7 @@ export function BsnlLettersPage() {
       if (!controller.signal.aborted) setLoadError(errorText(cause, 'The letter overview could not be loaded.'));
     });
     return () => controller.abort();
-  }, [query, ready, refresh]);
+  }, [query, ready, refresh, mappingRevision]);
 
   const overview = loadedOverview?.key === `${JSON.stringify(query)}|${refresh}` ? loadedOverview.data : null;
   const row = overview?.circles.find((c) => c.circle === circle);
@@ -352,13 +355,19 @@ function BucketMappingEditor() {
         <tbody>{draft.map((r, i) => (
           <tr key={r.final_bucket}><td>{r.final_bucket}</td><td>{data?.can_manage
             ? <select aria-label={`Bucket for ${r.final_bucket}`} value={r.bucket} onChange={(e) => setDraft(draft.map((x, j) => (j === i ? { ...x, bucket: e.target.value as typeof x.bucket } : x)))}>
-              {data.buckets.map((b) => <option key={b}>{b}</option>)}</select>
-            : r.bucket}</td></tr>
+              {data.buckets.map((b) => <option key={b} value={b}>{bucketLabel(b)}</option>)}</select>
+            : bucketLabel(r.bucket)}</td></tr>
         ))}</tbody></table></div>
       {data?.can_manage && (
         <div className="btns" style={{ marginTop: 10 }}>
           <ConfirmButton label="Save mapping" primary busy={action.busy !== null} disabled={!changed} message="Save the bucket mapping? New letters and reports use it immediately."
-            onConfirm={() => action.run('map', async () => { const d = await saveBucketMapping(draft); setData(d); setDraft(d.mapping); return 'Bucket mapping saved.'; })} />
+            onConfirm={() => action.run('map', async () => {
+              const d = await saveBucketMapping(draft);
+              setData(d);
+              setDraft(d.mapping);
+              announceRcaBucketMappingUpdate();
+              return 'Bucket mapping saved.';
+            })} />
         </div>
       )}
     </div>

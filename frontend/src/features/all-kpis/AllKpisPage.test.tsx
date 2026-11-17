@@ -24,12 +24,14 @@ const SUMMARY: KpiSummary = {
   previous_period: { start: '2026-10-31', end: '2026-10-31', label: '31 Oct 2026', days_with_data: 1 },
   current: values(), previous: values({ om_start_sites: 100, usd_sites: 40, nsla_sites: 20 }),
   om_start: { months: ['2026-11'], missing_months: ['Nov 2026'], available: false, complete: false },
-  pending: { rca_ownership: 'Not configured' },
+  pending: { rca_ownership: 'Responsibility classification uses the current Final Bucket mapping.' },
 };
 const OPTIONS: KpiFilterOptions = {
   dates: ['2026-10-31', '2026-11-01'], default_period: { start: '2026-11-01', end: '2026-11-01' }, projects: ['4G Saturation', 'LWE'], circles: ['MP', 'RJ'],
   cis: [{ key: 'RJ::Guddu Singh', label: 'Guddu Singh', circle: 'RJ' }], ies: [], sites: [], site_count: 120,
-  buckets: [{ key: 'lt_60', label: 'Below 60%' }, { key: '60_90', label: '60% to 90%' }, { key: 'gte_98_5', label: '98.5% and above' }], final_buckets: ['TCS', 'Not mapped'],
+  buckets: [{ key: 'lt_60', label: 'Below 60%' }, { key: '60_90', label: '60% to 90%' }, { key: 'gte_98_5', label: '98.5% and above' }],
+  final_buckets: ['TCS', 'Not mapped'],
+  responsibilities: ['Own', 'Customer', 'Third party', 'Pending', 'Unclassified'].map((key) => ({ key, label: key })),
 };
 const row = (circle: string, over: Partial<KpiValues> = {}) => ({ ...values(over), key: circle, project: '4G Saturation', circle });
 // Six circles, so the ranking shades the three lowest.
@@ -52,7 +54,12 @@ beforeEach(() => {
   m.fetchKpiTrends.mockResolvedValue({ granularity: 'day', points: [] });
   m.fetchKpiHierarchy.mockImplementation(async (p: URLSearchParams) => (isPrevious(p) ? PREVIOUS : CIRCLES));
   m.fetchKpiSites.mockResolvedValue({ total: 0, page: 1, pages: 1, rows: [] });
-  m.fetchKpiRca.mockResolvedValue({ records: 0, buckets: [], ownership: { configured: false, message: 'Not configured: no approved mapping.' } });
+  m.fetchKpiRca.mockResolvedValue({
+    records: 0, buckets: [], ownership: { configured: true, message: 'Responsibility classification uses the current Final Bucket mapping.',
+      buckets: ['Own', 'Customer', 'Third party', 'Pending', 'Unclassified'].map((bucket) => ({
+        bucket, label: bucket === 'Third party' ? 'Third Party' : bucket, records: 0, outage_minutes: 0, share_pct: null,
+      })) },
+  });
 });
 
 describe("All KPI's", () => {
@@ -200,7 +207,7 @@ describe("All KPI's", () => {
     await waitFor(() => expect(screen.getByTestId('location')).not.toHaveTextContent('level='));
   });
 
-  it('shows the RCA view only with RCA Summary View, with ownership Not Configured', async () => {
+  it('shows the RCA view only with RCA Summary View and current responsibility totals', async () => {
     const user = userEvent.setup();
     const { unmount } = renderWithWorkbook(<><Sidebar /><AllKpisPage /></>, { url: '/all-kpis', auth: authValue({ user: CI_USER }) });
     const nav = await screen.findByRole('navigation', { name: 'Main' });
@@ -208,6 +215,7 @@ describe("All KPI's", () => {
     unmount();
     renderWithWorkbook(<><Sidebar /><AllKpisPage /></>, { url: '/all-kpis', auth: authValue({ user: { ...CI_USER, permissions: { ...CI_PERMISSIONS, rca_summary: ['view'] } } }) });
     await user.click(within(await screen.findByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'RCA' }));
-    for (const g of ['Own', 'Customer', 'Third Party', 'Pending']) expect(await screen.findByRole('group', { name: g })).toHaveTextContent('Not Configured');
+    for (const g of ['Own', 'Customer', 'Third Party', 'Pending', 'Unclassified']) expect(await screen.findByRole('group', { name: g })).toHaveTextContent('0');
+    expect(screen.getByText('Configured')).toBeInTheDocument();
   });
 });

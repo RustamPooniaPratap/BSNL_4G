@@ -8,7 +8,8 @@ import { MultiSelect } from './MultiSelect';
 
 const project = (p: string) => (p === '4G Saturation' ? '4G' : p);
 const FIELD_LABELS: Record<MultiKey, string> = {
-  project: 'Project', circle: 'Circle', ci: 'CI / Cluster', ie: 'IE', site: 'Site', bucket: 'Bucket', final_bucket: 'Final Bucket',
+  project: 'Project', circle: 'Circle', ci: 'CI / Cluster', ie: 'IE', site: 'Site', bucket: 'Bucket',
+  final_bucket: 'Final Bucket', responsibility: 'Responsibility',
 };
 
 /**
@@ -26,7 +27,7 @@ function Field({ id, label, title, kind, children }: { id: string; label: string
 
 /**
  * The All KPI's filter bar (sticky, reference style): period, population, Project → Circle → CI/Cluster → IE → Site
- * (the server cascades the options), availability bucket and, on the RCA view, the Final Bucket. The active selections
+ * (the server cascades the options), availability bucket and, on the RCA view, the Final Bucket and Responsibility. The active selections
  * are removable chips. Filters apply as soon as they change and are kept in the URL, as before.
  */
 export function KpiFilters({ f, options, showFinalBucket }: {
@@ -42,7 +43,7 @@ export function KpiFilters({ f, options, showFinalBucket }: {
     if (key === 'bucket') return options.buckets.find((b) => b.key === v)?.label ?? v;
     return v;
   };
-  const keys = (Object.keys(FIELD_LABELS) as MultiKey[]).filter((k) => k !== 'final_bucket' || showFinalBucket);
+  const keys = (Object.keys(FIELD_LABELS) as MultiKey[]).filter((k) => !['final_bucket', 'responsibility'].includes(k) || showFinalBucket);
   const chips = keys.filter((k) => f.values[k].length);
   return (
     <>
@@ -80,10 +81,16 @@ export function KpiFilters({ f, options, showFinalBucket }: {
             options={options.buckets} />
         </Field>
         {showFinalBucket && (
-          <Field id="kpi-final" label="Final Bucket" title="RCA Final Bucket">
-            <MultiSelect id="kpi-final" label="RCA Final Bucket" allLabel="All Final Buckets" value={f.values.final_bucket} onChange={(v) => f.setMulti('final_bucket', v)}
-              options={options.final_buckets.map((b) => ({ key: b, label: b }))} />
-          </Field>
+          <>
+            <Field id="kpi-final" label="Final Bucket" title="RCA Final Bucket">
+              <MultiSelect id="kpi-final" label="RCA Final Bucket" allLabel="All Final Buckets" value={f.values.final_bucket} onChange={(v) => f.setMulti('final_bucket', v)}
+                options={options.final_buckets.map((b) => ({ key: b, label: b }))} />
+            </Field>
+            <Field id="kpi-responsibility" label="Responsibility" title="Current Final Bucket mapping">
+              <MultiSelect id="kpi-responsibility" label="Responsibility" allLabel="All responsibilities" value={f.values.responsibility} onChange={(v) => f.setMulti('responsibility', v)}
+                options={options.responsibilities} />
+            </Field>
+          </>
         )}
         <button type="button" className="akp-btn akp-reset" disabled={!f.active} onClick={f.reset} aria-label="Reset filters" title="Reset filters">
           <RotateCcw className="size-3.5" aria-hidden="true" />

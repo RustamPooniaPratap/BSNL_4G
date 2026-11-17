@@ -20,6 +20,7 @@ const OPTIONS: RcaOptions = {
   final_buckets: CLASSIFICATION.map((c) => ({ value: key(c.final_bucket), label: c.final_bucket, approved: true, unclassified: false })),
   bucket_2: [...[...subs].map(([b, finals]) => ({ value: key(b), label: b, approved: true, unclassified: false, final_buckets: finals })),
     { value: '__unclassified__', label: 'Unclassified (blank or "-")', unclassified: true, approved: false, final_buckets: [] }],
+  responsibilities: ['Own', 'Customer', 'Third party', 'Pending', 'Unclassified'].map((value) => ({ value, label: value })),
 };
 
 async function optionsOf(name: RegExp) {

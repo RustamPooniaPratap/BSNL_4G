@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithWorkbook } from '../../test/renderWithWorkbook';
+import { announceRcaBucketMappingUpdate } from '../../lib/rcaBucketMapping';
 import * as api from './api';
 import { AutoEmailReportsPage } from './AutoEmailReportsPage';
 import { BsnlLettersPage } from './BsnlLettersPage';
@@ -180,6 +181,16 @@ describe('BSNL Letters', () => {
     await user.click(screen.getByRole('button', { name: 'Last week' }));
     await waitFor(() => expect(m.fetchLetterOverview).toHaveBeenLastCalledWith({ period: 'week', date_from: '', date_to: '', project: '' }, expect.anything()));
     expect(screen.queryByLabelText('From')).not.toBeInTheDocument();
+  });
+
+  it('refetches the letter overview when the responsibility mapping changes', async () => {
+    renderWithWorkbook(<BsnlLettersPage />, { url: '/bsnl/letters' });
+    await screen.findByRole('table', { name: 'Customer outages by circle' });
+    const callsBefore = m.fetchLetterOverview.mock.calls.length;
+
+    announceRcaBucketMappingUpdate();
+
+    await waitFor(() => expect(m.fetchLetterOverview).toHaveBeenCalledTimes(callsBefore + 1));
   });
 
   it('prepares a draft explicitly, edits and saves it, then approves after confirmation', async () => {

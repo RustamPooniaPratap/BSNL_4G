@@ -24,12 +24,14 @@ const OPTIONS: RcaOptions = {
   circles: [{ project: '4G Saturation', circle: 'OD', circle_raw: 'Odisha' }, { project: 'LWE', circle: 'BH', circle_raw: 'Bihar' }],
   final_buckets: [{ value: 'other media', label: 'Other Media', unclassified: false }],
   bucket_2: [{ value: 'bsnl media', label: 'BSNL Media', unclassified: false }, { value: '__unclassified__', label: 'Unclassified (blank or "-")', unclassified: true }],
+  responsibilities: ['Own', 'Customer', 'Third party', 'Pending', 'Unclassified'].map((value) => ({ value, label: value })),
   categories: [], statuses: [{ value: 'investigation', label: 'Investigation' }], total_records: 2,
 };
 const REC: RcaRecord = {
   id: 1, reporting_date: '2026-10-21', project: '4G Saturation', project_raw: '4G Satu', circle: 'OD', circle_raw: 'Odisha', site_id: 'OD0001',
   site_name: 'Bravo', oa: 'KORAPUT', ba: 'KORAPUT', om_start_raw: 'YES', om_start: true, outage_minutes: 1442.55, final_bucket: 'BSNL OFC',
-  final_bucket_unclassified: false, bucket_2: '-', bucket_2_unclassified: true, rca_text: 'SSA OFC Break', rca_unclassified: false, rca_applicable: true,
+  final_bucket_unclassified: false, bucket_2: '-', bucket_2_unclassified: true, ownership: 'Customer', responsibility_bucket_2: 'Customer', mapped_bucket: 'Customer',
+  rca_text: 'SSA OFC Break', rca_unclassified: false, rca_applicable: true,
   category: null, source: 'import', status: null, status_label: null,
 };
 const PAGE: RcaPage = { count: 2, page: 1, page_size: 25, pages: 1, results: [REC, { ...REC, id: 2, site_id: 'LWEBH0063', project: 'LWE', project_raw: 'LWE', circle: 'BH', outage_minutes: 20.6, bucket_2: 'BSNL Media', bucket_2_unclassified: false, rca_text: 'Media Flacuatation' }] };
@@ -104,6 +106,11 @@ const SUMMARY: RcaSummary = {
   population_source: "Sites per circle in the dashboard's current Master data",
   categories: { mapped: [], unreviewed: { records: 1819, outage_minutes: 632278.77, descriptions: 394 }, no_description: { records: 0, outage_minutes: null } },
   top_records: [REC],
+  responsibility: [
+    { bucket: 'Own', label: 'Own', records: 0, outage_minutes: 0 }, { bucket: 'Customer', label: 'Customer', records: 0, outage_minutes: 0 },
+    { bucket: 'Third party', label: 'Third Party', records: 0, outage_minutes: 0 }, { bucket: 'Pending', label: 'Pending', records: 0, outage_minutes: 0 },
+    { bucket: 'Unclassified', label: 'Unclassified', records: 0, outage_minutes: 0 },
+  ],
 };
 
 const OVERVIEW_MOCK: RcaOverviewResponse = {
@@ -113,6 +120,7 @@ const OVERVIEW_MOCK: RcaOverviewResponse = {
     customer: { records: 1100, outage_minutes: 117000, share_pct: 58.5 },
     third_party: { records: 130, outage_minutes: 40000, share_pct: 20.0 },
     pending: { records: 180, outage_minutes: 12000, share_pct: 6.0 },
+    unclassified: { records: 0, outage_minutes: 0, share_pct: 0 },
     total_records: 1690,
     total_minutes: 200000,
   },
@@ -132,7 +140,7 @@ const OVERVIEW_MOCK: RcaOverviewResponse = {
       gap: -8.01,
       outage_min: 67962,
       status: 'Not Meeting SLA',
-      split: { own: 23, customer: 41, third_party: 33, pending: 3 },
+      split: { own: 23, customer: 41, third_party: 33, pending: 3, unclassified: 0 },
     },
     {
       id: 'AP',
@@ -145,7 +153,7 @@ const OVERVIEW_MOCK: RcaOverviewResponse = {
       gap: 0.61,
       outage_min: 198,
       status: 'Meeting SLA',
-      split: { own: 0, customer: 83, third_party: 0, pending: 17 },
+      split: { own: 0, customer: 83, third_party: 0, pending: 17, unclassified: 0 },
     },
     {
       id: 'EX',
@@ -172,7 +180,7 @@ const OVERVIEW_MOCK: RcaOverviewResponse = {
     gap: -2.70,
     outage_min: 68660,
     status: 'Not Meeting SLA',
-    split: { own: 22, customer: 42, third_party: 33, pending: 3 },
+    split: { own: 22, customer: 42, third_party: 33, pending: 3, unclassified: 0 },
   },
 };
 
@@ -238,12 +246,13 @@ describe('RCA Summary', () => {
     renderWithWorkbook(<RcaSummaryPage />, { url: '/rca/summary' });
     expect(await screen.findByText(/Single-date snapshot: 21 Oct 2026/)).toBeInTheDocument();
 
-    // 4 KPI Cards above the table: Own, Customer, Third Party, Pending
-    const kpiRegion = screen.getByRole('region', { name: 'RCA attribution KPIs' });
+    // Responsibility KPIs use the current mapping.
+    const kpiRegion = screen.getByRole('region', { name: 'RCA responsibility KPIs' });
     expect(within(kpiRegion).getByRole('group', { name: 'Own' })).toBeInTheDocument();
     expect(within(kpiRegion).getByRole('group', { name: 'Customer' })).toBeInTheDocument();
     expect(within(kpiRegion).getByRole('group', { name: 'Third Party' })).toBeInTheDocument();
     expect(within(kpiRegion).getByRole('group', { name: 'Pending' })).toBeInTheDocument();
+    expect(within(kpiRegion).getByRole('group', { name: 'Unclassified' })).toBeInTheDocument();
 
     // 4 Tabs
     const tabNav = screen.getByRole('navigation', { name: 'RCA breakdown tabs' });
@@ -375,13 +384,13 @@ describe('RCA Summary', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/rca/summary/breakdown?project=LWE&date_from=2026-10-21&date_to=2026-10-21');
     expect(await screen.findByRole('region', { name: 'Circle-wise Root Cause Breakdown' })).toBeInTheDocument();
     await user.click(within(screen.getByRole('navigation', { name: 'RCA Summary pages' })).getByRole('link', { name: 'Overview' }));
-    expect(await screen.findByRole('region', { name: 'RCA attribution KPIs' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'RCA responsibility KPIs' })).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent('/rca/summary?project=LWE&date_from=2026-10-21&date_to=2026-10-21');
   });
 
   it('opens the Overview, with the filters, for an unknown RCA Summary page', async () => {
     renderWithWorkbook(<><RcaSummaryPage /><Location /></>, { url: '/rca/summary/no-such-page?project=LWE' });
-    expect(await screen.findByRole('region', { name: 'RCA attribution KPIs' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'RCA responsibility KPIs' })).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/rca\/summary\?project=LWE$/);
   });
 

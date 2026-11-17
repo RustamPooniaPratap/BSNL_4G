@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Lock } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '../../context/auth';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatDate } from '../../lib/format';
+import { useRcaBucketMappingRevision } from '../../lib/rcaBucketMapping';
 import { addRcaComment, fetchRcaRecord, updateRcaWorkflow } from '../../services/api';
 import type { RcaRecordDetail, RcaWorkflowInput } from '../../types/rca';
 import { Field, SelectField } from '../data/DataEntry';
@@ -25,9 +26,11 @@ const textareaClass = 'min-h-20 w-full rounded-md border bg-transparent px-3 py-
 
 /** One RCA record: source facts (read-only), the reviewed category, follow-up, comments and history. */
 export function RcaRecordSheet({ recordId, onClose, onChanged }: { recordId: number | null; onClose: () => void; onChanged?: () => void }) {
-  const loaded = useApiQuery(recordId == null ? null : `rca-record-${recordId}`, (signal) => fetchRcaRecord(recordId!, signal));
+  const mappingRevision = useRcaBucketMappingRevision();
+  const loaded = useApiQuery(recordId == null ? null : `rca-record-${recordId}-${mappingRevision}`, (signal) => fetchRcaRecord(recordId!, signal));
   // After a save the server returns the updated record; it replaces the loaded one for this record.
   const [saved, setSaved] = useState<RcaRecordDetail | null>(null);
+  useEffect(() => setSaved(null), [mappingRevision]);
   const record = saved?.id === recordId ? saved : loaded.data?.id === recordId ? loaded.data : null;
   const error = loaded.error?.message ?? null;
   // Kept here: a save re-keys the follow-up form (fresh values), which would drop a message held inside it.
@@ -58,6 +61,7 @@ export function RcaRecordSheet({ recordId, onClose, onChanged }: { recordId: num
                   <Row label="O&M Start">{record.om_start_raw || '—'}</Row>
                   <Row label="Outage">{formatMin(record.outage_minutes)}</Row>
                   <Row label="Final Bucket"><SourceValue value={record.final_bucket} unclassified={record.final_bucket_unclassified} /></Row>
+                  <Row label="Current responsibility">{record.mapped_bucket}</Row>
                   <Row label="Bucket - 2"><SourceValue value={record.bucket_2} unclassified={record.bucket_2_unclassified} notApplicable={!record.rca_applicable} /></Row>
                   <Row label="RCA"><span className="whitespace-pre-wrap"><SourceValue value={record.rca_text} unclassified={record.rca_unclassified} /></span></Row>
                   <Row label="RCA applicability">

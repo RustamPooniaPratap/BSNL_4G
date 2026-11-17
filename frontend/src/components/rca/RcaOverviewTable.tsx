@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Building2, ChevronLeft, ChevronRight, Clock, Network, Search, ShieldCheck } from 'lucide-react';
+import { Building2, ChevronLeft, ChevronRight, CircleHelp, Clock, Network, Search, ShieldCheck } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import { formatMin } from '../../lib/rca';
 import { formatNumber } from '../../lib/format';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { usePopulation } from '../../context/population';
+import { useRcaBucketMappingRevision } from '../../lib/rcaBucketMapping';
 import { fetchRcaOverview } from '../../services/api';
 import type { RcaOverviewResponse, RcaOverviewRow, RcaOverviewSplit } from '../../types/rca';
 import { RcaKpiTile, RcaSection } from './RcaTiles';
@@ -44,8 +45,9 @@ export function RcaOverviewTable({ query }: Props) {
   }
 
   const { scope } = usePopulation();
+  const mappingRevision = useRcaBucketMappingRevision();
   const overview = useApiQuery<RcaOverviewResponse>(
-    `rca-overview-${scope}-${tab}-${page}-${search}-${tabQuery}`,
+    `rca-overview-${scope}-${tab}-${page}-${search}-${tabQuery}-${mappingRevision}`,
     (signal) => fetchRcaOverview(tabQuery, scope, signal)
   );
 
@@ -60,12 +62,12 @@ export function RcaOverviewTable({ query }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* 4 KPI Cards Above Table */}
+      {/* Responsibility KPIs use the current Final Bucket mapping. */}
       {data ? (
-        <RcaSection heading="Attribution KPIs" label="RCA attribution KPIs" columns={4}>
+        <RcaSection heading="Responsibility KPIs" label="RCA responsibility KPIs" columns={5}>
           <RcaKpiTile
             label="Own"
-            definition="Outage attributed to contractor / partner maintenance and equipment (TCS, DMW, HFCL, PTPL, etc.)"
+            definition="Outage records whose current Final Bucket mapping is Own"
             icon={ShieldCheck}
             tint="sky"
             value={formatMin(data.kpis.own.outage_minutes)}
@@ -73,7 +75,7 @@ export function RcaOverviewTable({ query }: Props) {
           />
           <RcaKpiTile
             label="Customer"
-            definition="Outage attributed to customer / BSNL media, OFC break, and transmission (BSNL OFC, BSNL Media, etc.)"
+            definition="Outage records whose current Final Bucket mapping is Customer"
             icon={Building2}
             tint="amber"
             value={formatMin(data.kpis.customer.outage_minutes)}
@@ -81,7 +83,7 @@ export function RcaOverviewTable({ query }: Props) {
           />
           <RcaKpiTile
             label="Third Party"
-            definition="Outage attributed to third-party infrastructure and providers (IaasP Power, IaasP OFC, EB, Theft, etc.)"
+            definition="Outage records whose current Final Bucket mapping is Third Party"
             icon={Network}
             tint="teal"
             value={formatMin(data.kpis.third_party.outage_minutes)}
@@ -89,15 +91,24 @@ export function RcaOverviewTable({ query }: Props) {
           />
           <RcaKpiTile
             label="Pending"
-            definition="Outage pending classification, unreviewed descriptions, or requiring further resolution"
+            definition="Outage records whose current mapping is explicitly Pending"
             icon={Clock}
             tint="violet"
             value={formatMin(data.kpis.pending.outage_minutes)}
             context={`${formatNumber(data.kpis.pending.records)} incidents · ${data.kpis.pending.share_pct}% share`}
           />
+          <RcaKpiTile
+            label="Unclassified"
+            definition="Blank, unapproved, or unmapped Final Buckets"
+            icon={CircleHelp}
+            tint="slate"
+            value={formatMin(data.kpis.unclassified.outage_minutes)}
+            context={`${formatNumber(data.kpis.unclassified.records)} incidents · ${data.kpis.unclassified.share_pct}% share`}
+          />
         </RcaSection>
       ) : (
-        <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-5">
+          <Skeleton className="h-24 w-full" />
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-24 w-full" />
@@ -298,8 +309,8 @@ function SplitBar({ split }: { split: RcaOverviewSplit | null }) {
     return <span className="text-center text-muted-foreground block">—</span>;
   }
 
-  const { own, customer, third_party, pending } = split;
-  const tooltipText = `Own: ${own}% (${formatNumber(split.own_min ?? 0)} min)\nCustomer: ${customer}% (${formatNumber(split.customer_min ?? 0)} min)\nThird Party: ${third_party}% (${formatNumber(split.third_party_min ?? 0)} min)\nPending: ${pending}% (${formatNumber(split.pending_min ?? 0)} min)`;
+  const { own, customer, third_party, pending, unclassified } = split;
+  const tooltipText = `Own: ${own}% (${formatNumber(split.own_min ?? 0)} min)\nCustomer: ${customer}% (${formatNumber(split.customer_min ?? 0)} min)\nThird Party: ${third_party}% (${formatNumber(split.third_party_min ?? 0)} min)\nPending: ${pending}% (${formatNumber(split.pending_min ?? 0)} min)\nUnclassified: ${unclassified}% (${formatNumber(split.unclassified_min ?? 0)} min)`;
 
   return (
     <div className="space-y-1 cursor-help" title={tooltipText}>
@@ -317,6 +328,9 @@ function SplitBar({ split }: { split: RcaOverviewSplit | null }) {
         {pending > 0 && (
           <div style={{ width: `${pending}%` }} className="bg-violet-400 transition-all" />
         )}
+        {unclassified > 0 && (
+          <div style={{ width: `${unclassified}%` }} className="bg-slate-400 transition-all" />
+        )}
       </div>
 
       {/* Compact inline percentage summary */}
@@ -325,6 +339,7 @@ function SplitBar({ split }: { split: RcaOverviewSplit | null }) {
         <span className="text-amber-600 font-medium">C:{Math.round(customer)}%</span>
         <span className="text-teal-600 font-medium">3P:{Math.round(third_party)}%</span>
         <span className="text-violet-600 font-medium">P:{Math.round(pending)}%</span>
+        <span className="text-slate-600 font-medium">U:{Math.round(unclassified)}%</span>
       </div>
     </div>
   );

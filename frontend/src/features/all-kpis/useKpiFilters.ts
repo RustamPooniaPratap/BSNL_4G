@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { usePopulation } from '../../context/population';
 
 /** Filters of the All KPI's page, kept in the URL so tabs, drill-down and reloads keep them. Multi-values are comma-separated. */
-export const MULTI_KEYS = ['project', 'circle', 'ci', 'ie', 'site', 'bucket', 'final_bucket'] as const;
+export const MULTI_KEYS = ['project', 'circle', 'ci', 'ie', 'site', 'bucket', 'final_bucket', 'responsibility'] as const;
 export type MultiKey = (typeof MULTI_KEYS)[number];
 /** The views of the KPI menu (the `tab` URL parameter; an unknown or removed view, e.g. `completeness`, opens the overview). */
 export const TABS = ['overview', 'trends', 'availability', 'outage', 'usd', 'nsla', 'below_98_5', 'below_60', 'ranking', 'rca', 'drilldown'] as const;

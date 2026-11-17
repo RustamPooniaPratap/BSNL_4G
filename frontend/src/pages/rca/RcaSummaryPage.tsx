@@ -22,6 +22,7 @@ import { SelectField } from '../../components/data/DataEntry';
 import { Field } from '../../components/dashboard/FilterBar';
 import { PageHeading } from '../../context/pageHeader';
 import { usePopulation } from '../../context/population';
+import { useRcaBucketMappingRevision } from '../../lib/rcaBucketMapping';
 
 type Measure = 'records' | 'minutes';
 type CircleMeasure = 'records' | 'minutes';
@@ -45,7 +46,8 @@ export function RcaSummaryPage() {
   const location = useLocation();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const options = useApiQuery('rca-options-summary', (signal) => fetchRcaOptions(signal, true));
+  const mappingRevision = useRcaBucketMappingRevision();
+  const options = useApiQuery(`rca-options-summary-${mappingRevision}`, (signal) => fetchRcaOptions(signal, true));
   const view = SUMMARY_VIEWS.find((v) => v.path === location.pathname.replace(/\/+$/, ''));
   const query = new URLSearchParams();
   for (const key of FILTER_KEYS) {
@@ -55,7 +57,7 @@ export function RcaSummaryPage() {
   }
   // Site metrics (sites, USD, NSLA) follow the global population, the one site control of the RCA Summary.
   const { scope, sitesLabel } = usePopulation();
-  const summary = useApiQuery(`rca-summary-${scope}-${query}`, (signal) => fetchRcaSummary(query, scope, signal));
+  const summary = useApiQuery(`rca-summary-${scope}-${query}-${mappingRevision}`, (signal) => fetchRcaSummary(query, scope, signal));
   if (!view) return <Navigate to={{ pathname: '/rca/summary', search: location.search }} replace />;  // unknown subpage: the Overview
   const onFilter = (key: FilterKey, value: string, extra: Partial<Record<FilterKey, string>> = {}) => setParams((cur) => {
     const next = new URLSearchParams(cur);
@@ -365,7 +367,7 @@ function TopRecords({ s }: { s: RcaSummary }) {
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
-            <TableRow>{['Site ID', 'Site name', 'Circle', 'Project', 'Outage', 'Final Bucket', 'RCA'].map((h) => <TableHead key={h} className={h === 'Outage' ? 'text-right' : undefined}>{h}</TableHead>)}</TableRow>
+            <TableRow>{['Site ID', 'Site name', 'Circle', 'Project', 'Outage', 'Final Bucket', 'Responsibility', 'RCA'].map((h) => <TableHead key={h} className={h === 'Outage' ? 'text-right' : undefined}>{h}</TableHead>)}</TableRow>
           </TableHeader>
           <TableBody>
             {s.top_records.map((r) => (
@@ -376,6 +378,7 @@ function TopRecords({ s }: { s: RcaSummary }) {
                 <TableCell>{shortProject(r.project)}</TableCell>
                 <TableCell className="text-right tabular-nums">{formatMin(r.outage_minutes)}</TableCell>
                 <TableCell><SourceValue value={r.final_bucket} unclassified={r.final_bucket_unclassified} /></TableCell>
+                <TableCell>{r.mapped_bucket}</TableCell>
                 <TableCell className="max-w-80 truncate" title={r.rca_text}><SourceValue value={r.rca_text} unclassified={r.rca_unclassified} /></TableCell>
               </TableRow>
             ))}

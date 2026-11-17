@@ -23,6 +23,10 @@ export interface RcaRecord {
   final_bucket_unclassified: boolean;
   bucket_2: string;
   bucket_2_unclassified: boolean;
+  /** Current Final Bucket mapping; the source Bucket - 2 above remains unchanged. */
+  ownership: string;
+  responsibility_bucket_2: string;
+  mapped_bucket: string;
   rca_text: string;
   rca_unclassified: boolean;
   /** False for Other Media (Final Bucket): RCA recording is not applicable. */
@@ -91,6 +95,7 @@ export interface RcaOptions {
   circles: { project: string; circle: string; circle_raw: string }[];
   final_buckets: RcaOption[];
   bucket_2: RcaOption[];
+  responsibilities: RcaOption[];
   categories: RcaOption[];
   statuses: RcaOption[];
   total_records: number;
@@ -188,6 +193,8 @@ export interface RcaSummary {
   final_buckets: RcaRanked[];
   /** Per Final Bucket and Bucket - 2 pair: a sub-bucket is never grouped by its name alone. */
   bucket_2: RcaRanked[];
+  /** Current responsibility mapping, grouped from the records in this response. */
+  responsibility: { bucket: string; label: string; records: number; outage_minutes: number }[];
   /** Records of the filter by approved-classification status. */
   classification?: RcaClassificationCounts;
   circles: RcaCircle[];
@@ -510,10 +517,12 @@ export interface RcaOverviewSplit {
   customer: number;
   third_party: number;
   pending: number;
+  unclassified: number;
   own_min?: number;
   customer_min?: number;
   third_party_min?: number;
   pending_min?: number;
+  unclassified_min?: number;
 }
 
 export interface RcaOverviewRow {
@@ -537,6 +546,7 @@ export interface RcaOverviewResponse {
     customer: RcaOverviewKpi;
     third_party: RcaOverviewKpi;
     pending: RcaOverviewKpi;
+    unclassified: RcaOverviewKpi;
     total_records: number;
     total_minutes: number;
   };

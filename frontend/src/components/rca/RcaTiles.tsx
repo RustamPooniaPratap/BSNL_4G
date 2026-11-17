@@ -54,11 +54,11 @@ export function RcaAnalysisTile({ label, description, icon, tint, headline, head
 }
 
 /** A group of tiles under a heading in small spaced capitals, as on Site Portfolio (KpiSection), with its own region name. */
-export function RcaSection({ heading, label, columns, children }: { heading: string; label: string; columns: 3 | 4; children: ReactNode }) {
+export function RcaSection({ heading, label, columns, children }: { heading: string; label: string; columns: 3 | 4 | 5; children: ReactNode }) {
   return (
     <section aria-label={label} className="space-y-2">
       <h2 className="text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase">{heading}</h2>
-      <div className={cn('grid grid-cols-1 gap-2.5', columns === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}>{children}</div>
+      <div className={cn('grid grid-cols-1 gap-2.5', columns === 3 ? 'md:grid-cols-3' : columns === 4 ? 'md:grid-cols-2 xl:grid-cols-4' : 'md:grid-cols-2 xl:grid-cols-5')}>{children}</div>
     </section>
   );
 }

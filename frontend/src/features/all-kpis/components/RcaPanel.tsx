@@ -1,6 +1,7 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useApiQuery } from '../../../hooks/useApiQuery';
+import { useRcaBucketMappingRevision } from '../../../lib/rcaBucketMapping';
 import { fetchKpiRca } from '../api';
 import { count, minutes } from '../format';
 import { KpiTable } from './KpiTable';
@@ -8,32 +9,32 @@ import { Panel, StatusPill } from './Ui';
 import { CHART } from './theme';
 
 /**
- * Root cause analysis (reference "Root cause analysis" / "RCA buckets"): the ten approved Final Buckets (existing
- * mapping) as cause tiles, their distribution and the circle × Final Bucket table; the ownership groups Own /
- * Customer / Third Party / Pending stay "Not Configured" (no approved mapping, so no Net SLA basis).
+ * Root cause analysis: current Final Bucket responsibility mapping, approved Final Bucket distribution and circle × Final Bucket table.
  */
 export function RcaPanel({ query }: { query: URLSearchParams }) {
-  const rca = useApiQuery(`allkpis-rca-${query}`, (signal) => fetchKpiRca(query, signal));
+  const mappingRevision = useRcaBucketMappingRevision();
+  const rca = useApiQuery(`allkpis-rca-${query}-${mappingRevision}`, (signal) => fetchKpiRca(query, signal));
   const d = rca.data;
   const buckets = d?.buckets ?? [];
+  const ownership = d?.ownership;
   const maxShare = Math.max(0, ...buckets.map((b) => b.share_pct ?? 0));
   return (
     <>
       <section aria-label="RCA ownership" className="akp-card akp-pad">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="akp-h" style={{ margin: 0 }}>RCA ownership</h3>
-          <StatusPill tone="neutral">Not Configured</StatusPill>
+          <h3 className="akp-h" style={{ margin: 0 }}>RCA responsibility</h3>
+          <StatusPill tone={ownership?.configured ? 'good' : 'neutral'}>{ownership?.configured ? 'Configured' : 'No mappings'}</StatusPill>
         </div>
         <div className="akp-tiles">
-          {['Own', 'Customer', 'Third Party', 'Pending'].map((g) => (
-            <div key={g} role="group" aria-label={g} className="akp-tile na">
-              <span className="l">{g}</span>
-              <span className="v">Not Configured</span>
-              <span className="s">No approved Final Bucket mapping</span>
+          {(ownership?.buckets ?? []).map((bucket) => (
+            <div key={bucket.bucket} role="group" aria-label={bucket.label} className="akp-tile">
+              <span className="l">{bucket.label}</span>
+              <span className="v">{count(bucket.records)}</span>
+              <span className="s">{bucket.share_pct == null ? '—' : `${bucket.share_pct}%`} of records · {minutes(bucket.outage_minutes)}</span>
             </div>
           ))}
         </div>
-        <p className="akp-note mt-2">{d?.ownership?.message ?? 'No approved mapping from Final Buckets to Own / Customer / Third Party / Pending yet.'}</p>
+        <p className="akp-note mt-2">{ownership?.message ?? 'Loading the current Final Bucket mapping.'}</p>
       </section>
 
       <Panel title="RCA Final Bucket distribution" loading={rca.loading} error={rca.error} empty={!d?.records}

@@ -5,6 +5,7 @@ import {
 } from './api';
 import { ConfirmButton, DataStatusNote, DistributionMaster, Messages, StatusPill } from './shared';
 import { errorText, fmt, saveBlob, useAction } from './utils';
+import { useRcaBucketMappingRevision } from '../../lib/rcaBucketMapping';
 import type { ReportOptions, ReportOverview, ReportPreview, ReportRun, ReportType } from './types';
 import './bsnl.css';
 
@@ -25,7 +26,10 @@ export function AutoEmailReportsPage() {
   const [runs, setRuns] = useState<ReportRun[] | null>(null);
   const [loadError, setLoadError] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const mappingRevision = useRcaBucketMappingRevision();
   const action = useAction();
+
+  useEffect(() => { if (mappingRevision > 0) setRefresh((v) => v + 1); }, [mappingRevision]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -46,7 +50,7 @@ export function AutoEmailReportsPage() {
 
   const overview = loadedOverview?.key === `${type}|${project}|${refresh}` ? loadedOverview.data : null;
   const canPreview = circle !== '' || !!options?.permissions.all_india;
-  const previewKey = `${type}|${circle}|${project}`;
+  const previewKey = `${type}|${circle}|${project}|${mappingRevision}`;
   useEffect(() => {
     if (!options || !canPreview) return;
     const controller = new AbortController();

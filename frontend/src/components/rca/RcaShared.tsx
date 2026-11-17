@@ -109,6 +109,7 @@ export function RcaFilterBar({ options, params, onChange, onReset, search = fals
       {!population && <SiteScopeField value={get('site_scope')} onChange={(v) => onChange('site_scope', v)} />}
       {population && <PopulationSelect id="rca-population" />}
       {select('final_bucket', 'Final Bucket', 'All Final Buckets', options.final_buckets, 'w-44')}
+      {select('responsibility', 'Responsibility', 'All responsibilities', options.responsibilities, 'w-44')}
       {select('bucket_2', 'Bucket - 2', 'All Bucket - 2', subBucketOptions(options, get('final_bucket')), 'w-44')}
       {select('category', 'Cause category', 'All categories', [
         ...options.categories, { value: 'unreviewed', label: 'Unreviewed descriptions' },

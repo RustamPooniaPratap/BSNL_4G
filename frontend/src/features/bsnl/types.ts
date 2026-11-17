@@ -4,7 +4,7 @@ export type ReportType = 'D-1' | 'Weekly';
 export type RecipientReportType = ReportType | 'All India' | 'BSNL letter';
 export type LetterStatus = 'Draft' | 'Approved' | 'Sent' | 'Acknowledged' | 'Exclusion accepted' | 'Exclusion rejected';
 export type LetterPeriodKind = 'd1' | 'week' | 'period';
-export type Bucket = 'Own' | 'Customer' | 'Third party' | 'Pending';
+export type Bucket = 'Own' | 'Customer' | 'Third party' | 'Pending' | 'Unclassified';
 
 export interface DataStatus { status: 'Complete' | 'Provisional' | null; missing: { date: string; units: string[] }[] }
 export interface Period { start: string; end: string; label: string }

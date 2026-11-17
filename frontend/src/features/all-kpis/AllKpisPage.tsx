@@ -182,7 +182,7 @@ function Overview({ s, f, query, onOpen, canRca, sites, om }: {
         <section className="akp-card akp-pad flex flex-wrap items-center gap-3" aria-label="RCA Performance">
           <div className="min-w-0 flex-1">
             <h3 className="akp-h" style={{ marginBottom: 2 }}>RCA Performance</h3>
-            <p className="akp-note">Final Bucket distribution and circle-wise RCA. Own / Customer / Third Party / Pending are not configured yet.</p>
+            <p className="akp-note">Final Bucket distribution and circle-wise RCA using the current responsibility mapping.</p>
           </div>
           <button type="button" className="akp-btn" onClick={() => onOpen('rca')}>Open RCA <ArrowRight className="size-3.5" aria-hidden="true" /></button>
         </section>
