@@ -10,7 +10,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 
 from apps.sitedata import matrix, portfolio
-from apps.sitedata.models import DailySitePerformance, IdentifierConflict, MonthlySitePerformance, Site, SiteIdentifier, UploadBatch
+from apps.sitedata.models import DailySitePerformance, IdentifierConflict, MonthlySitePerformance, Site, SiteIdentifier, SiteManualOverride, UploadBatch
 from tests.auth_helpers import SignedInTestCase, portal_user
 from tests.test_sitedata import MATRIX, MATRIX_HEADER, SiteDataTestCase, read_exceptions, write_sheet
 from tests.workbook_factory import write_workbook
@@ -103,6 +103,56 @@ class InsertUpdateTests(MatrixImportCase):
         self.assertEqual((site.ie_name, site.om_start_date), ('IE One', date(2025, 10, 1)))  # kept
         self.assertEqual(batch.report['blank_values_kept'], {'ie_name': 1, 'om_start_date': 1, 'om_start_raw': 1})  # a date and its text
         self.assertEqual(set(SiteIdentifier.objects.filter(site=site).exclude(kind='bsnl_site_id').values_list('kind', 'key')), bands)  # no band columns: kept
+
+    def test_manual_site_override_survives_import_and_can_be_reverted_to_latest_matrix_value(self):
+        self.imported(self.nov_file([nov(1, '4G Saturation', 'Madhya Pradesh', 'UVMP001', 'Matrix Alpha')], 'first.xlsx'))
+        site = Site.objects.get(site_key='UVMP001')
+        self.client.force_login(self.admin)
+        saved = self.client.post(reverse('master-save', args=['uptime_sites']),
+                                 {'changes': [{'id': site.pk, 'values': {'site_name': 'Manual Alpha'}}], 'additions': []},
+                                 content_type='application/json')
+        self.assertEqual(saved.status_code, 200, saved.content)
+        self.assertEqual(SiteManualOverride.objects.get(site=site, field='site_name').matrix_value, 'Matrix Alpha')
+
+        self.imported(self.nov_file([nov(1, '4G Saturation', 'Madhya Pradesh', 'UVMP001', 'Matrix Alpha v2')], 'second.xlsx'))
+        site.refresh_from_db()
+        override = SiteManualOverride.objects.get(site=site, field='site_name')
+        self.assertEqual((site.site_name, override.matrix_value), ('Manual Alpha', 'Matrix Alpha v2'))
+        row = self.client.get(reverse('master-records', args=['uptime_sites'])).json()
+        self.assertEqual(row['manual_overrides'][str(site.pk)], {'site_name': 'Matrix Alpha v2'})
+
+        reverted = self.client.post(reverse('master-revert-overrides', args=['uptime_sites', site.pk]),
+                                    {'fields': ['site_name'], 'updated_at': site.updated_at.isoformat()},
+                                    content_type='application/json')
+        self.assertEqual(reverted.status_code, 200, reverted.content)
+        site.refresh_from_db()
+        self.assertEqual(site.site_name, 'Matrix Alpha v2')
+        self.assertFalse(SiteManualOverride.objects.filter(site=site).exists())
+
+    def test_escalation_edit_survives_import_and_reverts_to_latest_matrix_value(self):
+        self.imported(self.nov_file([nov(1, '4G Saturation', 'Madhya Pradesh', 'UVMP001', 'Alpha', ci='CI East')], 'first.xlsx'))
+        site = Site.objects.get(site_key='UVMP001')
+        self.client.force_login(self.admin)
+        saved = self.client.post(reverse('master-save', args=['escalation']),
+                                 {'changes': [{'id': site.pk, 'values': {'ci_name': 'Manual CI'}}], 'additions': []},
+                                 content_type='application/json')
+        self.assertEqual(saved.status_code, 200, saved.content)
+        self.assertEqual(SiteManualOverride.objects.get(site=site, field='ci_name').matrix_value, 'CI East')
+
+        self.imported(self.nov_file([nov(1, '4G Saturation', 'Madhya Pradesh', 'UVMP001', 'Alpha', ci='CI West')], 'second.xlsx'))
+        site.refresh_from_db()
+        override = SiteManualOverride.objects.get(site=site, field='ci_name')
+        self.assertEqual((site.ci_name, override.matrix_value), ('Manual CI', 'CI West'))
+        row = self.client.get(reverse('master-records', args=['escalation'])).json()
+        self.assertEqual(row['manual_overrides'][str(site.pk)], {'ci_name': 'CI West'})
+
+        reverted = self.client.post(reverse('master-revert-overrides', args=['escalation', site.pk]),
+                                    {'fields': ['ci_name'], 'updated_at': site.updated_at.isoformat()},
+                                    content_type='application/json')
+        self.assertEqual(reverted.status_code, 200, reverted.content)
+        site.refresh_from_db()
+        self.assertEqual(site.ci_name, 'CI West')
+        self.assertFalse(SiteManualOverride.objects.filter(site=site).exists())
 
 
 class ValidationTests(MatrixImportCase):

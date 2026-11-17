@@ -60,9 +60,14 @@ INSTALLED_APPS = [
     'apps.organization',
     'apps.masterdata',
     'apps.alerts',
+    'apps.tickets',
+    # BSNL Module: Auto Email Reports and BSNL Letters (apps/bsnl/README.md).
+    'apps.bsnl',
     # New site master and performance data layer (Phase 1). Not used by any page yet; its migrations are applied only
     # after the approved cutover (docs/phase1-database-audit.md).
     'apps.sitedata',
+    # API Master: registry of the portal's endpoints and their review for external use (apps/api_master).
+    'apps.api_master',
 ]
 
 MIDDLEWARE = [

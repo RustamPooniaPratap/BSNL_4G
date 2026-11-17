@@ -8,4 +8,5 @@ urlpatterns = [
     path('<str:key>/options/', views.options, name='master-options'),
     path('<str:key>/export/', views.export, name='master-export'),
     path('<str:key>/save/', views.save, name='master-save'),  # Add and Edit only: the Data Panel has no delete
+    path('<str:key>/<int:record_id>/revert-overrides/', views.revert_site_overrides, name='master-revert-overrides'),
 ]

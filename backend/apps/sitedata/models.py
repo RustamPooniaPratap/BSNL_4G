@@ -168,6 +168,19 @@ class Site(models.Model):
         return f'{self.bsnl_site_id} ({self.entity}, {self.circle})'
 
 
+class SiteManualOverride(models.Model):
+    """A manually edited Site field and the latest value supplied for it by the matrix."""
+
+    site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name='manual_overrides')
+    field = models.CharField(max_length=50)
+    matrix_value = models.JSONField(null=True, blank=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['site', 'field'], name='sitedata_site_manual_override_unique')]
+
+
 class SiteIdentifier(models.Model):
     """An identifier of a site. Each identifier (per kind) names exactly one site."""
 

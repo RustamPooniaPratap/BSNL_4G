@@ -44,7 +44,7 @@ from . import exceptions, uploads
 from .rules import ENTITIES
 from .sources import matrix_sheet as escalation
 from .identifiers import key_of
-from .models import IdentifierConflict, Site, SiteIdentifier, Technology, UploadBatch
+from .models import IdentifierConflict, Site, SiteIdentifier, SiteManualOverride, Technology, UploadBatch
 from .rules import date_issue, om_start_date_issue
 
 KIND = UploadBatch.Kind.CONSOLIDATION_MATRIX
@@ -194,7 +194,7 @@ def _row_record(name, row, code, message, severity=exceptions.REJECTED, **extra)
                              circle=row.get('circle_raw', ''), message=message, **extra)
 
 
-def analyse(path: Path, name: str) -> dict:
+def analyse(path: Path, name: str, *, lock: bool = False) -> dict:
     """What a commit would do: the plan, the counts and the preview report. Reads the database, writes nothing."""
     from apps.organization.services import AliasResolver
     data = read(path, name)
@@ -259,7 +259,14 @@ def analyse(path: Path, name: str) -> dict:
                                      message=f'BSNL Site ID on {len(group)} identical rows ({", ".join(str(x["source_row"]) for x in group)}): imported once.'))
         rows[key] = group[0]
 
-    existing = {s.site_key: s for s in Site.objects.all()}
+    sites = Site.objects.select_for_update() if lock else Site.objects.all()
+    existing = {s.site_key: s for s in sites}
+    override_rows = SiteManualOverride.objects.filter(site_id__in=[s.pk for s in existing.values()])
+    if lock:
+        override_rows = override_rows.select_for_update()
+    overrides: dict[int, list[SiteManualOverride]] = defaultdict(list)
+    for override in override_rows:
+        overrides[override.site_id].append(override)
     plan = {'insert': {}, 'update': {}, 'unchanged': [], 'missing': [], 'identifiers': [], 'identifier_conflicts': []}
     blank_kept: Counter = Counter()
     date_changes, date_reviews = [], []
@@ -294,6 +301,15 @@ def analyse(path: Path, name: str) -> dict:
         for field in FIELDS.values():
             values.setdefault(field, None if field in ('latitude', 'longitude', *DATE_PAIRS) else '')
         values.update(_derived(values, scope))
+        matrix_values = {}
+        if site is not None:
+            for override in overrides.get(site.pk, []):
+                if override.field in incoming:
+                    matrix_value = _json_value(values.get(override.field))
+                    if matrix_value != override.matrix_value:
+                        matrix_values[override.field] = matrix_value
+                values[override.field] = getattr(site, override.field)
+            values.update(_derived(values, scope))
         values['source_row'] = row['source_row']
         # Effective dates: review flags and changes of stored dates.
         if scope == Site.Scope.DASHBOARD:
@@ -320,8 +336,8 @@ def analyse(path: Path, name: str) -> dict:
             plan['insert'][key] = values
             continue
         changed = sorted(f for f, v in values.items() if f != 'source_row' and getattr(site, f) != v)
-        if changed or not site.present_in_latest_matrix:
-            plan['update'][key] = {'values': values, 'changed': changed}
+        if changed or matrix_values or not site.present_in_latest_matrix:
+            plan['update'][key] = {'values': values, 'changed': changed, 'matrix_values': matrix_values}
         else:
             plan['unchanged'].append(key)
     rejected_keys = {escalation.site_key(r['site_id']) for r in rejected if r['site_id']}
@@ -368,6 +384,7 @@ def analyse(path: Path, name: str) -> dict:
     counts = {'received': len(data['rows']) + len(data['blank_id_rows']), 'accepted': len(plan['insert']) + len(plan['update']),
               'duplicate': len(plan['unchanged']), 'rejected': len(rejected), 'conflict': len(plan['identifier_conflicts']) + reasons['identity_change']}
     review = Counter(i['code'] for i in date_reviews)
+    manual_overrides_retained = sum(len(overrides.get(existing[key].pk, [])) for key in rows if key in existing)
     report = {
         'sheet': SHEET, 'columns_found': data['headers'],
         # Known columns this file does not have: their stored values stay unchanged.
@@ -380,6 +397,7 @@ def analyse(path: Path, name: str) -> dict:
             'invalid_circle_or_technology': reasons['unknown_circle'] + reasons['unknown_entity'],
             'effective_date_issues': sum(review.values()), 'effective_date_changes': len(date_changes),
             'blank_values_kept': sum(blank_kept.values()), 'sites_not_in_file': len(plan['missing']),
+            'manual_overrides_retained': manual_overrides_retained,
         },
         'rejected_by_reason': {code: {'rows': n, 'reason': REASONS[code]} for code, n in reasons.most_common()},
         'rejected': sorted(rejected, key=lambda r: (r['row'] or 0))[:MAX_LISTED],
@@ -407,6 +425,7 @@ def analyse(path: Path, name: str) -> dict:
             f"{len(plan['missing'])} site(s) of the previous matrix are not in this file: kept and flagged, not deleted." if plan['missing'] else '',
             f"{len(plan['identifier_conflicts'])} identifier(s) are claimed by more than one site and were assigned to none." if plan['identifier_conflicts'] else '',
             f'{sum(review.values())} effective date(s) need review.' if review else '',
+            f'{manual_overrides_retained} manual Site Master override(s) will be retained; matrix values are tracked for explicit reversion.' if manual_overrides_retained else '',
         ) if w],
     }
     return {'plan': plan, 'counts': counts, 'report': report, 'organization_error': organization_error}
@@ -435,7 +454,7 @@ def commit(batch: UploadBatch, *, user=None, request=None) -> UploadBatch:
     if batch.kind != KIND:
         raise uploads.UploadRejected(f'Upload #{batch.pk} is not a Consolidation Matrix.')
     with uploads.committing(batch) as batch:
-        result = analyse(uploads.staged_file(batch), batch.original_filename)
+        result = analyse(uploads.staged_file(batch), batch.original_filename, lock=True)
         if result['organization_error']:
             raise uploads.UploadRejected(result['organization_error'])
         if not uploads.same_counts(batch, result['counts']):
@@ -458,8 +477,10 @@ def commit(batch: UploadBatch, *, user=None, request=None) -> UploadBatch:
         Site.objects.bulk_create([Site(site_key=key, matrix_batch=batch, present_in_latest_matrix=True, **values)
                                   for key, values in plan['insert'].items()], batch_size=2000)
         for key, change in plan['update'].items():
-            Site.objects.filter(site_key=key).update(matrix_batch=batch, present_in_latest_matrix=True, **change['values'])
-        Site.objects.filter(site_key__in=plan['missing']).update(present_in_latest_matrix=False)
+            Site.objects.filter(site_key=key).update(matrix_batch=batch, present_in_latest_matrix=True, updated_at=timezone.now(), **change['values'])
+            for field, matrix_value in change['matrix_values'].items():
+                SiteManualOverride.objects.filter(site__site_key=key, field=field).update(matrix_value=matrix_value)
+        Site.objects.filter(site_key__in=plan['missing']).update(present_in_latest_matrix=False, updated_at=timezone.now())
         ids = dict(Site.objects.values_list('site_key', 'id'))
         # A changed band ID of a site replaces the matrix's previous identifier of that kind.
         for kind, ident_key, value, site_key, row in plan['identifiers']:
@@ -494,4 +515,8 @@ def read_present(batch: UploadBatch) -> set:
     """Parser fields of the columns the batch's file has (from its preview report)."""
     found = {h.casefold() for h in (batch.report or {}).get('columns_found', [])}
     return {COLUMNS[h] for h in found if h in COLUMNS}
+
+
+def _json_value(value):
+    return value.isoformat() if hasattr(value, 'isoformat') else value
 

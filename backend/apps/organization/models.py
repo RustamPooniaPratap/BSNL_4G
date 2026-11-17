@@ -74,6 +74,7 @@ class CircleAlias(models.Model):
         DAYWISE_REPORT = 'daywise_report', 'Day-wise outage report'
         ESCALATION_MATRIX = 'escalation_matrix', 'Consolidated Escalation Matrix'
         RCA_WORKBOOK = 'rca_workbook', 'RCA workbook'
+        TICKET_UPLOAD = 'ticket_upload', 'OFC ticket workbook'
 
     source = models.CharField(max_length=30, choices=Source.choices)
     project = models.ForeignKey(Project, null=True, blank=True, on_delete=models.PROTECT, related_name='aliases',

@@ -60,7 +60,7 @@ class MissingPeriodTests(PeriodCase):
         """The reported failure: _store() called with period_start None after a parse error."""
         r = self.unreadable()
         self.assertEqual(r.status_code, 400, r.content)
-        self.assertIn('RCA columns', r.json()['error'])
+        self.assertIn('RCA_Data', r.json()['error'])
         batch = RcaImportBatch.objects.get(original_filename='wrong.xlsx')
         self.assertEqual((batch.status, batch.period_start, batch.period_end, batch.stored_path), ('failed', None, None, ''))
         self.assertEqual(self.stored_files(), [])  # no copy filed without a period

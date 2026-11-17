@@ -7,11 +7,14 @@ session or system table is ever exposed. The dataset KEYS are permanent: they na
 
 Sources (apps.sitedata is the only operational data layer):
 - Site Master (``uptime_sites``): sitedata.Site, dashboard and outside-scope sites with their Consolidation Matrix
-  attributes. Read-only: the matrix is authoritative and changes only through the matrix import.
+  attributes. Authorized field edits are persisted as overrides and survive later matrix imports; the import's latest
+  value is retained for explicit reversion.
 - Daily Performance (``uptime_daily``): sitedata.DailySitePerformance. Editable only as authorized corrections with a
   reason (editors.DailyEditor -> sitedata.daily.correct / add_correction).
 - Monthly Performance (``uptime_monthly``): the current sitedata.MonthlySitePerformance results. Read-only.
-- Escalation Matrix (``escalation``): the matrix contact / escalation columns of sitedata.Site. Read-only.
+- Escalation Matrix (``escalation``): the matrix contact / escalation columns of sitedata.Site. Authorized field
+  edits are retained as overrides on the same Site rows and survive later matrix imports; identity and reporting-scope
+  fields remain read-only.
 - RCA Data (``rca``): apps.rca records.
 The project of a site-data record is its technology (4G Saturation / LWE); outside-scope sites have none.
 
@@ -89,14 +92,20 @@ SITE = (_c('project', 'Project', 'technology'), _c('circle', 'Circle', 'site__ci
 DATASETS: dict[str, Dataset] = {d.key: d for d in (
     Dataset(
         'uptime_sites', 'Site Master',
-        'Every site of the Consolidation Matrix (dashboard and outside-scope), one row per BSNL Site ID. Read-only: the '
-        'matrix is authoritative and changes only through the matrix import.',
+        'Every site of the Consolidation Matrix (dashboard and outside-scope), one row per BSNL Site ID. Authorized '
+        'manual edits are retained as field-level overrides across later matrix imports; the latest matrix value remains available for reversion.',
         lambda: Site.objects.all(),
         (_c('project', 'Project', 'technology'), _c('entity', 'Entity', hidden=True), _c('circle', 'Circle'),
-         _c('site_id', 'Site ID', 'bsnl_site_id'), _c('site_name', 'Site name'), _c('oa', 'OA'), _c('ba', 'BA'), _c('district', 'District'),
+         _c('site_id', 'Site ID', 'bsnl_site_id'), _c('site_name', 'Site name'), _c('site_type', 'Site type', hidden=True),
+         _c('village_code', 'Village code', hidden=True), _c('oa', 'OA'), _c('ba', 'BA'), _c('district', 'District'),
+         _c('sub_district', 'Sub-district', hidden=True), _c('site_address', 'Site address', hidden=True),
+         _c('commissioning_status', 'Commissioning status', hidden=True), _c('commissioning_date', 'Commissioning date', kind='date', hidden=True),
+         _c('latitude', 'Latitude', kind='number', hidden=True), _c('longitude', 'Longitude', kind='number', hidden=True),
          _c('on_air_status', 'On-Air status'), _c('on_air', 'On-Air', kind='bool', hidden=True), _c('on_air_date', 'On-Air date', kind='date'),
          _c('om_status', 'O&M status'), _c('om_start_date', 'O&M Start date', kind='date'),
+         _c('eb_status', 'EB status', hidden=True), _c('dg_status', 'DG status', hidden=True),
          _c('ie_name', 'IE name'), _c('ie_contact', 'IE contact', contact=True), _c('ci_name', 'CI name'), _c('ci_contact', 'CI contact', contact=True),
+         _c('remarks', 'Remarks', hidden=True),
          _c('reporting_scope', 'Reporting scope'), _c('present_in_latest_matrix', 'In latest matrix', kind='bool'),
          _c('om_start_date_issue', 'O&M Start Date issue', hidden=True), _c('on_air_date_issue', 'On-Air Date issue', hidden=True),
          _c('circle_raw', 'Circle (as written)', hidden=True), _c('source_row', 'Matrix row', kind='number', hidden=True),
@@ -133,8 +142,8 @@ DATASETS: dict[str, Dataset] = {d.key: d for d in (
         search=('site__bsnl_site_id', 'site__site_name'), population='monthly'),
     Dataset(
         'escalation', 'CI-wise Consolidation & Escalation Matrix',
-        'The contact and escalation columns of the Consolidation Matrix, one row per site (read-only; they change only '
-        'through the matrix import).',
+        'The contact and escalation columns of the Consolidation Matrix, one row per site. Authorized field edits are '
+        'retained across later matrix imports; site identity and reporting scope remain import-managed.',
         lambda: Site.objects.all(),
         (_c('project', 'Project', 'technology'), _c('entity', 'Entity'), _c('circle', 'Circle'), _c('site_id', 'BSNL Site ID', 'bsnl_site_id'),
          _c('site_name', 'Site name'), _c('site_type', 'Site type'),

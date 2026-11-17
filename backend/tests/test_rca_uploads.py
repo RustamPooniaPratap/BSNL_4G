@@ -85,9 +85,9 @@ class CircleErrorAccountabilityTests(UploadCase):
         self.assertEqual(circles['OD']['rejected_rows'], 3)
         self.assertEqual(circles['Unattributed']['rejected_rows'], 1)
         self.assertEqual(max(len(record['errors']) for record in circles['OD']['records']), 2)  # multiple errors count as one rejected row
-        self.assertEqual({record['excel_row'] for record in circles['OD']['records']}, {2, 3, 4})
-        self.assertEqual({record['excel_row'] for record in circles['Unattributed']['records']}, {5})
-        self.assertNotIn(6, {record['excel_row'] for group in accountability['circles'] for record in group['records']})
+        self.assertEqual({record['excel_row'] for record in circles['OD']['records']}, {3, 4, 5})
+        self.assertEqual({record['excel_row'] for record in circles['Unattributed']['records']}, {6})
+        self.assertNotIn(7, {record['excel_row'] for group in accountability['circles'] for record in group['records']})
         repeated = self.consolidated(rows, name='repeat.xlsx').json()['report']['circle_error_accountability']
         self.assertEqual(repeated, accountability)
 

@@ -101,16 +101,46 @@ class MasterDataTests(TestCase):
         self.assertEqual(self.get('uptime_sites', site_id='UVMP1')['rows'][0]['ci_contact'], '9999900000')
 
     def test_exports_follow_the_filters_and_columns(self):
+        site = self.sites['UVMP1']
+        saved = self.client.post(reverse('master-save', args=['uptime_sites']),
+                                 {'changes': [{'id': site.pk, 'values': {'site_name': 'Edited site export'}}], 'additions': []},
+                                 content_type='application/json')
+        self.assertEqual(saved.status_code, 200, saved.content)
+        saved = self.client.post(reverse('master-save', args=['escalation']),
+                                 {'changes': [{'id': site.pk, 'values': {'ci_name': 'Edited CI export'}}], 'additions': []},
+                                 content_type='application/json')
+        self.assertEqual(saved.status_code, 200, saved.content)
+        record = RcaRecord.objects.get()
+        saved = self.client.post(reverse('master-save', args=['rca']),
+                                 {'changes': [{'id': record.pk, 'values': {'rca_text': 'Edited RCA export'}}], 'additions': []},
+                                 content_type='application/json')
+        self.assertEqual(saved.status_code, 200, saved.content)
+
         response = self.client.get(reverse('master-export', args=['uptime_daily']), {'period': 'daily', 'year': 2026, 'month': 10, 'project': 'LWE',
                                                                                      'columns': 'date,site_id,outage_minutes', 'file': 'csv'})
         lines = list(csv.reader(io.StringIO(b''.join(response.streaming_content).decode('utf-8-sig'))))
         self.assertEqual(lines[0], ['Reporting date', 'Site ID', 'Outage minutes'])
         self.assertEqual(len(lines) - 1, 2)
-        xlsx = self.client.get(reverse('master-export', args=['uptime_sites']), {'project': '4G Saturation', 'file': 'xlsx'})
-        book = load_workbook(io.BytesIO(xlsx.content))
+        sites_csv = self.client.get(reverse('master-export', args=['uptime_sites']), {'columns': 'site_id,site_name', 'file': 'csv'})
+        site_rows = list(csv.reader(io.StringIO(b''.join(sites_csv.streaming_content).decode('utf-8-sig'))))
+        self.assertIn(['UVMP1', 'Edited site export'], site_rows)
+        sites_xlsx = self.client.get(reverse('master-export', args=['uptime_sites']), {'project': '4G Saturation', 'file': 'xlsx'})
+        book = load_workbook(io.BytesIO(sites_xlsx.content))
         self.assertEqual(book.active.max_row - 1, 2)
         escalation = self.client.get(reverse('master-export', args=['escalation']), {'file': 'csv'})
-        self.assertEqual(len(list(csv.reader(io.StringIO(b''.join(escalation.streaming_content).decode('utf-8-sig'))))) - 1, 4)
+        escalation_rows = list(csv.reader(io.StringIO(b''.join(escalation.streaming_content).decode('utf-8-sig'))))
+        self.assertEqual(len(escalation_rows) - 1, 4)
+        self.assertIn('Edited CI export', [cell for row in escalation_rows for cell in row])
+        escalation_xlsx = self.client.get(reverse('master-export', args=['escalation']), {'file': 'xlsx'})
+        escalation_book = load_workbook(io.BytesIO(escalation_xlsx.content))
+        self.assertEqual(escalation_book.active.max_row - 1, 4)
+        rca_csv = self.client.get(reverse('master-export', args=['rca']), {'file': 'csv'})
+        rca_rows = list(csv.reader(io.StringIO(b''.join(rca_csv.streaming_content).decode('utf-8-sig'))))
+        self.assertEqual(len(rca_rows) - 1, 1)
+        self.assertIn('Edited RCA export', [cell for row in rca_rows for cell in row])
+        rca_xlsx = self.client.get(reverse('master-export', args=['rca']), {'file': 'xlsx'})
+        rca_book = load_workbook(io.BytesIO(rca_xlsx.content))
+        self.assertEqual(rca_book.active.max_row - 1, 1)
 
     def test_options_are_read_from_the_data(self):
         o = self.client.get(reverse('master-options', args=['uptime_daily'])).json()

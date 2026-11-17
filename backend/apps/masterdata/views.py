@@ -11,6 +11,7 @@ import csv
 import io
 from datetime import date, datetime
 
+from django.db import transaction
 from django.db.models import DateField, F, Q, QuerySet
 from django.db.models.functions import TruncMonth
 from django.http import HttpResponse, StreamingHttpResponse
@@ -29,8 +30,11 @@ from apps.accounts.roles import ADMIN, role_of
 from apps.dashboard.metrics import POPULATION_COLUMNS, WEEKS, population as population_info
 from apps.dashboard.serializers import parse_scope
 from apps.rca import taxonomy
+from apps.sitedata.models import DailySitePerformance, Site, SiteManualOverride
+from apps.sitedata.uploads import refresh_after_daily_write, write_lock
 
 from .datasets import DATASETS, Column, Dataset
+from .editors import EDITORS, SiteEditor, convert
 
 PAGE_SIZES = (25, 50, 100, 200)
 POPULATION_COLUMNS_LABELS = {k: population_info(k)['label'] for k in POPULATION_COLUMNS}
@@ -172,6 +176,17 @@ def _rows(qs: QuerySet, ds: Dataset, columns: list[Column]) -> list[dict]:
     return out
 
 
+def _manual_overrides(rows: list[dict], ds: Dataset, columns: list[Column]) -> dict[str, dict]:
+    if ds.key not in ('uptime_sites', 'escalation') or not rows:
+        return {}
+    fields = {c.key for c in columns}
+    overrides = SiteManualOverride.objects.filter(site_id__in=[r['_id'] for r in rows], field__in=fields)
+    by_site: dict[str, dict] = {}
+    for override in overrides:
+        by_site.setdefault(str(override.site_id), {})[override.field] = override.matrix_value
+    return by_site
+
+
 def _column_json(ds: Dataset, columns: list[Column]) -> list[dict]:
     out = [{'key': c.key, 'label': c.label, 'kind': c.kind, 'hidden': c.hidden} for c in columns]
     if ds.key == 'rca':
@@ -211,8 +226,9 @@ def records(request, key: str):
     total = qs.count()
     start = (page - 1) * size
     scope = request_population(request, ds)
+    rows = _rows(qs[start:start + size], ds, columns)
     return Response({'total': total, 'page': page, 'page_size': size, 'pages': max(1, -(-total // size)),
-                     'rows': _rows(qs[start:start + size], ds, columns),
+                     'rows': rows, 'manual_overrides': _manual_overrides(rows, ds, columns),
                      'population': population_info(scope) if scope else None})
 
 
@@ -235,6 +251,11 @@ def options(request, key: str):
         out['dates'] = [d.isoformat() for d in qs.dates(time_field, 'day')] if ds.date else []
     out['choices'] = {c.key: sorted({str(v) for v in qs.values_list(c.field, flat=True).distinct() if v not in (None, '')})[:500]
                       for c in ds.choices}
+    editor = EDITORS.get(ds.key)
+    if editor and can(request.user, data_module(ds.key), 'edit'):
+        edit_qs = ds.queryset().filter(pairs_q(pairs_for(request.user, data_module(ds.key), 'edit'), ds.project, ds.circle)).order_by()
+        for key, path in getattr(editor, 'choice_fields', {}).items():
+            out['choices'][key] = sorted({str(v) for v in edit_qs.values_list(path, flat=True).distinct() if v not in (None, '')})[:500]
     # The population filter the dataset offers (site-based datasets only) and the one applied.
     out['scopes'] = [{'value': k, 'label': v} for k, v in POPULATION_COLUMNS_LABELS.items()] if ds.population else []
     out['population'] = population_info(scope) if scope else None
@@ -311,3 +332,56 @@ def save(request, key: str):
                         status=400)
     audit('data_panel_saved', request, dataset=ds.key, updated=result['updated'], added=result['added'])
     return Response(result)
+
+
+@api_view(['POST'])
+@parser_classes([JSONParser])
+@permission_classes([IsPortalUser])
+def revert_site_overrides(request, key: str, record_id: int):
+    """Restore selected Site fields to their latest matrix values and remove their manual override records."""
+    ds = _dataset(key)
+    _require(request, ds, 'view')
+    editor = EDITORS.get(ds.key)
+    if not isinstance(editor, SiteEditor):
+        raise NotFound('This dataset has no matrix-backed manual overrides.')
+    module = data_module(ds.key)
+    if not can(request.user, module, 'edit'):
+        raise PermissionDenied(f'You do not have the Edit permission on {ds.label}.')
+    fields = request.data.get('fields') if isinstance(request.data, dict) else None
+    admin = role_of(request.user) == ADMIN
+    if not isinstance(fields, list) or not fields or any(not isinstance(field, str) or field not in editor.editable(admin) for field in fields):
+        raise ValidationError({'fields': 'Choose one or more editable fields.'})
+    model_fields = [editor.fields[field] for field in dict.fromkeys(fields)]
+    raw_fields = [editor.DATE_RAW[field] for field in fields if field in editor.DATE_RAW]
+    target_fields = list(dict.fromkeys([*model_fields, *raw_fields]))
+    expected = request.data.get('updated_at')
+    edit_pairs = pairs_for(request.user, module, 'edit')
+    restored = []
+    effective_changed = False
+    with transaction.atomic():
+        write_lock()
+        site = ds.queryset().filter(pairs_q(edit_pairs, ds.project, ds.circle)).filter(pk=record_id).select_for_update(of=('self',)).first()
+        if site is None:
+            raise NotFound(f'This {ds.label} record was not found in your editing scope.')
+        if expected is not None and (not isinstance(expected, str) or site.updated_at.isoformat() != expected):
+            return Response({'error': 'This record changed after it was loaded. Reload it and retry.'}, status=409)
+        overrides = list(SiteManualOverride.objects.select_for_update().filter(site=site, field__in=target_fields))
+        if not set(model_fields).issubset({override.field for override in overrides}):
+            return Response({'error': 'One or more overrides were already cleared. Reload the record.'}, status=409)
+        before = {field: getattr(site, field) for field in target_fields}
+        try:
+            for override in overrides:
+                field = Site._meta.get_field(override.field)
+                setattr(site, override.field, convert(field, override.matrix_value))
+                restored.append(override.field)
+        except ValueError as exc:
+            raise ValidationError({'fields': f'The stored matrix value could not be restored: {exc}'}) from exc
+        SiteEditor.sync(site)
+        effective_changed = any(before.get(field) != getattr(site, field) for field in ('on_air_date', 'om_start_date'))
+        site.save()
+        for override in overrides:
+            override.delete()
+    if effective_changed:
+        refresh_after_daily_write(DailySitePerformance.objects.dates('report_date', 'month'), request)
+    audit('data_panel_site_override_reverted', request, site=site.pk, fields=restored)
+    return Response({'restored': list(dict.fromkeys(fields))})

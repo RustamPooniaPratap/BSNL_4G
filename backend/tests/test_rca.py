@@ -28,10 +28,11 @@ ROWS = [
 ]
 
 
-def workbook(path: Path, rows=None, headers=HEADERS, sheet='Sheet1') -> Path:
+def workbook(path: Path, rows=None, headers=HEADERS, sheet='RCA_Data') -> Path:
     book = Workbook()
     ws = book.active
     ws.title = sheet
+    ws.append([None] * len(headers))
     ws.append(headers)
     for row in ROWS if rows is None else rows:
         ws.append(row)
@@ -116,43 +117,76 @@ class ParserTests(RcaTestCase):
             'invalid_date', 'unknown_project', 'unknown_circle', 'missing_site_id', 'invalid_outage', 'duplicate_record'}},
             {'invalid_date', 'unknown_project', 'unknown_circle', 'missing_site_id', 'invalid_outage', 'duplicate_record'})
         duplicate = next(i for i in report['all_issues'] if i['code'] == 'duplicate_record')
-        self.assertEqual((duplicate['row'], duplicate['site_id']), (12, 'LWEBH0063'))
-        self.assertIn('Duplicate of Excel row 2', duplicate['message'])
+        self.assertEqual((duplicate['row'], duplicate['site_id']), (13, 'LWEBH0063'))
+        self.assertIn('Duplicate of Excel row 3', duplicate['message'])
         self.assertIn('(identical in every column)', duplicate['message'])
 
-    def test_missing_columns_or_sheet_reject_the_file(self):
-        with self.assertRaisesRegex(parser.ParseError, 'missing required columns: RCA'):
+    def test_requires_exact_sheet_and_all_standard_headers_in_order(self):
+        with self.assertRaisesRegex(parser.ParseError, 'missing the required column "RCA"'):
             parser.parse(self.path(headers=HEADERS[:-1], rows=[r[:-1] for r in ROWS]), 'rca.xlsx')
-        with self.assertRaisesRegex(parser.ParseError, 'No sheet of rca.xlsx has the RCA columns'):
-            parser.parse(self.path(headers=['Count of RCA', 'Column Labels']), 'rca.xlsx')
+        with self.assertRaisesRegex(parser.ParseError, 'required "RCA_Data" worksheet is missing'):
+            parser.parse(self.path(sheet='RCA Backup'), 'rca.xlsx')
+        renamed = list(HEADERS)
+        renamed[4] = 'SiteName'
+        with self.assertRaisesRegex(parser.ParseError, 'missing the required column "Site Name"'):
+            parser.parse(self.path(headers=renamed), 'rca.xlsx')
+        reordered = list(HEADERS)
+        reordered[0], reordered[1] = reordered[1], reordered[0]
+        with self.assertRaisesRegex(parser.ParseError, 'expected "Date", found "Project"'):
+            parser.parse(self.path(headers=reordered), 'rca.xlsx')
 
-    def test_reads_the_daily_rca_compilation_layout(self):
-        # The data sheet is "RCA Backup" with a blank first row; "Sheet1" is a pivot table.
+    def test_ignores_extra_sheets_and_trailing_columns_but_rejects_duplicate_standard_headers(self):
         book = Workbook()
-        pivot = book.active
-        pivot.title = 'Sheet1'
-        pivot.append([])
-        pivot.append(['Count of RCA', 'Column Labels'])
-        pivot.append(['Row Labels', 'BB', 'Grand Total'])
-        data = book.create_sheet('RCA Backup')
-        data.append([])
-        data.append(HEADERS)
-        rows = [
-            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 846, 'BSNL OFC', 'BSNL OFC', 'Ofc cut'],
-            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 27, 'Others', 'IP site link', 'Media issue'],  # a second outage
-            [DAY, 'LWE', 'Chhatisgarh', 'LWECG0001', 'A', '', '', 'Yes', 27, 'Others', 'IP site link', 'Media issue'],  # an exact copy
-        ]
-        for row in rows:
-            data.append(row)
-        path = Path(self.tmp.name) / 'daily.xlsx'
+        ws = book.active
+        ws.title = 'RCA_Data'
+        ws.append([None] * 13)
+        ws.append([*HEADERS, 'Operator note'])
+        ws.append([*ROWS[0], 'do not import'])
+        ws.append([None] * len(HEADERS) + ['ignored metadata'])
+        summary = book.create_sheet('Summary')
+        summary.append(HEADERS)
+        summary.append(ROWS[1])
+        path = Path(self.tmp.name) / 'extra.xlsx'
         book.save(path)
-        parsed = parser.parse(path, 'daily.xlsx')
+
+        parsed = parser.parse(path, 'extra.xlsx')
+        self.assertEqual(parsed['report']['sheet'], 'RCA_Data')
+        self.assertEqual(parsed['report']['header_row'], 2)
+        self.assertEqual(parsed['report']['unknown_columns'], ['Operator note'])
+        self.assertEqual((parsed['report']['rows_read'], parsed['report']['blank_rows']), (1, 1))
+        self.assertEqual(parsed['rows'][0]['site_id'], 'LWEBH0063')
+        self.assertNotIn('Operator note', parsed['rows'][0])
+
+        with self.assertRaisesRegex(parser.ParseError, 'duplicate standard column header: Date'):
+            parser.parse(self.path(headers=[*HEADERS, 'Date']), 'duplicate.xlsx')
+
+        duplicate_path = self.path(name='extra-duplicate.xlsx', headers=[*HEADERS, 'Operator note'],
+                                   rows=[[*ROWS[0], 'first note'], [*ROWS[0], 'changed note']])
+        duplicate_report = parser.parse(duplicate_path, 'extra-duplicate.xlsx')['report']
+        duplicate = next(issue for issue in duplicate_report['all_issues'] if issue['code'] == 'duplicate_record')
+        self.assertIn('(identical in every column)', duplicate['message'])
+
+    def test_skips_the_reserved_sample_row_before_business_validation_and_excludes_it_from_totals(self):
+        sample = ['not a date', 'Unknown project', 'Unknown circle', parser.SAMPLE_SITE_ID, '', '', '', '', -1, '', '', '']
+        path = self.path(rows=[sample, [None] * len(HEADERS), ROWS[0]])
+        parsed = parser.parse(path, 'sample.xlsx')
         report = parsed['report']
-        self.assertEqual((report['sheet'], report['header_row'], report['valid_rows'], report['rejected_rows']), ('RCA Backup', 2, 2, 1))
-        # Other buckets on the same date are a record of their own; the exact copy is a duplicate.
-        self.assertEqual([(i['row'], i['code']) for i in report['all_issues'] if i['severity'] == 'error'], [(5, 'duplicate_record')])
-        self.assertEqual(sorted((r['occurrence'], r['final_bucket']) for r in parsed['rows']), [(1, 'BSNL OFC'), (2, 'Others')])
-        self.assertEqual({(r['circle'], r['circle_raw']) for r in parsed['rows']}, {('CG', 'Chhatisgarh')})
+        self.assertEqual((report['rows_read'], report['valid_rows'], report['rejected_rows']), (1, 1, 0))
+        self.assertEqual((report['sample_rows_skipped'], report['blank_rows']), (1, 1))
+        self.assertFalse(any(issue['row'] == 3 for issue in report['all_issues']))
+        self.assertEqual(parsed['rows'][0]['source_row'], 5)
+
+    def test_rejects_a_data_sheet_with_another_name_even_when_its_headers_match(self):
+        with self.assertRaisesRegex(parser.ParseError, 'required "RCA_Data" worksheet is missing'):
+            parser.parse(self.path(sheet='RCA Backup'), 'daily.xlsx')
+
+    def test_reference_template_contains_the_reserved_sample_and_matches_its_parser(self):
+        template = Path(__file__).resolve().parents[2] / 'Data' / 'reference' / parser.TEMPLATE_FILENAME
+        parsed = parser.parse(template, parser.TEMPLATE_FILENAME)
+        self.assertEqual((parsed['report']['sheet'], parsed['report']['header_row']), ('RCA_Data', 2))
+        self.assertEqual(parsed['report']['sample_rows_skipped'], 1)
+        self.assertEqual(parsed['report']['rows_read'], 0)
+        self.assertEqual(parsed['rows'], [])
 
 
 class ValidationPriorityTests(RcaTestCase):
@@ -168,8 +202,8 @@ class ValidationPriorityTests(RcaTestCase):
         report = parser.parse(path, 'rca.xlsx')['report']
         self.assertEqual((report['valid_rows'], report['rejected_rows'], report['final_bucket_error_rows']), (1, 5, 5))
         problems = {(p['value'], p['code']): (p['rows'], p['example_rows']) for p in report['final_bucket_problems']}
-        self.assertEqual(problems, {('Vsat', 'final_bucket_not_approved'): (2, [3, 4]), ('', 'missing_final_bucket'): (1, [5]),
-                                    ('-', 'missing_final_bucket'): (1, [6]), ('Other Media', 'final_bucket_not_approved'): (1, [7])})
+        self.assertEqual(problems, {('Vsat', 'final_bucket_not_approved'): (2, [4, 5]), ('', 'missing_final_bucket'): (1, [6]),
+                                    ('-', 'missing_final_bucket'): (1, [7]), ('Other Media', 'final_bucket_not_approved'): (1, [8])})
         self.assertIn('Nothing can be imported', parser.final_bucket_file_error(report))
         # Values are kept as written in the report, never renamed or reassigned.
         self.assertIn('Final Bucket "Vsat" is not one of the approved Final Buckets', next(
@@ -211,13 +245,13 @@ class ValidationPriorityTests(RcaTestCase):
 
     def test_duplicate_key_is_site_date_final_bucket_and_sub_bucket(self):
         # The business example: one site, one date.
-        rows = self.rows(('OD0001', 30, 'BSNL Media', 'Nokia mini link', 'Link fail'),    # row 2: valid
-                         ('OD0001', 40, 'BSNL OFC', 'SSA OFC', 'Fibre cut'),               # row 3: valid (other Final Bucket)
-                         ('OD0001', 50, 'BSNL Media', 'BSNL Link', 'Link fail'),          # row 4: valid (other Sub Bucket)
-                         ('OD0001', 30, 'BSNL Media', 'Nokia mini link', 'Link fail'))    # row 5: duplicate of row 2
+        rows = self.rows(('OD0001', 30, 'BSNL Media', 'Nokia mini link', 'Link fail'),    # row 3: valid
+                         ('OD0001', 40, 'BSNL OFC', 'SSA OFC', 'Fibre cut'),               # row 4: valid (other Final Bucket)
+                         ('OD0001', 50, 'BSNL Media', 'BSNL Link', 'Link fail'),          # row 5: valid (other Sub Bucket)
+                         ('OD0001', 30, 'BSNL Media', 'Nokia mini link', 'Link fail'))    # row 6: duplicate of row 3
         report = parser.parse(self.path(rows=rows), 'rca.xlsx')['report']
         self.assertEqual((report['valid_rows'], report['rejected_rows']), (3, 1))
-        self.assertEqual([(i['row'], i['site_id']) for i in report['all_issues'] if i['code'] == 'duplicate_record'], [(5, 'OD0001')])
+        self.assertEqual([(i['row'], i['site_id']) for i in report['all_issues'] if i['code'] == 'duplicate_record'], [(6, 'OD0001')])
         self.assertEqual(report['sites_with_several_records'], 1)
 
     def test_a_different_description_or_outage_does_not_make_a_duplicate_valid(self):
@@ -232,10 +266,10 @@ class ValidationPriorityTests(RcaTestCase):
         self.assertEqual({k: v for k, v in dup.items() if k != 'examples'},
                          {'rows': 4, 'groups': 1, 'sites': 1, 'identical_rows': 0, 'differing_rows': 4})
         self.assertEqual(dup['examples'][0], {'site_id': 'OD0001', 'project': '4G Saturation', 'reporting_date': '2026-10-21',
-                                              'final_bucket': 'BSNL Media', 'sub_bucket': 'Nokia mini link', 'first_row': 2,
-                                              'rejected_rows': [3, 4, 5, 6], 'identical': 0})
-        message = next(i['message'] for i in report['all_issues'] if i['row'] == 3)
-        self.assertIn('Duplicate of Excel row 2: same Site ID OD0001, date 2026-10-21, Final Bucket "BSNL Media" and Sub Bucket "Nokia mini link"', message)
+                                              'final_bucket': 'BSNL Media', 'sub_bucket': 'Nokia mini link', 'first_row': 3,
+                                              'rejected_rows': [4, 5, 6, 7], 'identical': 0})
+        message = next(i['message'] for i in report['all_issues'] if i['row'] == 4)
+        self.assertIn('Duplicate of Excel row 3: same Site ID OD0001, date 2026-10-21, Final Bucket "BSNL Media" and Sub Bucket "Nokia mini link"', message)
 
     def test_a_blank_sub_bucket_is_a_value_for_duplicates(self):
         rows = self.rows(('OD0001', 5, 'TCS', '', 'a'), ('OD0001', 6, 'TCS', '-', 'b'), ('OD0001', 7, 'TCS', 'BBU', 'c'),
@@ -295,6 +329,17 @@ class ValidationPriorityTests(RcaTestCase):
 
 
 class ImportTests(RcaTestCase):
+    def test_reserved_sample_is_excluded_from_preview_and_import_counts(self):
+        sample = list(ROWS[0])
+        sample[3] = parser.SAMPLE_SITE_ID
+        batch = importer.preview(self.path(rows=[sample, ROWS[0]]), 'Book1_RCA.xlsx', user=self.admin)
+        self.assertEqual((batch.counts['total'], batch.counts['valid'], batch.counts['rejected']), (1, 1, 0))
+        self.assertEqual(batch.report['sample_rows_skipped'], 1)
+
+        committed = importer.commit(batch, user=self.admin)
+        self.assertEqual((committed.counts['total'], committed.counts['valid'], committed.counts['inserted']), (1, 1, 1))
+        self.assertEqual(RcaRecord.objects.count(), 1)
+
     def test_preview_writes_no_records_and_commit_inserts_them(self):
         batch = importer.preview(self.path(), 'Book1_RCA.xlsx', user=self.admin)
         self.assertEqual(RcaRecord.objects.count(), 0)
@@ -302,7 +347,7 @@ class ImportTests(RcaTestCase):
         batch = importer.commit(batch, user=self.admin)
         self.assertEqual(batch.counts['inserted'], 5)
         rec = RcaRecord.objects.get(site_key='LWEBH0063')
-        self.assertEqual((rec.source_file, rec.source_row, rec.batch_id, rec.rca_text), ('Book1_RCA.xlsx', 2, batch.pk, 'Media Flacuatation'))
+        self.assertEqual((rec.source_file, rec.source_row, rec.batch_id, rec.rca_text), ('Book1_RCA.xlsx', 3, batch.pk, 'Media Flacuatation'))
         self.assertFalse(RcaWorkflow.objects.exists())  # no status is invented at import
 
     def test_a_repeat_import_is_idempotent(self):
@@ -378,6 +423,28 @@ class ApiTests(RcaTestCase):
         self.assertEqual((commit.status_code, commit.json()['records']), (200, 5))
         again = self.client.post(reverse('rca-import-commit', args=[body['id']]), {}, content_type='application/json')
         self.assertEqual(again.status_code, 409)
+
+    def test_authenticated_user_downloads_the_central_rca_template(self):
+        root = Path(self.tmp.name) / 'bundle'
+        template = root / 'Data' / 'reference' / parser.TEMPLATE_FILENAME
+        template.parent.mkdir(parents=True, exist_ok=True)
+        template.write_bytes(b'official RCA template')
+        self.client.force_login(self.ci)
+
+        with override_settings(BASE_DIR=root / 'backend'):
+            response = self.client.get(reverse('rca-import-template'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        self.assertIn(f'filename="{parser.TEMPLATE_FILENAME}"', response['Content-Disposition'])
+        self.assertEqual(b''.join(response.streaming_content), b'official RCA template')
+
+    def test_upload_api_returns_a_clear_error_for_a_nonstandard_workbook(self):
+        self.client.force_login(self.admin)
+        response = self.upload(self.path(sheet='Sheet1'))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('required "RCA_Data" worksheet is missing', response.json()['error'])
+        self.assertIn('official RCA template', response.json()['error'])
+        self.assertEqual(RcaRecord.objects.count(), 0)
 
     def test_register_filters_search_and_placeholders(self):
         self.imported()

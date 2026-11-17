@@ -72,9 +72,9 @@ class RolesTests(AdminApi, TestCase):
         ci = Role.objects.get(system_key='ci')
         self.assertEqual(self.api('patch', 'access-role', {'permissions': []}, args=[ci.pk]).status_code, 400)
         self.assertEqual(self.api('delete', 'access-role', args=[ci.pk]).status_code, 400)
-        self.assertEqual(Role.objects.get(pk=ci.pk).permissions.count(), 17)  # Master Data view/export became per-dataset grants
+        self.assertEqual(Role.objects.get(pk=ci.pk).permissions.count(), 22)  # per-dataset grants plus Ticket Management
         copy = self.api('post', 'access-role-clone', {'name': 'CI Editor'}, args=[ci.pk]).json()['role']
-        self.assertEqual(len(copy['permissions']), 17)
+        self.assertEqual(len(copy['permissions']), 22)
         self.assertFalse(copy['system'])
         admin_role = Role.objects.get(system_key='admin')
         user = portal_user('someone', None)

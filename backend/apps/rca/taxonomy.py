@@ -56,6 +56,7 @@ ALIASES: dict[tuple[str, str], str] = {
     # High V, Low V and High V & Low V are one Sub Bucket of IaasP Power (12 Nov 2026).
     ('IaasP Power', 'High V'): 'High V & Low V',
     ('IaasP Power', 'Low V'): 'High V & Low V',
+    ('IaasP OFC', 'Incremental Fibre'): 'Incremental Fiber',
 }
 
 

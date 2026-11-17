@@ -1,5 +1,5 @@
 """Data Panel editing on the data layer (apps.sitedata): per-dataset View / Add / Edit / Export permissions, read-only
-matrix datasets, Daily Performance changes as authorized corrections (with a reason) in one transaction, project/circle
+derived datasets, Daily Performance changes as authorized corrections (with a reason) in one transaction, project/circle
 scope and no delete. Synthetic records in the test database only."""
 import importlib
 from datetime import date
@@ -15,7 +15,7 @@ from apps.accounts.models import Role, RolePermission
 from apps.masterdata import datasets
 from apps.rca.models import RcaEvent, RcaRecord
 from apps.sitedata import daily, portfolio
-from apps.sitedata.models import DailyPerformanceEvent, DailySitePerformance, MonthlySitePerformance, Site, UploadBatch
+from apps.sitedata.models import DailyPerformanceEvent, DailySitePerformance, MonthlySitePerformance, Site, SiteManualOverride, UploadBatch
 from tests.auth_helpers import portal_user
 from tests.sitedata_factory import make_daily, make_site
 
@@ -57,19 +57,103 @@ class DataPanelCase(TestCase):
 
 
 class ReadOnlyDatasetTests(DataPanelCase):
-    def test_matrix_and_monthly_datasets_refuse_every_save(self):
+    def test_monthly_is_read_only_and_escalation_has_a_scoped_editor(self):
         self.client.force_login(self.admin)
         listed = {d['key']: d['permissions'] for d in self.client.get(reverse('master-datasets')).json()['datasets']}
-        for key in ('uptime_sites', 'uptime_monthly', 'escalation'):
-            self.assertEqual((listed[key]['edit'], listed[key]['add'], listed[key]['editable'], listed[key]['addable']), (False, False, [], []), key)
-            response = self.save(key, changes=[{'id': self.mp.pk, 'values': {'site_name': 'Changed'}}],
-                                 additions=[{'values': {'site_id': 'NEW1'}}])
-            self.assertEqual(response.status_code, 400, key)
-            self.assertIn('read-only', response.json()['error'])
+        self.assertEqual((listed['uptime_monthly']['edit'], listed['uptime_monthly']['add'],
+                          listed['uptime_monthly']['editable'], listed['uptime_monthly']['addable']), (False, False, [], []))
+        response = self.save('uptime_monthly', changes=[{'id': self.mp.pk, 'values': {'site_name': 'Changed'}}],
+                             additions=[{'values': {'site_id': 'NEW1'}}])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('read-only', response.json()['error'])
+        self.assertTrue(listed['escalation']['edit'])
+        self.assertIn('ci_name', listed['escalation']['editable'])
+        self.assertNotIn('bsnl_site_id', listed['escalation']['editable'])
+        self.assertNotIn('circle', listed['escalation']['editable'])
         self.mp.refresh_from_db()
         self.assertEqual((self.mp.site_name, Site.objects.count()), ('Alpha', 2))
+        self.assertTrue(listed['uptime_sites']['edit'])
+        self.assertFalse(listed['uptime_sites']['add'])
+        self.assertNotIn('site_id', listed['uptime_sites']['editable'])
         self.assertEqual((listed['uptime_daily']['edit'], listed['uptime_daily']['add'], listed['uptime_daily']['reason_required']), (True, True, True))
         self.assertEqual(listed['uptime_daily']['editable'], ['availability_pct', 'outage_minutes'])
+
+
+class SiteEditingTests(DataPanelCase):
+    def test_site_fields_are_validated_saved_and_record_the_matrix_baseline(self):
+        response = self.save('uptime_sites', changes=[{'id': self.mp.pk, 'values': {'site_name': 'Manual Alpha'}}])
+        self.assertEqual(response.status_code, 200, response.content)
+        self.mp.refresh_from_db()
+        override = SiteManualOverride.objects.get(site=self.mp, field='site_name')
+        self.assertEqual((self.mp.site_name, override.matrix_value, override.updated_by), ('Manual Alpha', 'Alpha', self.admin))
+
+        invalid = self.save('uptime_sites', changes=[{'id': self.mp.pk, 'values': {'site_name': 'x' * 201}}])
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn('site_name', invalid.json()['details']['changes'][str(self.mp.pk)])
+        forbidden = self.save('uptime_sites', changes=[{'id': self.mp.pk, 'values': {'site_id': 'NEW-ID', 'circle': 'RJ'}}])
+        self.assertEqual(forbidden.status_code, 400)
+        self.assertEqual(forbidden.json()['details']['changes'][str(self.mp.pk)],
+                         {'site_id': 'This column cannot be changed here.', 'circle': 'This column cannot be changed here.'})
+        self.mp.refresh_from_db()
+        self.assertEqual((self.mp.site_name, self.mp.circle), ('Manual Alpha', 'MP'))
+
+    def test_numeric_boolean_and_effective_date_edits_preserve_derived_data_rules(self):
+        response = self.save('uptime_sites', changes=[{'id': self.mp.pk, 'values': {
+            'latitude': '24.5', 'on_air': 'No', 'om_start_date': '2026-10-01',
+        }}])
+        self.assertEqual(response.status_code, 200, response.content)
+        self.mp.refresh_from_db()
+        self.assertEqual((self.mp.latitude, self.mp.on_air, self.mp.on_air_status, self.mp.om_start_date),
+                         (24.5, False, 'No', date(2026, 10, 1)))
+        self.assertEqual(set(SiteManualOverride.objects.filter(site=self.mp).values_list('field', flat=True)),
+                         {'latitude', 'on_air_status', 'om_start_date', 'om_start_raw'})
+        self.assertTrue(MonthlySitePerformance.objects.filter(
+            site=self.mp, month=date(2026, 10, 1), is_current=True, effective_from=date(2026, 10, 1),
+        ).exists())
+
+        invalid = self.save('uptime_sites', changes=[{'id': self.mp.pk, 'values': {'latitude': 'NaN'}}])
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn('Enter a number', invalid.json()['details']['changes'][str(self.mp.pk)]['latitude'])
+
+    def test_stale_site_update_is_refused(self):
+        version = self.mp.updated_at.isoformat()
+        Site.objects.filter(pk=self.mp.pk).update(site_name='Changed elsewhere', updated_at=timezone.now())
+        response = self.save('uptime_sites', changes=[{'id': self.mp.pk, 'updated_at': version, 'values': {'site_name': 'Stale edit'}}])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('changed after it was loaded', response.json()['details']['changes'][str(self.mp.pk)]['_row'])
+        self.mp.refresh_from_db()
+        self.assertEqual(self.mp.site_name, 'Changed elsewhere')
+
+
+class EscalationEditingTests(DataPanelCase):
+    def test_escalation_fields_are_saved_as_matrix_overrides(self):
+        response = self.save('escalation', changes=[{'id': self.mp.pk, 'values': {'ci_name': 'Manual CI', 'il_name': 'Manual IL'}}])
+        self.assertEqual(response.status_code, 200, response.content)
+        self.mp.refresh_from_db()
+        self.assertEqual((self.mp.ci_name, self.mp.il_name), ('Manual CI', 'Manual IL'))
+        self.assertEqual(
+            dict(SiteManualOverride.objects.filter(site=self.mp).values_list('field', 'matrix_value')),
+            {'ci_name': '', 'il_name': ''},
+        )
+
+        invalid = self.save('escalation', changes=[{'id': self.mp.pk, 'values': {'ci_name': 'x' * 121}}])
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn('ci_name', invalid.json()['details']['changes'][str(self.mp.pk)])
+        forbidden = self.save('escalation', changes=[{'id': self.mp.pk, 'values': {'site_id': 'NEW-ID', 'reporting_scope': 'outside_scope'}}])
+        self.assertEqual(forbidden.status_code, 400)
+        self.assertEqual(Site.objects.get(pk=self.mp.pk).ci_name, 'Manual CI')
+
+    def test_escalation_permissions_and_project_circle_scope_are_independent(self):
+        viewer = self.member('escalation-viewer', self.role('Escalation viewer', 'view', dataset='escalation'))
+        self.assertEqual(self.save('escalation', viewer, changes=[{'id': self.mp.pk, 'values': {'ci_name': 'No grant'}}]).status_code, 403)
+        editor = self.member('escalation-editor', self.role('Escalation editor', 'view', 'edit', dataset='escalation'))
+        self.assertEqual(self.save('escalation', editor, changes=[{'id': self.mp.pk, 'values': {'ci_name': 'Scoped CI'}}]).status_code, 200)
+        contact = self.save('escalation', editor, changes=[{'id': self.mp.pk, 'values': {'ci_contact': '9000000000'}}])
+        self.assertEqual(contact.status_code, 400)
+        self.assertEqual(contact.json()['details']['changes'][str(self.mp.pk)]['ci_contact'], 'This column cannot be changed here.')
+        denied = self.save('escalation', editor, changes=[{'id': self.rj.pk, 'values': {'ci_name': 'Outside scope'}}])
+        self.assertEqual(denied.status_code, 400)
+        self.assertIn('outside the projects and circles', denied.json()['details']['changes'][str(self.rj.pk)]['_row'])
 
 
 class DailyCorrectionTests(DataPanelCase):
@@ -205,11 +289,20 @@ class PermissionTests(DataPanelCase):
         self.assertEqual(self.client.get(reverse('master-records', args=['uptime_sites'])).status_code, 403)  # another dataset
 
     def test_edit_on_a_read_only_dataset_grants_nothing(self):
-        user = self.member('site-editor', self.role('Site editor', 'view', 'edit', 'create', dataset='uptime_sites'))
+        user = self.member('monthly-editor', self.role('Monthly editor', 'view', 'edit', 'create', dataset='uptime_monthly'))
         self.client.force_login(user)
         caps = self.client.get(reverse('master-datasets')).json()['datasets'][0]['permissions']
         self.assertEqual((caps['edit'], caps['add']), (False, False))
-        self.assertEqual(self.save('uptime_sites', user, changes=[{'id': self.mp.pk, 'values': {'site_name': 'x'}}]).status_code, 400)
+        self.assertEqual(self.save('uptime_monthly', user, changes=[{'id': self.mp.pk, 'values': {'site_name': 'x'}}]).status_code, 400)
+
+    def test_site_editor_is_limited_to_its_authorized_circle(self):
+        user = self.member('site-editor', self.role('Site editor', 'view', 'edit', dataset='uptime_sites'))
+        self.assertEqual(self.save('uptime_sites', user, changes=[{'id': self.mp.pk, 'values': {'site_name': 'Edited'}}]).status_code, 200)
+        denied = self.save('uptime_sites', user, changes=[{'id': self.rj.pk, 'values': {'site_name': 'Out of scope'}}])
+        self.assertEqual(denied.status_code, 400)
+        self.assertIn('outside the projects and circles', denied.json()['details']['changes'][str(self.rj.pk)]['_row'])
+        self.rj.refresh_from_db()
+        self.assertEqual(self.rj.site_name, 'Delta')
 
     def test_edit_only_and_add_only_are_independent(self):
         editor = self.member('editor', self.role('Editor', 'view', 'edit'))

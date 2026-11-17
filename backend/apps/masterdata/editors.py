@@ -1,8 +1,8 @@
 """Data Panel editing: which datasets can be changed, and the rules a change must follow.
 
 One ``Editor`` per editable dataset of ``datasets.DATASETS`` (``EDITORS``). A dataset without an editor is read-only
-(View / Export only): Site Master, Monthly Performance and the Escalation Matrix, whose values come from the
-Consolidation Matrix import and the monthly calculation. Nothing here deletes a record.
+(View / Export only): Monthly Performance. Site Master and Escalation Matrix edits are field-scoped manual overrides;
+matrix imports retain them and advance the stored matrix value for reversion. Nothing here deletes a record.
 
 - Daily Performance (``DailyEditor``): every change is an authorized correction of the central daily records
   (apps.sitedata.daily.correct for a stored value, add_correction for a site-day without one), with the reason given
@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from apps.rca.models import RcaEvent, RcaRecord
 from apps.sitedata import rules
-from apps.sitedata.models import DailySitePerformance, Site
+from apps.sitedata.models import DailySitePerformance, Site, SiteManualOverride
 
 
 class EditError(Exception):
@@ -40,8 +40,10 @@ class EditError(Exception):
 class Context:
     """One save: the user and the dataset."""
 
-    def __init__(self, user, dataset_label: str):
+    def __init__(self, user, dataset_label: str, request=None):
         self.user, self.label = user, dataset_label
+        self.request = request
+        self.effective_dates_changed = False
 
 
 def convert(field: models.Field, raw):
@@ -208,6 +210,111 @@ class DailyEditor(Editor):
         return day
 
 
+class SiteEditor(Editor):
+    """Safe field edits on existing Site rows; matrix values remain available as explicit fallbacks."""
+    model = Site
+    fields = {
+        'site_name': 'site_name', 'site_type': 'site_type', 'village_code': 'village_code',
+        'ba': 'ba', 'oa': 'oa', 'district': 'district', 'sub_district': 'sub_district',
+        'site_address': 'site_address', 'commissioning_status': 'commissioning_status',
+        'commissioning_date': 'commissioning_date', 'om_status': 'om_status', 'om_start_date': 'om_start_date',
+        'on_air_status': 'on_air_status', 'on_air': 'on_air', 'on_air_date': 'on_air_date',
+        'latitude': 'latitude', 'longitude': 'longitude', 'eb_status': 'eb_status', 'dg_status': 'dg_status',
+        'remarks': 'remarks', 'ci_name': 'ci_name', 'ci_contact': 'ci_contact', 'ie_name': 'ie_name', 'ie_contact': 'ie_contact',
+    }
+    contacts = frozenset({'ci_contact', 'ie_contact'})
+    choice_fields = {'oa': 'oa', 'om_status': 'om_status', 'on_air_status': 'on_air_status'}
+    identity = ()
+    required = ()
+    DATE_RAW = {'commissioning_date': 'commissioning_raw', 'om_start_date': 'om_start_raw', 'on_air_date': 'on_air_raw'}
+    EFFECTIVE_DATES = frozenset({'om_start_date', 'on_air_date'})
+
+    def addable(self, admin):
+        return []
+
+    def pair(self, obj):
+        return obj.technology, obj.circle
+
+    def finish(self, obj, changed, ctx, adding):
+        if 'on_air' in changed:
+            obj.on_air_status = 'Yes' if obj.on_air else 'No'
+            if 'on_air_status' not in changed:
+                changed.append('on_air_status')
+        for date_field, raw_field in self.DATE_RAW.items():
+            if date_field in changed:
+                value = getattr(obj, date_field)
+                setattr(obj, raw_field, value.isoformat() if value else '')
+                if raw_field not in changed:
+                    changed.append(raw_field)
+        self.sync(obj)
+
+    @staticmethod
+    def sync(obj):
+        obj.on_air = (obj.on_air_status or '').strip().casefold() == 'yes'
+        if obj.reporting_scope == Site.Scope.DASHBOARD:
+            obj.om_start_date_issue = rules.om_start_date_issue(obj.om_start_date, obj.om_start_raw or '')
+            obj.on_air_date_issue = rules.date_issue(obj.on_air_date, obj.on_air_raw or '')
+        else:
+            obj.om_start_date_issue = ''
+            obj.on_air_date_issue = ''
+
+    def after_save(self, obj, before, ctx, adding):
+        changed = {field for field in set(self.fields.values()) | set(self.DATE_RAW.values())
+                   if field in before and before[field] != getattr(obj, field)}
+        raw_fields = set(self.DATE_RAW.values())
+
+        def persist(field, force=False):
+            current = _json_value(getattr(obj, field))
+            override = SiteManualOverride.objects.filter(site=obj, field=field).first()
+            matrix_value = override.matrix_value if override else _json_value(before.get(field))
+            if current == matrix_value and not force:
+                if override:
+                    override.delete()
+                return
+            if override:
+                override.updated_by = ctx.user
+                override.save(update_fields=['updated_by', 'updated_at'])
+            else:
+                SiteManualOverride.objects.create(site=obj, field=field, matrix_value=matrix_value, updated_by=ctx.user)
+
+        for field in changed - raw_fields - {'on_air'}:
+            persist(field)
+        for date_field, raw_field in self.DATE_RAW.items():
+            if date_field in changed:
+                has_date_override = SiteManualOverride.objects.filter(site=obj, field=date_field).exists()
+                persist(raw_field, force=has_date_override)
+        if any(field in self.EFFECTIVE_DATES for field in before if before.get(field) != getattr(obj, field)):
+            ctx.effective_dates_changed = True
+
+
+class EscalationEditor(SiteEditor):
+    """Editable Consolidation/Escalation attributes, with Site identity and reporting scope kept immutable."""
+    fields = {
+        'site_name': 'site_name', 'site_type': 'site_type', 'village_code': 'village_code',
+        'ba': 'ba', 'oa': 'oa', 'district': 'district', 'sub_district': 'sub_district',
+        'site_address': 'site_address', 'commissioning_status': 'commissioning_status',
+        'commissioning_date': 'commissioning_date', 'om_status': 'om_status', 'om_start_date': 'om_start_date',
+        'on_air_status': 'on_air_status', 'on_air_date': 'on_air_date', 'eb_status': 'eb_status',
+        'dg_status': 'dg_status', 'case_type': 'case_type',
+        'ci_emp_code': 'ci_emp_code', 'ci_name': 'ci_name', 'ci_contact': 'ci_contact',
+        'ie_emp_code': 'ie_emp_code', 'ie_name': 'ie_name', 'ie_contact': 'ie_contact',
+        'il_emp_code': 'il_emp_code', 'il_name': 'il_name', 'il_contact': 'il_contact',
+        'om_manager_emp_code': 'om_manager_emp_code', 'om_manager_name': 'om_manager_name',
+        'om_manager_contact': 'om_manager_contact', 'cbh_name': 'cbh_name', 'cbh_contact': 'cbh_contact',
+        'ct_status': 'ct_status', 'ct_name': 'ct_name', 'ct_contact': 'ct_contact',
+        'rigger_emp_code': 'rigger_emp_code', 'rigger_name': 'rigger_name', 'rigger_contact': 'rigger_contact',
+        'latitude': 'latitude', 'longitude': 'longitude', 'smps_make': 'smps_make', 'remarks': 'remarks',
+    }
+    contacts = frozenset({
+        'ci_contact', 'ie_contact', 'il_contact', 'om_manager_contact', 'cbh_contact', 'ct_contact', 'rigger_contact',
+    })
+    choice_fields = {
+        **SiteEditor.choice_fields,
+        'commissioning_status': 'commissioning_status', 'eb_status': 'eb_status', 'dg_status': 'dg_status',
+        'ct_status': 'ct_status',
+    }
+
+
 class RcaEditor(Editor):
     """RCA Data: the register's own rules (apps.rca.views._manual_fields) for keys, dates, project and circle."""
     model = RcaRecord
@@ -270,10 +377,14 @@ def _plain(value):
     return value.isoformat() if isinstance(value, (date, datetime)) else value
 
 
+def _json_value(value):
+    return value.isoformat() if isinstance(value, (date, datetime)) else value
 
 
 # Datasets without an editor are read-only (View / Export).
 EDITORS: dict[str, Editor] = {
+    'uptime_sites': SiteEditor(),
     'uptime_daily': DailyEditor(),
+    'escalation': EscalationEditor(),
     'rca': RcaEditor(),
 }

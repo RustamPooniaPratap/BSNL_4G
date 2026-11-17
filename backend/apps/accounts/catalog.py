@@ -11,7 +11,11 @@ custom role can never reach administrative functions.
 from __future__ import annotations
 
 VIEW, CREATE, EDIT, EXPORT, UPLOAD = 'view', 'create', 'edit', 'export', 'upload'
-ACTION_LABELS = {VIEW: 'View', CREATE: 'Add', EDIT: 'Edit', EXPORT: 'Export / Download', UPLOAD: 'Upload'}
+CLOSE, REOPEN, RETRY = 'close', 'reopen', 'retry'
+APPROVE, SEND, MANAGE = 'approve', 'send', 'manage'
+ACTION_LABELS = {VIEW: 'View', CREATE: 'Add', EDIT: 'Edit', EXPORT: 'Export / Download', UPLOAD: 'Upload',
+                 CLOSE: 'Close tickets', REOPEN: 'Reopen tickets', RETRY: 'Retry email',
+                 APPROVE: 'Approve', SEND: 'Send email', MANAGE: 'Manage settings'}
 
 # module -> label, description, {action: what it allows}. Data Panel modules are added by ``modules()``.
 STATIC_MODULES: dict[str, dict] = {
@@ -44,6 +48,36 @@ STATIC_MODULES: dict[str, dict] = {
         'description': 'RCA overview, circle-wise breakdown, root causes and trends.',
         'actions': {VIEW: 'See the RCA summary pages, limited to the assigned projects and circles.'},
     },
+    'ticket_management': {
+        'label': 'Ticket Management',
+        'description': 'OFC outage tickets, Excel imports, status changes and ticket notifications.',
+        'actions': {
+            VIEW: 'View tickets, details, dashboard metrics and notification history within the assigned project/circle scope.',
+            UPLOAD: 'Validate and import the official OFC ticket workbook within the assigned project/circle scope.',
+            CLOSE: 'Manually close open tickets with mandatory closure remarks.',
+            REOPEN: 'Reopen closed tickets with a mandatory reason and send a notification.',
+            RETRY: 'Retry failed ticket email notifications within the assigned project/circle scope.',
+        },
+    },
+    'bsnl_reports': {
+        'label': 'BSNL Module · Auto Email Reports',
+        'description': 'D-1 and Weekly Circle report emails, their Excel attachments and delivery history.',
+        'actions': {VIEW: 'See the reports, email previews and delivery history, and download the emails (.eml) and Excel '
+                          'attachments of the assigned projects and circles.',
+                    SEND: 'Send a report email now through the portal account (needs every project of the circle; '
+                          'All India: every circle).',
+                    MANAGE: 'Edit the Distribution Master (report recipients) and switch the daily / weekly schedule on or off.'},
+    },
+    'bsnl_letters': {
+        'label': 'BSNL Module · BSNL Letters',
+        'description': 'Letters to BSNL listing Customer (BSNL)-bucket outages per circle, their approval and sending.',
+        'actions': {VIEW: 'See the letters, the register and the annexures, and download Word / Excel / PDF files.',
+                    EDIT: 'Create Draft letters, edit and regenerate them.',
+                    APPROVE: 'Approve letters and record their later status (sent outside the portal, acknowledged, '
+                             'exclusion accepted / rejected).',
+                    SEND: 'Send approved letters by email through the portal account.',
+                    MANAGE: 'Edit BSNL circle contacts, sender details, letter recipients and the RCA bucket mapping.'},
+    },
 }
 
 ADMIN_ONLY = ['Team Performance', 'CSV Arrival Tracking', 'Data Source', 'RCA Submissions', 'RCA cause mappings',
@@ -75,13 +109,16 @@ def modules() -> dict[str, dict]:
 # The built-in CI role: what CI users could do before custom roles, limited to their assigned projects and circles.
 # Data Panel: View and Export of the datasets they could open before (``master_data`` view and export), never Add or Edit.
 CI_PERMISSIONS = [('dashboard', VIEW), ('dashboard', EXPORT), ('csv_upload', UPLOAD), ('rca_register', VIEW), ('rca_register', CREATE),
-                  ('rca_register', EDIT), ('rca_upload', UPLOAD)]
+                  ('rca_register', EDIT), ('rca_upload', UPLOAD), ('ticket_management', VIEW), ('ticket_management', UPLOAD),
+                  ('ticket_management', CLOSE), ('ticket_management', REOPEN), ('ticket_management', RETRY)]
 
 
 def noc_lead_permissions() -> set[tuple[str, str]]:
     """NOC Lead: every project and circle; the CI permissions and View / Export of every Data Panel dataset (as with the
-    former Master Data module), never Add or Edit, and not the RCA summary (Admin and granted roles only)."""
-    return set(CI_PERMISSIONS) | {(m, a) for m in data_modules() for a in (VIEW, EXPORT)}
+    former Master Data module), never Add or Edit, and not the RCA summary (Admin and granted roles only). BSNL Module:
+    View of both pages and Draft letter editing; approving, sending and settings stay with Admin and granted roles."""
+    return (set(CI_PERMISSIONS) | {(m, a) for m in data_modules() for a in (VIEW, EXPORT)}
+            | {('bsnl_reports', VIEW), ('bsnl_letters', VIEW), ('bsnl_letters', EDIT)})
 
 
 def is_known(module: str, action: str) -> bool:

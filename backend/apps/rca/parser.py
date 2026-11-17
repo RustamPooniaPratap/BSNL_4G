@@ -1,12 +1,13 @@
-"""Read an RCA workbook (Date, Project, Circle, Site ID, ..., RCA) into validated rows.
+"""Read a standard RCA workbook into validated rows.
 
 Circle names and codes resolve through the Organization's RCA workbook aliases (read once per file); otherwise no
-database access. The data sheet is found by its header (for example "Sheet1" of a plain RCA file, or
-"RCA Backup" of the Daily RCA Compilation, whose header is on row 2 and whose "Sheet1" is a pivot table);
-columns are found by header text. Values are trimmed but otherwise kept as written: Final Bucket and Sub Bucket are
-validated against the approved taxonomy (apps.rca.taxonomy, spaces and case ignored) and never renamed or corrected;
-normalised companions (project, circle code, ``*_key``) are added for filtering only. Every problem is reported with its Excel row;
-rows with errors are rejected, never repaired.
+database access. The required data sheet is named "RCA_Data" and must use the official template's row-2 header. The
+first 12 columns must match the template exactly; additional columns and other sheets are ignored. The reserved sample
+row is skipped. Values are
+trimmed but otherwise kept as written: Final Bucket and Sub Bucket are validated against the approved taxonomy
+(apps.rca.taxonomy, spaces and case ignored) and never renamed or corrected; normalised companions (project, circle
+code, ``*_key``) are added for filtering only. Every problem is reported with its Excel row; rows with errors are rejected,
+never repaired.
 
 Validation priorities (business rules of 4 Nov 2026):
 
@@ -45,15 +46,16 @@ from openpyxl import load_workbook
 
 from . import taxonomy
 
-SHEET_NAME = 'Sheet1'  # the usual data sheet; any sheet with the RCA header is accepted
-HEADER_SEARCH_ROWS = 10
-# Header text (case and spaces ignored) -> field.
+SHEET_NAME = 'RCA_Data'
+TEMPLATE_FILENAME = 'RCA_Upload_Template.xlsx'
+SAMPLE_SITE_ID = 'SAMPLE-DO-NOT-UPLOAD'
+# Exact official column header -> parsed field.
 COLUMNS = {
-    'date': 'reporting_date', 'project': 'project_raw', 'circle': 'circle_raw', 'site id': 'site_id',
-    'site name': 'site_name', 'oa': 'oa', 'ba': 'ba', 'o&m start (yes/no)': 'om_start_raw', 'outage min.': 'outage_minutes',
-    'final bucket': 'final_bucket', 'bucket - 2': 'bucket_2', 'rca': 'rca_text',
+    'Date': 'reporting_date', 'Project': 'project_raw', 'Circle': 'circle_raw', 'Site ID': 'site_id',
+    'Site Name': 'site_name', 'OA': 'oa', 'BA': 'ba', 'O&M Start (Yes/No)': 'om_start_raw', 'Outage Min.': 'outage_minutes',
+    'Final Bucket': 'final_bucket', 'Bucket - 2': 'bucket_2', 'RCA': 'rca_text',
 }
-REQUIRED = ('date', 'project', 'circle', 'site id', 'outage min.', 'final bucket', 'bucket - 2', 'rca')
+RCA_HEADERS = tuple(COLUMNS)
 # Project labels -> the dashboard's report types. "4G Satu" is a shortened label: mapped, but flagged for confirmation.
 PROJECTS = {'4g satu': '4G Saturation', '4g satu.': '4G Saturation', '4g saturation': '4G Saturation', 'lwe': 'LWE'}
 PROJECTS_TO_CONFIRM = {'4g satu', '4g satu.'}
@@ -138,34 +140,37 @@ def _number(value) -> tuple[float | None, bool]:
     return (number, True) if math.isfinite(number) else (None, False)  # "nan" / "inf" are not numbers of minutes
 
 
-def _header(value) -> str:
-    return re.sub(r'\s+', ' ', _text(value)).casefold()
-
-
 def _data_sheet(book, filename: str) -> tuple[str, int, list]:
-    """(sheet name, 0-based header row, rows) of the one sheet whose header has every required column."""
-    found, partial = [], []
-    for ws in book.worksheets:
-        rows = list(ws.iter_rows(values_only=True))
-        for at, row in enumerate(rows[:HEADER_SEARCH_ROWS]):
-            headers = {_header(h) for h in row or ()}
-            if all(name in headers for name in REQUIRED):
-                found.append((ws.title, at, rows))
-                break
-            if 'site id' in headers:
-                partial.append((ws.title, [name for name in REQUIRED if name not in headers]))
-    if len(found) > 1:
-        names = ', '.join(f'"{name}"' for name, _, _ in found)
-        raise ParseError(f'{filename} has more than one sheet with RCA records ({names}). Upload a workbook with one RCA data sheet.')
-    if found:
-        return found[0]
-    labels = {'date': 'Date', 'project': 'Project', 'circle': 'Circle', 'site id': 'Site ID', 'outage min.': 'Outage Min.',
-              'final bucket': 'Final Bucket', 'bucket - 2': 'Bucket - 2', 'rca': 'RCA'}
-    if partial:
-        name, missing = partial[0]
-        raise ParseError(f'The "{name}" sheet is missing required columns: {", ".join(labels[m] for m in missing)}.')
-    raise ParseError(f'No sheet of {filename} has the RCA columns ({", ".join(labels.values())}) in its first {HEADER_SEARCH_ROWS} rows '
-                     f'(sheets: {", ".join(book.sheetnames)}).')
+    """Validate the official sheet and return its rows with the row-2 header."""
+    if SHEET_NAME not in book.sheetnames:
+        raise ParseError(f'{filename}: the required "{SHEET_NAME}" worksheet is missing. Download the official RCA template.')
+
+    ws = book[SHEET_NAME]
+    rows = list(ws.iter_rows(values_only=True))
+    header_at = 1
+    header_row = rows[header_at] if len(rows) > header_at else ()
+    headers = [_text(value) for value in header_row]
+    positions: dict[str, list[int]] = {}
+    for column, header in enumerate(headers, start=1):
+        if header in RCA_HEADERS:
+            positions.setdefault(header, []).append(column)
+    duplicates = [name for name, columns in positions.items() if len(columns) > 1]
+    if duplicates:
+        raise ParseError(f'{filename}: the "{SHEET_NAME}" worksheet has a duplicate standard column header: {", ".join(duplicates)}.')
+
+    for column, expected in enumerate(RCA_HEADERS, start=1):
+        actual = headers[column - 1] if len(headers) >= column else ''
+        if actual == expected:
+            continue
+        if expected not in headers:
+            raise ParseError(f'{filename}: the "{SHEET_NAME}" worksheet is missing the required column "{expected}". '
+                             f'Download the official RCA template.')
+        if actual:
+            raise ParseError(f'{filename}: invalid header in column {column} of "{SHEET_NAME}": expected "{expected}", found "{actual}". '
+                             'Restore the official column names and order.')
+        raise ParseError(f'{filename}: invalid header in column {column} of "{SHEET_NAME}": expected "{expected}". '
+                         'Restore the official column names and order.')
+    return ws.title, header_at, rows
 
 
 def duplicate_key(reporting_date: str, project: str, site: str, final_bucket_key: str, bucket_2_key: str) -> tuple:
@@ -221,9 +226,8 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
         book.close()  # read-only mode keeps the file open otherwise
 
     header_row = raw_rows[header_at]
-    headers = [_header(h) for h in header_row]
-    index = {field: headers.index(name) for name, field in COLUMNS.items() if name in headers}
-    unknown_columns = [_text(h) for h, key in zip(header_row, headers) if key and key not in COLUMNS]
+    index = {field: column for column, field in enumerate(COLUMNS.values())}
+    unknown_columns = [_text(h) for h in header_row[len(COLUMNS):] if _text(h)]
 
     issues: list[dict] = []
     rows: list[dict] = []
@@ -234,6 +238,7 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
     mismatches: dict[tuple, dict] = {}  # (Final Bucket, Sub Bucket of another Final Bucket) -> rows and example Excel rows
     trimmed = 0
     blank_rows = 0
+    sample_rows_skipped = 0
 
     from apps.organization.services import AliasResolver
     circles = AliasResolver(ALIAS_SOURCE)
@@ -252,10 +257,13 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
         issues.append(item)
 
     for offset, raw in enumerate(raw_rows[header_at + 1:], start=header_at + 2):
-        if raw is None or all(v is None or _text(v) == '' for v in raw):
+        if raw is None or all(v is None or _text(v) == '' for v in raw[:len(COLUMNS)]):
             blank_rows += 1
             continue
         cell = lambda field: raw[index[field]] if field in index and index[field] < len(raw) else None  # noqa: E731
+        if _text(cell('site_id')) == SAMPLE_SITE_ID:
+            sample_rows_skipped += 1
+            continue
         values = {field: _text(cell(field)) for field in COLUMNS.values() if field not in ('reporting_date', 'outage_minutes')}
         trimmed += sum(1 for field in values if isinstance(cell(field), str) and cell(field) != cell(field).strip())
         site_id = values['site_id']
@@ -325,7 +333,7 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
         # 1. Duplicates: the same site, date, Final Bucket and Sub Bucket as an earlier row (description and outage ignored).
         if day and project and site_id:
             identity = duplicate_key(day.isoformat(), project, site_key(site_id), text_key(values['final_bucket']), text_key(values['bucket_2']))
-            as_read = tuple(_text(v) for v in raw)
+            as_read = tuple(_text(v) for v in raw[:len(COLUMNS)])
             if identity in first_row:
                 first, first_values = first_row[identity]
                 how = 'identical in every column' if as_read == first_values else 'the RCA description, outage or other columns differ'
@@ -452,6 +460,7 @@ def parse(path: Path, filename: str, *, period: tuple[date, date] | None = None,
             'valid_rows': len(rows),
             'rejected_rows': len({i['row'] for i in issues if i['severity'] == 'error'}),
             'blank_rows': blank_rows,
+            'sample_rows_skipped': sample_rows_skipped,
             'unknown_columns': unknown_columns,
             'dates': dict(sorted(Counter(r['reporting_date'] for r in rows).items())),
             'projects': dict(Counter(r['project'] for r in rows)),

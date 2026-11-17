@@ -11,6 +11,7 @@ urlpatterns = [
     path('summary/', views.summary, name='rca-summary'),
     path('overview/', views.overview, name='rca-overview'),
     path('imports/', views.import_list, name='rca-imports'),
+    path('template.xlsx', views.import_template, name='rca-import-template'),
     path('imports/preview/', views.import_preview, name='rca-import-preview'),
     path('imports/<int:batch_id>/', views.import_detail, name='rca-import'),
     path('imports/<int:batch_id>/issues.csv', views.import_issues_csv, name='rca-import-issues'),

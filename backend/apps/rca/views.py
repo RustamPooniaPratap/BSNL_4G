@@ -334,6 +334,17 @@ def import_list(request):
                      'max_bytes': settings.MAX_WORKBOOK_BYTES})  # shown on the upload page; the upload itself checks it
 
 
+@api_view(['GET'])
+@permission_classes([IsPortalUser])
+def import_template(_request):
+    template = Path(settings.BASE_DIR).parent / 'Data' / 'reference' / parser.TEMPLATE_FILENAME
+    if not template.is_file():
+        return Response({'error': 'The official RCA template is unavailable. Contact an administrator.', 'details': {}},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return FileResponse(template.open('rb'), as_attachment=True, filename=parser.TEMPLATE_FILENAME,
+                        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 def _details(data) -> dict:
     """The upload's details, by type. A circle upload: project, circle and reporting date. A consolidated upload: report
     name, project scope and optionally the reporting date (otherwise the latest date in the workbook)."""
